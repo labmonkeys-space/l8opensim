@@ -1,7 +1,8 @@
-BINARY    := simulator
-BUILD_DIR := go/simulator
-GO_DIR    := go
-IMAGE     := saichler/opensim-web:latest
+BINARY       := simulator
+BUILD_DIR    := go/simulator
+GO_DIR       := go
+IMAGE        := saichler/opensim-web:latest
+SIM_IMAGE    := ghcr.io/labmonkeys-space/l8opensim:latest
 
 # Simulator uses Linux-only syscalls (TUN, network namespaces).
 # Cross-compile by default so the binary runs in the container / on Linux hosts.
@@ -10,8 +11,8 @@ GOARCH ?= amd64
 
 UNAME_S := $(shell uname -s)
 
-.PHONY: all build run test tidy clean docker help \
-        check-go check-docker check-linux
+.PHONY: all build run test tidy clean docker docker-build docker-push docker-up docker-down help \
+        check-go check-docker check-buildx check-linux
 
 all: build
 
@@ -36,6 +37,25 @@ endif
 ## run: Build and run the simulator (Linux only — requires root for TUN interfaces)
 run: check-linux build
 	cd $(BUILD_DIR) && sudo ./$(BINARY)
+
+## docker-build: Build the simulator Docker image for the host platform
+docker-build: check-docker
+	docker build -t $(SIM_IMAGE) .
+
+## docker-push: Build and push a multi-platform image (linux/amd64 + linux/arm64)
+docker-push: check-buildx
+	docker buildx build \
+	  --platform linux/amd64,linux/arm64 \
+	  --push \
+	  -t $(SIM_IMAGE) .
+
+## docker-up: Start the simulator with docker compose
+docker-up: check-docker
+	docker compose up --build
+
+## docker-down: Stop and remove the simulator container
+docker-down: check-docker
+	docker compose down
 
 ## docker: Build the L8 web Docker image (linux/amd64)
 docker: check-docker
@@ -73,6 +93,23 @@ check-docker:
 	  echo "       Start Docker Desktop (or the Docker service) and retry."; \
 	  exit 1; \
 	}
+
+check-buildx: check-docker
+	@docker buildx version >/dev/null 2>&1 || { \
+	  echo "Error: 'docker buildx' not available."; \
+	  echo "       Install Docker Desktop >= 2.1 or the buildx plugin."; \
+	  exit 1; \
+	}
+	@# On Linux, multi-platform emulation requires binfmt_misc + QEMU.
+	@# On macOS, Docker Desktop and Orbstack provide this natively — no check needed.
+	@if [ "$(UNAME_S)" = "Linux" ]; then \
+	  docker buildx ls | grep -q 'linux/arm64' || { \
+	    echo "Error: active buildx builder does not support linux/arm64."; \
+	    echo "       Run: docker run --privileged --rm tonistiigi/binfmt --install all"; \
+	    echo "       Then: docker buildx create --use --name multiplatform"; \
+	    exit 1; \
+	  }; \
+	fi
 
 check-linux:
 	@[ "$(UNAME_S)" = "Linux" ] || { \
