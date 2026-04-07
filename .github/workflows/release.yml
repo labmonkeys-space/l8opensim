@@ -7,6 +7,7 @@ on:
 
 permissions:
   contents: write
+  packages: write
 
 jobs:
   release:
@@ -26,8 +27,8 @@ jobs:
       - name: Build release binaries
         run: |
           mkdir -p dist
-          CGO_ENABLED=0 GOOS=linux  GOARCH=amd64 go build -C go/simulator -o ../../dist/simulator-linux-amd64  .
-          CGO_ENABLED=0 GOOS=linux  GOARCH=arm64 go build -C go/simulator -o ../../dist/simulator-linux-arm64  .
+          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -C go/simulator -o ../../dist/simulator-linux-amd64 .
+          CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -C go/simulator -o ../../dist/simulator-linux-arm64 .
 
       - name: Upload build artifacts
         uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f  # v7.0.0
@@ -43,3 +44,34 @@ jobs:
           files: |
             dist/simulator-linux-amd64
             dist/simulator-linux-arm64
+
+  docker:
+    name: Publish Docker image
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@c7c53464625b32c7a7e944ae62b3e17d2b600130  # v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f  # v3
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9  # v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push multi-platform image
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8  # v6
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: |
+            ghcr.io/${{ github.repository }}:${{ github.ref_name }}
+            ghcr.io/${{ github.repository }}:latest
