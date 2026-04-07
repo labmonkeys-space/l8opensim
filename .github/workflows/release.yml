@@ -25,13 +25,7 @@ jobs:
           cache-dependency-path: go/go.sum
 
       - name: Verify go.mod is tidy
-        working-directory: go
-        run: |
-          go mod tidy
-          git diff --exit-code go.mod go.sum || {
-            echo "go.mod or go.sum is out of date — run 'make tidy' and commit the result."
-            exit 1
-          }
+        run: make check-tidy
 
       - name: Build
         run: make build
@@ -55,12 +49,7 @@ jobs:
           cache-dependency-path: go/go.sum
 
       - name: Build release binaries
-        working-directory: go
-        run: |
-          go mod tidy
-          mkdir -p ../dist
-          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o ../dist/simulator-linux-amd64 ./simulator
-          CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -o ../dist/simulator-linux-arm64 ./simulator
+        run: make dist
 
       - name: Upload build artifacts
         uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f  # v7.0.0
@@ -100,11 +89,4 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Build and push multi-platform image
-        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8  # v6
-        with:
-          context: .
-          platforms: linux/amd64,linux/arm64
-          push: true
-          tags: |
-            ghcr.io/${{ github.repository }}:${{ github.ref_name }}
-            ghcr.io/${{ github.repository }}:latest
+        run: make docker-push DOCKER_TAGS="ghcr.io/${{ github.repository }}:${{ github.ref_name }} ghcr.io/${{ github.repository }}:latest"

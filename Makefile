@@ -3,6 +3,8 @@ BUILD_DIR    := go/simulator
 GO_DIR       := go
 IMAGE        := saichler/opensim-web:latest
 SIM_IMAGE    := ghcr.io/labmonkeys-space/l8opensim:latest
+# Space-separated list of -t tags for docker-push; override in CI with release tags.
+DOCKER_TAGS  ?= $(SIM_IMAGE)
 
 # Simulator uses Linux-only syscalls (TUN, network namespaces).
 # Cross-compile by default so the binary runs in the container / on Linux hosts.
@@ -11,7 +13,7 @@ GOARCH ?= amd64
 
 UNAME_S := $(shell uname -s)
 
-.PHONY: all build run test tidy clean docker docker-build docker-push docker-up docker-down help \
+.PHONY: all build run test tidy check-tidy dist clean docker docker-build docker-push docker-up docker-down help \
         check-go check-docker check-buildx check-linux
 
 all: build
@@ -23,6 +25,20 @@ build: check-go
 ## tidy: Sync go.mod and go.sum
 tidy: check-go
 	cd $(GO_DIR) && go mod tidy
+
+## check-tidy: Verify go.mod and go.sum are up to date (fails if tidy would change them)
+check-tidy: check-go
+	cd $(GO_DIR) && go mod tidy
+	git diff --exit-code $(GO_DIR)/go.mod $(GO_DIR)/go.sum || { \
+	  echo "go.mod or go.sum is out of date — run 'make tidy' and commit the result."; \
+	  exit 1; \
+	}
+
+## dist: Build release binaries for linux/amd64 and linux/arm64 into dist/
+dist: check-go
+	mkdir -p dist
+	cd $(GO_DIR) && CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o ../dist/$(BINARY)-linux-amd64 ./simulator
+	cd $(GO_DIR) && CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -o ../dist/$(BINARY)-linux-arm64 ./simulator
 
 ## test: Run tests (simulator package requires Linux; other packages run on any OS)
 test: check-go
@@ -47,7 +63,8 @@ docker-push: check-buildx
 	docker buildx build \
 	  --platform linux/amd64,linux/arm64 \
 	  --push \
-	  -t $(SIM_IMAGE) .
+	  $(addprefix -t ,$(DOCKER_TAGS)) \
+	  .
 
 ## docker-up: Start the simulator with docker compose
 docker-up: check-docker
@@ -63,9 +80,10 @@ docker: check-docker
 	@echo "      to be available in your Docker registry. Pull them first if needed."
 	cd go/l8 && docker build --no-cache --platform=linux/amd64 -t $(IMAGE) .
 
-## clean: Remove the simulator binary
+## clean: Remove build artefacts (binary and dist/)
 clean:
 	rm -f $(BUILD_DIR)/$(BINARY)
+	rm -rf dist/
 
 ## help: Show this help
 help:
