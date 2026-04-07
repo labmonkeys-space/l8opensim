@@ -245,25 +245,19 @@ func (s *SNMPServer) handleGetBulk(startOID string, requestData []byte) []byte {
 	// Parse GetBulk parameters (non-repeaters and max-repetitions)
 	_, maxRepetitions := s.parseGetBulkParams(requestData)
 
-	// log.Printf("SNMP %s: GetBulk parameters - maxRepetitions: %d", s.device.ID, maxRepetitions)
-
-	// For simplicity, we'll return up to maxRepetitions OIDs starting from startOID
-	// In a real implementation, you'd handle non-repeaters properly
-
 	var oids []string
 	var responses []string
 
 	currentOID := startOID
 	count := 0
+	reachedEnd := false
 
 	// Collect up to maxRepetitions OIDs
 	for count < maxRepetitions {
 		nextOID, response := s.findNextOID(currentOID)
-		// log.Printf("SNMP %s: GetBulk iteration %d - currentOID: %s, nextOID: %s, response: %s",
-		//	s.device.ID, count, currentOID, nextOID, response)
 
 		if nextOID == "" || response == "endOfMibView" {
-			// log.Printf("SNMP %s: GetBulk reached end of MIB", s.device.ID)
+			reachedEnd = true
 			break
 		}
 
@@ -273,12 +267,17 @@ func (s *SNMPServer) handleGetBulk(startOID string, requestData []byte) []byte {
 		count++
 	}
 
-	// log.Printf("SNMP %s: GetBulk collected %d OIDs", s.device.ID, len(oids))
+	// RFC 3416 §4.2.3: if we hit end-of-MIB before filling maxRepetitions,
+	// pad remaining slots with the requested OID (startOID) + endOfMibView.
+	if reachedEnd {
+		for count < maxRepetitions {
+			oids = append(oids, startOID)
+			responses = append(responses, "endOfMibView")
+			count++
+		}
+	}
 
-	// Create GetBulk response with multiple variable bindings
-	responseBytes := s.createGetBulkResponse(oids, responses, requestData)
-	// log.Printf("SNMP %s: GetBulk response created, length: %d bytes", s.device.ID, len(responseBytes))
-	return responseBytes
+	return s.createGetBulkResponse(oids, responses, requestData)
 }
 
 // parseGetBulkParams extracts non-repeaters and max-repetitions from GetBulk request
