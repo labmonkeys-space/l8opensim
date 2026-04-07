@@ -80,8 +80,8 @@ func (s *SNMPServer) parseIncomingRequest(data []byte) SNMPRequest {
 		}
 	}
 
-	// Parse PDU (GetRequest = 0xa0, GetNext = 0xa1)
-	if pos < len(data) && (data[pos] == 0xa0 || data[pos] == 0xa1) {
+	// Parse PDU (GetRequest = 0xa0, GetNext = 0xa1, GetBulk = 0xa5)
+	if pos < len(data) && (data[pos] == 0xa0 || data[pos] == 0xa1 || data[pos] == 0xa5) {
 		pos++
 		pduLengthSkip := s.skipLength(data[pos:])
 		pos += pduLengthSkip
