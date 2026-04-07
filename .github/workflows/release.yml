@@ -1,0 +1,45 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Build & Release
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4
+
+      - name: Set up Go
+        uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff  # v5
+        with:
+          go-version-file: go/go.mod
+          cache-dependency-path: go/go.sum
+
+      - name: Build release binaries
+        run: |
+          mkdir -p dist
+          CGO_ENABLED=0 GOOS=linux  GOARCH=amd64 go build -C go/simulator -o ../../dist/simulator-linux-amd64  .
+          CGO_ENABLED=0 GOOS=linux  GOARCH=arm64 go build -C go/simulator -o ../../dist/simulator-linux-arm64  .
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4
+        with:
+          name: simulator-binaries
+          path: dist/
+          retention-days: 7
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@153bb8e04406b158c6c84fc1615b65b24149a1fe  # v2
+        with:
+          generate_release_notes: true
+          files: |
+            dist/simulator-linux-amd64
+            dist/simulator-linux-arm64
