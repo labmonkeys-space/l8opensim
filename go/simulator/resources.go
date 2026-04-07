@@ -268,6 +268,14 @@ func (sm *SimulatorManager) loadSpecificResourcesFromDir(dirPath string, cacheKe
 
 // buildResourceIndexes builds performance optimization indexes for fast OID lookups
 func (sm *SimulatorManager) buildResourceIndexes(resources *DeviceResources) {
+	// Sort SNMP resources by OID numerically so that SNMP walks return OIDs in
+	// strictly increasing order (column-major table ordering). JSON files store
+	// OIDs in row-major order, so without this sort the oidNextMap produces an
+	// "OID not increasing" error when snmpwalk crosses row boundaries.
+	sort.Slice(resources.SNMP, func(i, j int) bool {
+		return compareOIDsLexicographically(resources.SNMP[i].OID, resources.SNMP[j].OID) < 0
+	})
+
 	// Initialize lock-free sync.Map for O(1) OID lookups
 	resources.oidIndex = &sync.Map{}
 
