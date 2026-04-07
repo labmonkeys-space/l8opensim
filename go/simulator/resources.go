@@ -277,23 +277,22 @@ func (sm *SimulatorManager) buildResourceIndexes(resources *DeviceResources) {
 	// Initialize next OID map for pre-computed walk paths
 	resources.oidNextMap = &sync.Map{}
 
-	// Build indexes from the SNMP resources
-	for i, resource := range resources.SNMP {
-		// Skip dynamic OIDs that are handled specially
+	// Build oidIndex and sortedOIDs, skipping dynamic OIDs handled elsewhere.
+	for _, resource := range resources.SNMP {
 		if resource.OID == "1.3.6.1.2.1.1.5.0" || resource.OID == "1.3.6.1.2.1.1.6.0" {
 			continue
 		}
-
-		// Lock-free hash map index: OID -> Response
 		resources.oidIndex.Store(resource.OID, resource.Response)
-
-		// Sorted OID list for binary search (resources are already sorted)
 		resources.sortedOIDs = append(resources.sortedOIDs, resource.OID)
+	}
 
-		// Pre-compute next OID mapping for walks (except for last OID)
-		if i < len(resources.SNMP)-1 {
-			resources.oidNextMap.Store(resource.OID, resources.SNMP[i+1].OID)
-		}
+	// Build oidNextMap from sortedOIDs rather than from the raw SNMP slice.
+	// The old loop used SNMP[i+1] which could land on a skipped special OID
+	// (sysName/sysLocation). Those OIDs are absent from oidIndex, so the fast
+	// path in findNextOID silently fell back to binary search for every OID
+	// immediately preceding a special OID.
+	for i := 0; i < len(resources.sortedOIDs)-1; i++ {
+		resources.oidNextMap.Store(resources.sortedOIDs[i], resources.sortedOIDs[i+1])
 	}
 }
 
