@@ -42,6 +42,12 @@ func (s *SNMPServer) findResponse(oid string) string {
 		if val := s.getMetricValue(oid); val != "" {
 			return val
 		}
+		// Handle HC counter OIDs (ifHCInOctets, ifHCOutOctets) - time-based monotonic counters
+		if s.device.metricsCycler.ifCounters != nil {
+			if val := s.device.metricsCycler.ifCounters.GetHCOctets(oid); val != "" {
+				return val
+			}
+		}
 	}
 
 	// Interface state scenario override (admin/oper status)
@@ -117,7 +123,7 @@ func (s *SNMPServer) findNextOID(currentOID string) (string, string) {
 	// pre-computed next OID, return it immediately (O(1)).
 	sortedMetricOIDs := GetSortedMetricOIDs(s.device.resourceFile)
 	if len(sortedMetricOIDs) == 0 && precomputedNextOID != "" {
-		return precomputedNextOID, precomputedNextResp
+		return precomputedNextOID, s.overrideIfHC(precomputedNextOID, precomputedNextResp)
 	}
 
 	// If we have a pre-computed next OID and it's lexicographically before
@@ -126,12 +132,12 @@ func (s *SNMPServer) findNextOID(currentOID string) (string, string) {
 	if precomputedNextOID != "" && len(sortedMetricOIDs) > 0 {
 		firstMetricOID := sortedMetricOIDs[0]
 		if compareOIDs(precomputedNextOID, firstMetricOID) <= 0 {
-			return precomputedNextOID, precomputedNextResp
+			return precomputedNextOID, s.overrideIfHC(precomputedNextOID, precomputedNextResp)
 		}
 		// Also safe if currentOID is already past all metric OIDs
 		lastMetricOID := sortedMetricOIDs[len(sortedMetricOIDs)-1]
 		if compareOIDs(currentOID, lastMetricOID) >= 0 {
-			return precomputedNextOID, precomputedNextResp
+			return precomputedNextOID, s.overrideIfHC(precomputedNextOID, precomputedNextResp)
 		}
 	}
 
@@ -247,7 +253,7 @@ func (s *SNMPServer) findNextOID(currentOID string) (string, string) {
 		}
 	}
 
-	return nextOID, response
+	return nextOID, s.overrideIfHC(nextOID, response)
 }
 
 // handleGetBulk processes SNMP GetBulk requests
@@ -534,6 +540,24 @@ func (s *SNMPServer) parseGetBulkParams(data []byte) (int, int) {
 	//	s.device.ID, nonRepeaters, maxRepetitions)
 
 	return nonRepeaters, maxRepetitions
+}
+
+// overrideIfHC replaces staticResp with the dynamic HC counter value when oid
+// is an ifHCInOctets or ifHCOutOctets OID. Returns staticResp unchanged for
+// all other OIDs. Used by findNextOID to return live counter values during walks.
+func (s *SNMPServer) overrideIfHC(oid, staticResp string) string {
+	if s.device.metricsCycler == nil || s.device.metricsCycler.ifCounters == nil {
+		return staticResp
+	}
+	// Fast pre-check: HC OIDs live under .1.3.6.1.2.1.31; skip the full
+	// prefix match for the vast majority of OIDs that are not in ifXTable.
+	if !strings.HasPrefix(oid, ".1.3.6.1.2.1.31.") {
+		return staticResp
+	}
+	if dynVal := s.device.metricsCycler.ifCounters.GetHCOctets(oid); dynVal != "" {
+		return dynVal
+	}
+	return staticResp
 }
 
 // getMetricValue returns the cycling metric value for a dynamic OID,
