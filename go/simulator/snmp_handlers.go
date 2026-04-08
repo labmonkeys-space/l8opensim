@@ -246,43 +246,209 @@ func (s *SNMPServer) findNextOID(currentOID string) (string, string) {
 }
 
 // handleGetBulk processes SNMP GetBulk requests
+// handleGetBulk implements RFC 3416 §4.2.3 GetBulk processing.
+//
+// A GETBULK request carries multiple OIDs in its variable-bindings list:
+//   - The first nonRepeaters OIDs are treated like GETNEXT (one result each).
+//   - The remaining OIDs are "repeater" columns: for each repetition the
+//     response contains one GETNEXT result per column, interleaved in order.
+//
+// Previous implementation only processed the first OID, so OpenNMS's
+// multi-column GETBULK requests only ever returned values for the first
+// requested column, leaving ifDescr/ifName/ifAlias/ifSpeed as N/A.
 func (s *SNMPServer) handleGetBulk(startOID string, requestData []byte) []byte {
-	// Parse GetBulk parameters (non-repeaters and max-repetitions)
-	_, maxRepetitions := s.parseGetBulkParams(requestData)
+	nonRepeaters, maxRepetitions := s.parseGetBulkParams(requestData)
 
+	// Parse every OID from the variable-bindings list.
+	allOIDs := s.parseAllOIDsFromRequest(requestData)
+	if len(allOIDs) == 0 {
+		// Fallback: use the single OID extracted by the general request parser.
+		allOIDs = []string{startOID}
+	}
+
+	var responseOIDs []string
+	var responseValues []string
+
+	// ── Non-repeater section (GETNEXT semantics) ──────────────────────────
+	cap := nonRepeaters
+	if cap > len(allOIDs) {
+		cap = len(allOIDs)
+	}
+	for i := 0; i < cap; i++ {
+		nextOID, nextVal := s.findNextOID(allOIDs[i])
+		if nextOID == "" {
+			nextOID = allOIDs[i]
+			nextVal = "endOfMibView"
+		}
+		responseOIDs = append(responseOIDs, nextOID)
+		responseValues = append(responseValues, nextVal)
+	}
+
+	// ── Repeater section (multi-column GETNEXT × maxRepetitions) ──────────
+	repeaterCols := allOIDs[cap:] // columns to repeat
+	if len(repeaterCols) == 0 || maxRepetitions == 0 {
+		return s.createGetBulkResponse(responseOIDs, responseValues, requestData)
+	}
+
+	// currentOIDs tracks the "cursor" position in each column.
+	currentOIDs := make([]string, len(repeaterCols))
+	copy(currentOIDs, repeaterCols)
+
+	// endOfMib[i] == true once column i has exhausted the MIB.
+	endOfMib := make([]bool, len(repeaterCols))
+
+	for rep := 0; rep < maxRepetitions; rep++ {
+		for col, startCol := range repeaterCols {
+			if endOfMib[col] {
+				// RFC 3416: pad with the ORIGINAL requested OID + endOfMibView.
+				responseOIDs = append(responseOIDs, startCol)
+				responseValues = append(responseValues, "endOfMibView")
+				continue
+			}
+			nextOID, nextVal := s.findNextOID(currentOIDs[col])
+			if nextOID == "" || nextVal == "endOfMibView" {
+				endOfMib[col] = true
+				responseOIDs = append(responseOIDs, startCol)
+				responseValues = append(responseValues, "endOfMibView")
+			} else {
+				responseOIDs = append(responseOIDs, nextOID)
+				responseValues = append(responseValues, nextVal)
+				currentOIDs[col] = nextOID
+			}
+		}
+	}
+
+	return s.createGetBulkResponse(responseOIDs, responseValues, requestData)
+}
+
+// parseAllOIDsFromRequest extracts every OID from the variable-bindings list
+// of an SNMP PDU (GET, GETNEXT, or GETBULK). For GETBULK this returns all
+// column starters; for GET/GETNEXT it returns the single requested OID.
+func (s *SNMPServer) parseAllOIDsFromRequest(data []byte) []string {
 	var oids []string
-	var responses []string
 
-	currentOID := startOID
-	count := 0
-	reachedEnd := false
+	pos := 0
 
-	// Collect up to maxRepetitions OIDs
-	for count < maxRepetitions {
-		nextOID, response := s.findNextOID(currentOID)
+	// Outer SEQUENCE
+	if pos >= len(data) || data[pos] != ASN1_SEQUENCE {
+		return oids
+	}
+	pos++
+	outerLen, newPos := parseLength(data, pos)
+	if outerLen < 0 {
+		return oids
+	}
+	pos = newPos
 
-		if nextOID == "" || response == "endOfMibView" {
-			reachedEnd = true
+	// Version (INTEGER)
+	if pos >= len(data) || data[pos] != ASN1_INTEGER {
+		return oids
+	}
+	pos++
+	verLen, newPos := parseLength(data, pos)
+	if verLen < 0 {
+		return oids
+	}
+	pos = newPos + verLen
+
+	// Community (OCTET STRING)
+	if pos >= len(data) || data[pos] != ASN1_OCTET_STRING {
+		return oids
+	}
+	pos++
+	commLen, newPos := parseLength(data, pos)
+	if commLen < 0 {
+		return oids
+	}
+	pos = newPos + commLen
+
+	// PDU tag (any: GET / GETNEXT / GETBULK / …)
+	if pos >= len(data) {
+		return oids
+	}
+	pos++ // consume PDU type byte
+	pduLen, newPos := parseLength(data, pos)
+	if pduLen < 0 {
+		return oids
+	}
+	pos = newPos
+
+	// Request-ID (INTEGER)
+	if pos >= len(data) || data[pos] != ASN1_INTEGER {
+		return oids
+	}
+	pos++
+	reqIDLen, newPos := parseLength(data, pos)
+	if reqIDLen < 0 {
+		return oids
+	}
+	pos = newPos + reqIDLen
+
+	// error-status / non-repeaters (INTEGER)
+	if pos >= len(data) || data[pos] != ASN1_INTEGER {
+		return oids
+	}
+	pos++
+	f1Len, newPos := parseLength(data, pos)
+	if f1Len < 0 {
+		return oids
+	}
+	pos = newPos + f1Len
+
+	// error-index / max-repetitions (INTEGER)
+	if pos >= len(data) || data[pos] != ASN1_INTEGER {
+		return oids
+	}
+	pos++
+	f2Len, newPos := parseLength(data, pos)
+	if f2Len < 0 {
+		return oids
+	}
+	pos = newPos + f2Len
+
+	// VarBindList (SEQUENCE)
+	if pos >= len(data) || data[pos] != ASN1_SEQUENCE {
+		return oids
+	}
+	pos++
+	vbListLen, newPos := parseLength(data, pos)
+	if vbListLen < 0 {
+		return oids
+	}
+	pos = newPos
+	end := pos + vbListLen
+
+	// Walk every VarBind
+	for pos < end && pos < len(data) {
+		if data[pos] != ASN1_SEQUENCE {
 			break
 		}
-
-		oids = append(oids, nextOID)
-		responses = append(responses, response)
-		currentOID = nextOID
-		count++
-	}
-
-	// RFC 3416 §4.2.3: if we hit end-of-MIB before filling maxRepetitions,
-	// pad remaining slots with the requested OID (startOID) + endOfMibView.
-	if reachedEnd {
-		for count < maxRepetitions {
-			oids = append(oids, startOID)
-			responses = append(responses, "endOfMibView")
-			count++
+		pos++
+		vbLen, newPos := parseLength(data, pos)
+		if vbLen < 0 {
+			break
 		}
+		pos = newPos
+		nextVarBind := pos + vbLen
+		if nextVarBind > end {
+			break // VarBind claims to extend beyond declared VarBindList boundary
+		}
+
+		// OID inside VarBind
+		if pos < len(data) && data[pos] == ASN1_OID {
+			pos++
+			oidLen, newPos := parseLength(data, pos)
+			if oidLen >= 0 && newPos+oidLen <= len(data) {
+				if oid := decodeOID(data[newPos : newPos+oidLen]); oid != "" {
+					oids = append(oids, oid)
+				}
+			}
+		}
+
+		pos = nextVarBind
 	}
 
-	return s.createGetBulkResponse(oids, responses, requestData)
+	return oids
 }
 
 // parseGetBulkParams extracts non-repeaters and max-repetitions from GetBulk request
