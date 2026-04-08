@@ -35,7 +35,7 @@ func (s *SNMPServer) parseIncomingRequest(data []byte) SNMPRequest {
 	req := SNMPRequest{
 		Community: "public",
 		RequestID: 123,
-		OID:       "1.3.6.1.2.1.1.1.0",
+		OID:       ".1.3.6.1.2.1.1.1.0",
 		Version:   1, // Default to SNMPv2c
 	}
 
@@ -140,13 +140,13 @@ func (s *SNMPServer) parseIncomingRequest(data []byte) SNMPRequest {
 // parseOIDFromRequest extracts the first OID from an SNMP request packet
 func (s *SNMPServer) parseOIDFromRequest(data []byte) string {
 	if len(data) < 10 {
-		return "1.3.6.1.2.1.1.1.0" // Default fallback
+		return ".1.3.6.1.2.1.1.1.0" // Default fallback
 	}
 
 	// Find the OID in the SNMP packet
 	oid := extractOIDFromSNMPPacket(data)
 	if oid == "" {
-		return "1.3.6.1.2.1.1.1.0" // Default fallback
+		return ".1.3.6.1.2.1.1.1.0" // Default fallback
 	}
 
 	return oid
@@ -196,7 +196,7 @@ func (s *SNMPServer) createSNMPResponse(oid, value string, requestData []byte) [
 func (s *SNMPServer) createGetBulkResponse(oids []string, responses []string, requestData []byte) []byte {
 	if len(oids) != len(responses) {
 		// Fallback to single response
-		return s.createSNMPResponse("1.3.6.1.2.1.1.1.0", "No data", requestData)
+		return s.createSNMPResponse(".1.3.6.1.2.1.1.1.0", "No data", requestData)
 	}
 
 	// Parse request to get community and request ID

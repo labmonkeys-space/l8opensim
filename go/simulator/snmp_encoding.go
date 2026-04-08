@@ -87,7 +87,7 @@ func decodeOID(oidBytes []byte) string {
 		oid = append(oid, strconv.Itoa(value))
 	}
 
-	return strings.Join(oid, ".")
+	return "." + strings.Join(oid, ".")
 }
 
 // ASN.1 encoding helper functions
@@ -162,6 +162,7 @@ func encodeOctetString(value string) []byte {
 }
 
 func encodeOID(oid string) []byte {
+	oid = strings.TrimPrefix(oid, ".")
 	parts := strings.Split(oid, ".")
 	if len(parts) < 2 {
 		return []byte{ASN1_OID, 0x00}
@@ -287,51 +288,51 @@ type oidTypeEntry struct {
 // for correctness.
 var oidTypeTable = []oidTypeEntry{
 	// MIB-II system group
-	{"1.3.6.1.2.1.1.3", ASN1_TIMETICKS}, // sysUpTime
+	{".1.3.6.1.2.1.1.3", ASN1_TIMETICKS}, // sysUpTime
 
 	// ifTable — RFC 2863
-	{"1.3.6.1.2.1.2.2.1.5", ASN1_GAUGE32},    // ifSpeed
-	{"1.3.6.1.2.1.2.2.1.9", ASN1_TIMETICKS},  // ifLastChange
-	{"1.3.6.1.2.1.2.2.1.10", ASN1_COUNTER32}, // ifInOctets
-	{"1.3.6.1.2.1.2.2.1.11", ASN1_COUNTER32}, // ifInUcastPkts
-	{"1.3.6.1.2.1.2.2.1.12", ASN1_COUNTER32}, // ifInNUcastPkts
-	{"1.3.6.1.2.1.2.2.1.13", ASN1_COUNTER32}, // ifInDiscards
-	{"1.3.6.1.2.1.2.2.1.14", ASN1_COUNTER32}, // ifInErrors
-	{"1.3.6.1.2.1.2.2.1.15", ASN1_COUNTER32}, // ifInUnknownProtos
-	{"1.3.6.1.2.1.2.2.1.16", ASN1_COUNTER32}, // ifOutOctets
-	{"1.3.6.1.2.1.2.2.1.17", ASN1_COUNTER32}, // ifOutUcastPkts
-	{"1.3.6.1.2.1.2.2.1.18", ASN1_COUNTER32}, // ifOutNUcastPkts
-	{"1.3.6.1.2.1.2.2.1.19", ASN1_COUNTER32}, // ifOutDiscards
-	{"1.3.6.1.2.1.2.2.1.20", ASN1_COUNTER32}, // ifOutErrors
-	{"1.3.6.1.2.1.2.2.1.21", ASN1_GAUGE32},   // ifOutQLen
+	{".1.3.6.1.2.1.2.2.1.5", ASN1_GAUGE32},    // ifSpeed
+	{".1.3.6.1.2.1.2.2.1.9", ASN1_TIMETICKS},  // ifLastChange
+	{".1.3.6.1.2.1.2.2.1.10", ASN1_COUNTER32}, // ifInOctets
+	{".1.3.6.1.2.1.2.2.1.11", ASN1_COUNTER32}, // ifInUcastPkts
+	{".1.3.6.1.2.1.2.2.1.12", ASN1_COUNTER32}, // ifInNUcastPkts
+	{".1.3.6.1.2.1.2.2.1.13", ASN1_COUNTER32}, // ifInDiscards
+	{".1.3.6.1.2.1.2.2.1.14", ASN1_COUNTER32}, // ifInErrors
+	{".1.3.6.1.2.1.2.2.1.15", ASN1_COUNTER32}, // ifInUnknownProtos
+	{".1.3.6.1.2.1.2.2.1.16", ASN1_COUNTER32}, // ifOutOctets
+	{".1.3.6.1.2.1.2.2.1.17", ASN1_COUNTER32}, // ifOutUcastPkts
+	{".1.3.6.1.2.1.2.2.1.18", ASN1_COUNTER32}, // ifOutNUcastPkts
+	{".1.3.6.1.2.1.2.2.1.19", ASN1_COUNTER32}, // ifOutDiscards
+	{".1.3.6.1.2.1.2.2.1.20", ASN1_COUNTER32}, // ifOutErrors
+	{".1.3.6.1.2.1.2.2.1.21", ASN1_GAUGE32},   // ifOutQLen
 
 	// ifXTable — RFC 2863
-	{"1.3.6.1.2.1.31.1.1.1.2", ASN1_COUNTER32},  // ifInMulticastPkts
-	{"1.3.6.1.2.1.31.1.1.1.3", ASN1_COUNTER32},  // ifInBroadcastPkts
-	{"1.3.6.1.2.1.31.1.1.1.4", ASN1_COUNTER32},  // ifOutMulticastPkts
-	{"1.3.6.1.2.1.31.1.1.1.5", ASN1_COUNTER32},  // ifOutBroadcastPkts
-	{"1.3.6.1.2.1.31.1.1.1.6", ASN1_COUNTER64},  // ifHCInOctets
-	{"1.3.6.1.2.1.31.1.1.1.7", ASN1_COUNTER64},  // ifHCInUcastPkts
-	{"1.3.6.1.2.1.31.1.1.1.8", ASN1_COUNTER64},  // ifHCInMulticastPkts
-	{"1.3.6.1.2.1.31.1.1.1.9", ASN1_COUNTER64},  // ifHCInBroadcastPkts
-	{"1.3.6.1.2.1.31.1.1.1.10", ASN1_COUNTER64}, // ifHCOutOctets
-	{"1.3.6.1.2.1.31.1.1.1.11", ASN1_COUNTER64}, // ifHCOutUcastPkts
-	{"1.3.6.1.2.1.31.1.1.1.12", ASN1_COUNTER64}, // ifHCOutMulticastPkts
-	{"1.3.6.1.2.1.31.1.1.1.13", ASN1_COUNTER64}, // ifHCOutBroadcastPkts
-	{"1.3.6.1.2.1.31.1.1.1.15", ASN1_GAUGE32},   // ifHighSpeed
-	{"1.3.6.1.2.1.31.1.1.1.19", ASN1_TIMETICKS}, // ifCounterDiscontinuityTime
+	{".1.3.6.1.2.1.31.1.1.1.2", ASN1_COUNTER32},  // ifInMulticastPkts
+	{".1.3.6.1.2.1.31.1.1.1.3", ASN1_COUNTER32},  // ifInBroadcastPkts
+	{".1.3.6.1.2.1.31.1.1.1.4", ASN1_COUNTER32},  // ifOutMulticastPkts
+	{".1.3.6.1.2.1.31.1.1.1.5", ASN1_COUNTER32},  // ifOutBroadcastPkts
+	{".1.3.6.1.2.1.31.1.1.1.6", ASN1_COUNTER64},  // ifHCInOctets
+	{".1.3.6.1.2.1.31.1.1.1.7", ASN1_COUNTER64},  // ifHCInUcastPkts
+	{".1.3.6.1.2.1.31.1.1.1.8", ASN1_COUNTER64},  // ifHCInMulticastPkts
+	{".1.3.6.1.2.1.31.1.1.1.9", ASN1_COUNTER64},  // ifHCInBroadcastPkts
+	{".1.3.6.1.2.1.31.1.1.1.10", ASN1_COUNTER64}, // ifHCOutOctets
+	{".1.3.6.1.2.1.31.1.1.1.11", ASN1_COUNTER64}, // ifHCOutUcastPkts
+	{".1.3.6.1.2.1.31.1.1.1.12", ASN1_COUNTER64}, // ifHCOutMulticastPkts
+	{".1.3.6.1.2.1.31.1.1.1.13", ASN1_COUNTER64}, // ifHCOutBroadcastPkts
+	{".1.3.6.1.2.1.31.1.1.1.15", ASN1_GAUGE32},   // ifHighSpeed
+	{".1.3.6.1.2.1.31.1.1.1.19", ASN1_TIMETICKS}, // ifCounterDiscontinuityTime
 
 	// ipAddrTable — RFC 4293
-	{"1.3.6.1.2.1.4.20.1.1", ASN1_IPADDRESS}, // ipAdEntAddr
-	{"1.3.6.1.2.1.4.20.1.3", ASN1_IPADDRESS}, // ipAdEntNetMask
+	{".1.3.6.1.2.1.4.20.1.1", ASN1_IPADDRESS}, // ipAdEntAddr
+	{".1.3.6.1.2.1.4.20.1.3", ASN1_IPADDRESS}, // ipAdEntNetMask
 
 	// ipRouteTable (deprecated but still walked by many NMSes)
-	{"1.3.6.1.2.1.4.21.1.1", ASN1_IPADDRESS},  // ipRouteDest
-	{"1.3.6.1.2.1.4.21.1.7", ASN1_IPADDRESS},  // ipRouteNextHop
-	{"1.3.6.1.2.1.4.21.1.11", ASN1_IPADDRESS}, // ipRouteMask
+	{".1.3.6.1.2.1.4.21.1.1", ASN1_IPADDRESS},  // ipRouteDest
+	{".1.3.6.1.2.1.4.21.1.7", ASN1_IPADDRESS},  // ipRouteNextHop
+	{".1.3.6.1.2.1.4.21.1.11", ASN1_IPADDRESS}, // ipRouteMask
 
 	// ipNetToMediaTable
-	{"1.3.6.1.2.1.4.22.1.3", ASN1_IPADDRESS}, // ipNetToMediaNetAddress
+	{".1.3.6.1.2.1.4.22.1.3", ASN1_IPADDRESS}, // ipNetToMediaNetAddress
 }
 
 // snmpTypeTag returns the SNMP application type tag for the given OID, or 0

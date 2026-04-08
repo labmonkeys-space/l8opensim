@@ -202,12 +202,7 @@ func (sm *SimulatorManager) LoadSpecificResources(filename string) (*DeviceResou
 		return nil, fmt.Errorf("failed to parse resource file %s: %v", resourcePath, err)
 	}
 
-	// Sort SNMP resources by OID to ensure correct lexicographic ordering for SNMP walks
-	sort.Slice(resources.SNMP, func(i, j int) bool {
-		return compareOIDsLexicographically(resources.SNMP[i].OID, resources.SNMP[j].OID) < 0
-	})
-
-	// Build performance indexes for fast lookups
+	// Build performance indexes for fast lookups (also sorts by OID after normalizing)
 	sm.buildResourceIndexes(&resources)
 
 	// Cache the loaded resources with indexes
@@ -252,12 +247,7 @@ func (sm *SimulatorManager) loadSpecificResourcesFromDir(dirPath string, cacheKe
 		resources.API = append(resources.API, partResources.API...)
 	}
 
-	// Sort SNMP resources by OID to ensure correct lexicographic ordering for SNMP walks
-	sort.Slice(resources.SNMP, func(i, j int) bool {
-		return compareOIDsLexicographically(resources.SNMP[i].OID, resources.SNMP[j].OID) < 0
-	})
-
-	// Build performance indexes for fast lookups
+	// Build performance indexes for fast lookups (also sorts by OID after normalizing)
 	sm.buildResourceIndexes(resources)
 
 	// Cache the loaded resources with indexes
@@ -286,12 +276,17 @@ func (sm *SimulatorManager) buildResourceIndexes(resources *DeviceResources) {
 	resources.oidNextMap = &sync.Map{}
 
 	// Build oidIndex and sortedOIDs, skipping dynamic OIDs handled elsewhere.
+	// Normalize OIDs from JSON to always use a leading dot.
 	for _, resource := range resources.SNMP {
-		if resource.OID == "1.3.6.1.2.1.1.5.0" || resource.OID == "1.3.6.1.2.1.1.6.0" {
+		oid := resource.OID
+		if len(oid) > 0 && oid[0] != '.' {
+			oid = "." + oid
+		}
+		if oid == ".1.3.6.1.2.1.1.5.0" || oid == ".1.3.6.1.2.1.1.6.0" {
 			continue
 		}
-		resources.oidIndex.Store(resource.OID, resource.Response)
-		resources.sortedOIDs = append(resources.sortedOIDs, resource.OID)
+		resources.oidIndex.Store(oid, resource.Response)
+		resources.sortedOIDs = append(resources.sortedOIDs, oid)
 	}
 
 	// Build oidNextMap from sortedOIDs rather than from the raw SNMP slice.
