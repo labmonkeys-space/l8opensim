@@ -154,6 +154,9 @@ func parseGetBulkResponse(data []byte) ([]string, []string, error) {
 }
 
 // extractVarBindValue returns a string representation of the next ASN.1 value.
+// Handles INTEGER, OCTET STRING, and SNMPv2c application types (Gauge32,
+// Counter32, TimeTicks, Counter64) so that test assertions can compare
+// numeric values regardless of which application tag was used.
 func extractVarBindValue(data []byte, pos int) string {
 	if pos >= len(data) {
 		return ""
@@ -170,6 +173,19 @@ func extractVarBindValue(data []byte, pos int) string {
 		v := 0
 		for i := 0; i < vLen && pos+i < len(data); i++ {
 			v = (v << 8) | int(data[pos+i])
+		}
+		return fmt.Sprintf("%d", v)
+	case ASN1_GAUGE32, ASN1_COUNTER32, ASN1_TIMETICKS:
+		// Unsigned 32-bit application types — decode as uint then format.
+		var v uint64
+		for i := 0; i < vLen && pos+i < len(data); i++ {
+			v = (v << 8) | uint64(data[pos+i])
+		}
+		return fmt.Sprintf("%d", v)
+	case ASN1_COUNTER64:
+		var v uint64
+		for i := 0; i < vLen && pos+i < len(data); i++ {
+			v = (v << 8) | uint64(data[pos+i])
 		}
 		return fmt.Sprintf("%d", v)
 	case ASN1_OCTET_STRING:

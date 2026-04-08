@@ -29,6 +29,13 @@ const (
 	ASN1_GET_BULK     = 0xA5
 	ASN1_OID          = 0x06
 	SNMP_GET_RESPONSE = 0xa2
+
+	// SNMPv2c application type tags (RFC 1902 §7.1)
+	ASN1_IPADDRESS = 0x40 // IpAddress  – 4-byte IPv4 address
+	ASN1_COUNTER32 = 0x41 // Counter32  – 32-bit monotonically increasing counter
+	ASN1_GAUGE32   = 0x42 // Gauge32    – 32-bit gauge (also used for Unsigned32)
+	ASN1_TIMETICKS = 0x43 // TimeTicks  – hundredths of a second since epoch
+	ASN1_COUNTER64 = 0x46 // Counter64  – 64-bit monotonically increasing counter
 )
 
 // SNMPv3 specific constants
