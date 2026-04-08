@@ -384,16 +384,27 @@ func TestHandleGetBulkFallback(t *testing.T) {
 	})
 
 	// Pass a garbage PDU — parseAllOIDsFromRequest returns empty, fallback activates.
+	// handleGetBulk falls back to startOID="1.3.6.1.2.1.1.1", so GETNEXT produces
+	// the first OID in the MIB: 1.3.6.1.2.1.1.1.0 (sysDescr).
 	garblePDU := []byte{0x00, 0x01, 0x02, 0x03}
 
 	resp := s.handleGetBulk("1.3.6.1.2.1.1.1", garblePDU)
 
-	// Should still produce a valid response with at least one varbind.
-	gotOIDs, _, err := parseGetBulkResponse(resp)
+	gotOIDs, gotVals, err := parseGetBulkResponse(resp)
 	if err != nil {
 		t.Fatalf("parseGetBulkResponse: %v", err)
 	}
 	if len(gotOIDs) == 0 {
-		t.Error("fallback produced no varbinds")
+		t.Fatal("fallback produced no varbinds")
+	}
+	// The fallback must return 1.3.6.1.2.1.1.1.0 (the first — and only — OID
+	// lexicographically greater than the start prefix "1.3.6.1.2.1.1.1").
+	wantOID := "1.3.6.1.2.1.1.1.0"
+	wantVal := "Cisco IOS"
+	if gotOIDs[0] != wantOID {
+		t.Errorf("fallback OID: got %q, want %q", gotOIDs[0], wantOID)
+	}
+	if gotVals[0] != wantVal {
+		t.Errorf("fallback value: got %q, want %q", gotVals[0], wantVal)
 	}
 }

@@ -334,7 +334,11 @@ func (s *SNMPServer) parseAllOIDsFromRequest(data []byte) []string {
 		return oids
 	}
 	pos++
-	_, pos = parseLength(data, pos)
+	outerLen, newPos := parseLength(data, pos)
+	if outerLen < 0 {
+		return oids
+	}
+	pos = newPos
 
 	// Version (INTEGER)
 	if pos >= len(data) || data[pos] != ASN1_INTEGER {
@@ -342,6 +346,9 @@ func (s *SNMPServer) parseAllOIDsFromRequest(data []byte) []string {
 	}
 	pos++
 	verLen, newPos := parseLength(data, pos)
+	if verLen < 0 {
+		return oids
+	}
 	pos = newPos + verLen
 
 	// Community (OCTET STRING)
@@ -350,6 +357,9 @@ func (s *SNMPServer) parseAllOIDsFromRequest(data []byte) []string {
 	}
 	pos++
 	commLen, newPos := parseLength(data, pos)
+	if commLen < 0 {
+		return oids
+	}
 	pos = newPos + commLen
 
 	// PDU tag (any: GET / GETNEXT / GETBULK / …)
@@ -357,7 +367,11 @@ func (s *SNMPServer) parseAllOIDsFromRequest(data []byte) []string {
 		return oids
 	}
 	pos++ // consume PDU type byte
-	_, pos = parseLength(data, pos)
+	pduLen, newPos := parseLength(data, pos)
+	if pduLen < 0 {
+		return oids
+	}
+	pos = newPos
 
 	// Request-ID (INTEGER)
 	if pos >= len(data) || data[pos] != ASN1_INTEGER {
@@ -365,6 +379,9 @@ func (s *SNMPServer) parseAllOIDsFromRequest(data []byte) []string {
 	}
 	pos++
 	reqIDLen, newPos := parseLength(data, pos)
+	if reqIDLen < 0 {
+		return oids
+	}
 	pos = newPos + reqIDLen
 
 	// error-status / non-repeaters (INTEGER)
@@ -373,6 +390,9 @@ func (s *SNMPServer) parseAllOIDsFromRequest(data []byte) []string {
 	}
 	pos++
 	f1Len, newPos := parseLength(data, pos)
+	if f1Len < 0 {
+		return oids
+	}
 	pos = newPos + f1Len
 
 	// error-index / max-repetitions (INTEGER)
@@ -381,6 +401,9 @@ func (s *SNMPServer) parseAllOIDsFromRequest(data []byte) []string {
 	}
 	pos++
 	f2Len, newPos := parseLength(data, pos)
+	if f2Len < 0 {
+		return oids
+	}
 	pos = newPos + f2Len
 
 	// VarBindList (SEQUENCE)
@@ -389,6 +412,9 @@ func (s *SNMPServer) parseAllOIDsFromRequest(data []byte) []string {
 	}
 	pos++
 	vbListLen, newPos := parseLength(data, pos)
+	if vbListLen < 0 {
+		return oids
+	}
 	pos = newPos
 	end := pos + vbListLen
 
@@ -399,16 +425,21 @@ func (s *SNMPServer) parseAllOIDsFromRequest(data []byte) []string {
 		}
 		pos++
 		vbLen, newPos := parseLength(data, pos)
+		if vbLen < 0 {
+			break
+		}
 		pos = newPos
 		nextVarBind := pos + vbLen
+		if nextVarBind > end {
+			break // VarBind claims to extend beyond declared VarBindList boundary
+		}
 
 		// OID inside VarBind
 		if pos < len(data) && data[pos] == ASN1_OID {
 			pos++
 			oidLen, newPos := parseLength(data, pos)
-			pos = newPos
-			if pos+oidLen <= len(data) {
-				if oid := decodeOID(data[pos : pos+oidLen]); oid != "" {
+			if oidLen >= 0 && newPos+oidLen <= len(data) {
+				if oid := decodeOID(data[newPos : newPos+oidLen]); oid != "" {
 					oids = append(oids, oid)
 				}
 			}
