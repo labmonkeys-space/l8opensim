@@ -98,9 +98,17 @@ func main() {
 		port            = flag.String("port", "8080", "Server port (default: 8080)")
 		noNamespace     = flag.Bool("no-namespace", false, "Disable network namespace isolation (use root namespace)")
 		showHelp        = flag.Bool("help", false, "Show this help message")
+		ifScenario      = flag.Int("if-scenario", 2, "Interface state scenario: 1=all-shutdown, 2=all-normal (default), 3=all-failure, 4=pct-failure")
+		ifFailurePct    = flag.Int("if-failure-pct", 10, "Percentage of interfaces with oper-down (used with -if-scenario 4, 0–100)")
 	)
 
 	flag.Parse()
+
+	// Apply interface state scenario
+	ifStateConfig = &IfStateConfig{
+		Scenario:   *ifScenario,
+		FailurePct: *ifFailurePct,
+	}
 
 	// Show help if requested
 	if *showHelp {
