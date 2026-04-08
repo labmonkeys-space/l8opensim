@@ -44,6 +44,11 @@ func (s *SNMPServer) findResponse(oid string) string {
 		}
 	}
 
+	// Interface state scenario override (admin/oper status)
+	if override := getIfStateOverride(oid); override != "" {
+		return override
+	}
+
 	// Fast O(1) lookup using lock-free sync.Map
 	if s.device.resources.oidIndex != nil {
 		if response, exists := s.device.resources.oidIndex.Load(oid); exists {
