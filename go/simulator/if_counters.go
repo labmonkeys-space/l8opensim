@@ -41,14 +41,19 @@ const (
 //
 // where T = 3600 s and φᵢ is a per-interface random phase offset.
 // The rate never falls below 60% of capacity, so the counter is strictly monotonic.
+//
+// Thread safety: all fields are written once by InitIfCounters before the device's
+// SNMP server goroutine is started. Concurrent reads in GetHCOctets are safe because
+// goroutine creation provides the required happens-before relationship.
 type IfCounterCycler struct {
-	startTime  time.Time
-	ifCount    int
-	ifSpeedBps []uint64  // per-interface link speed in bps (slot 0 = ifIndex 1)
-	baseIn     []uint64  // per-interface starting octet counter (in)
-	baseOut    []uint64  // per-interface starting octet counter (out)
-	phaseIn    []float64 // per-interface random phase offset in [0, 2π)
-	phaseOut   []float64
+	startTime      time.Time
+	maxIfIndex     int              // upper bound for array indexing
+	knownIfIndexes map[int]struct{} // exact set of ifIndex values present in oidIndex
+	ifSpeedBps     []uint64         // per-interface link speed in bps (slot = ifIndex-1)
+	baseIn         []uint64         // per-interface starting octet counter (in)
+	baseOut        []uint64         // per-interface starting octet counter (out)
+	phaseIn        []float64        // per-interface random phase offset in [0, 2π)
+	phaseOut       []float64
 }
 
 // GetHCOctets returns the current dynamic counter value for an HC OID, or ""
@@ -68,7 +73,12 @@ func (ic *IfCounterCycler) GetHCOctets(oid string) string {
 	}
 
 	ifIndex, err := strconv.Atoi(oid[len(prefix):])
-	if err != nil || ifIndex < 1 || ifIndex > ic.ifCount {
+	if err != nil || ifIndex < 1 || ifIndex > ic.maxIfIndex {
+		return ""
+	}
+	// Reject ifIndex values that don't exist in the device's OID table
+	// (guards against sparse interface numbering, e.g., ifIndex 1, 3, 5).
+	if _, known := ic.knownIfIndexes[ifIndex]; !known {
 		return ""
 	}
 	slot := ifIndex - 1
@@ -91,71 +101,90 @@ func (ic *IfCounterCycler) GetHCOctets(oid string) string {
 	T := hcPeriodSec
 	deltaOctets := speedBytesPerSec * (0.8*t + 0.2*(T/(2*math.Pi))*(math.Cos(phase)-math.Cos(2*math.Pi*t/T+phase)))
 
+	// Clamp to zero: floating-point imprecision at t≈0 can produce a
+	// tiny negative value; casting a negative float64 to uint64 wraps.
+	if deltaOctets < 0 {
+		deltaOctets = 0
+	}
 	return fmt.Sprintf("%d", base+uint64(deltaOctets))
 }
 
 // InitIfCounters sets up per-interface HC counter cycling for dynamic
 // ifHCInOctets / ifHCOutOctets values. Interface speeds are read from
 // the device's oidIndex (ifHighSpeed in Mbps preferred; falls back to
-// ifSpeed in bps). Must be called after NewMetricsCycler and before the
-// device starts serving requests.
+// ifSpeed in bps).
+//
+// Must be called after NewMetricsCycler and before device.Start() so that
+// goroutine creation provides the happens-before edge required for thread safety.
 func (c *MetricsCycler) InitIfCounters(resources *DeviceResources, seed int64) {
 	if resources == nil || resources.oidIndex == nil {
 		return
 	}
 
-	// Discover the highest ifIndex that has an HC in-octets OID.
-	maxIfIndex := 0
+	// Collect the exact set of ifIndex values that have HC in-octets OIDs.
+	knownIdxs := make(map[int]struct{})
 	resources.oidIndex.Range(func(k, _ interface{}) bool {
 		oid, ok := k.(string)
 		if !ok {
 			return true
 		}
 		if strings.HasPrefix(oid, hcInOIDPrefix) {
-			if idx, err := strconv.Atoi(oid[len(hcInOIDPrefix):]); err == nil && idx > maxIfIndex {
-				maxIfIndex = idx
+			if idx, err := strconv.Atoi(oid[len(hcInOIDPrefix):]); err == nil && idx > 0 {
+				knownIdxs[idx] = struct{}{}
 			}
 		}
 		return true
 	})
-	if maxIfIndex == 0 {
+	if len(knownIdxs) == 0 {
 		return // no HC counters for this device type
 	}
 
+	maxIdx := 0
+	for idx := range knownIdxs {
+		if idx > maxIdx {
+			maxIdx = idx
+		}
+	}
+
 	ic := &IfCounterCycler{
-		startTime:  time.Now(),
-		ifCount:    maxIfIndex,
-		ifSpeedBps: make([]uint64, maxIfIndex),
-		baseIn:     make([]uint64, maxIfIndex),
-		baseOut:    make([]uint64, maxIfIndex),
-		phaseIn:    make([]float64, maxIfIndex),
-		phaseOut:   make([]float64, maxIfIndex),
+		startTime:      time.Now(),
+		maxIfIndex:     maxIdx,
+		knownIfIndexes: knownIdxs,
+		ifSpeedBps:     make([]uint64, maxIdx),
+		baseIn:         make([]uint64, maxIdx),
+		baseOut:        make([]uint64, maxIdx),
+		phaseIn:        make([]float64, maxIdx),
+		phaseOut:       make([]float64, maxIdx),
 	}
 
 	rng := rand.New(rand.NewSource(seed))
 
-	for i := 1; i <= maxIfIndex; i++ {
-		slot := i - 1
+	for idx := range knownIdxs {
+		slot := idx - 1
 
 		// Prefer ifHighSpeed (Mbps → bps) over ifSpeed (bps, capped at ~4 Gbps).
 		var speedBps uint64 = 1_000_000_000 // default 1 Gbps
-		highSpeedOID := fmt.Sprintf(".1.3.6.1.2.1.31.1.1.1.15.%d", i)
+		highSpeedOID := fmt.Sprintf(".1.3.6.1.2.1.31.1.1.1.15.%d", idx)
 		if v, ok := resources.oidIndex.Load(highSpeedOID); ok {
-			if mbps, err := strconv.ParseUint(v.(string), 10, 64); err == nil && mbps > 0 {
-				speedBps = mbps * 1_000_000
+			if s, ok := v.(string); ok {
+				if mbps, err := strconv.ParseUint(s, 10, 64); err == nil && mbps > 0 {
+					speedBps = mbps * 1_000_000
+				}
 			}
 		} else {
-			ifSpeedOID := fmt.Sprintf(".1.3.6.1.2.1.2.2.1.5.%d", i)
+			ifSpeedOID := fmt.Sprintf(".1.3.6.1.2.1.2.2.1.5.%d", idx)
 			if v, ok := resources.oidIndex.Load(ifSpeedOID); ok {
-				if bps, err := strconv.ParseUint(v.(string), 10, 64); err == nil && bps > 0 {
-					speedBps = bps
+				if s, ok := v.(string); ok {
+					if bps, err := strconv.ParseUint(s, 10, 64); err == nil && bps > 0 {
+						speedBps = bps
+					}
 				}
 			}
 		}
 		ic.ifSpeedBps[slot] = speedBps
 
 		// Seed counters with ~24 h of 80%-average traffic so they look realistic
-		// from the first poll. Add ±5% per-interface jitter for variety.
+		// from the first poll. Add up to +5% per-interface jitter for variety.
 		avg24h := uint64(float64(speedBps) / 8.0 * 0.8 * 86400.0)
 		ic.baseIn[slot] = avg24h + uint64(rng.Float64()*float64(avg24h)*0.05)
 		ic.baseOut[slot] = avg24h + uint64(rng.Float64()*float64(avg24h)*0.05)

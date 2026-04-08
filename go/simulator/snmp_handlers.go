@@ -546,10 +546,16 @@ func (s *SNMPServer) parseGetBulkParams(data []byte) (int, int) {
 // is an ifHCInOctets or ifHCOutOctets OID. Returns staticResp unchanged for
 // all other OIDs. Used by findNextOID to return live counter values during walks.
 func (s *SNMPServer) overrideIfHC(oid, staticResp string) string {
-	if s.device.metricsCycler != nil && s.device.metricsCycler.ifCounters != nil {
-		if dynVal := s.device.metricsCycler.ifCounters.GetHCOctets(oid); dynVal != "" {
-			return dynVal
-		}
+	if s.device.metricsCycler == nil || s.device.metricsCycler.ifCounters == nil {
+		return staticResp
+	}
+	// Fast pre-check: HC OIDs live under .1.3.6.1.2.1.31; skip the full
+	// prefix match for the vast majority of OIDs that are not in ifXTable.
+	if !strings.HasPrefix(oid, ".1.3.6.1.2.1.31.") {
+		return staticResp
+	}
+	if dynVal := s.device.metricsCycler.ifCounters.GetHCOctets(oid); dynVal != "" {
+		return dynVal
 	}
 	return staticResp
 }
