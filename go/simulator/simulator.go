@@ -96,6 +96,7 @@ func main() {
 		snmpv3AuthProto = flag.String("snmpv3-auth", "md5", "SNMPv3 authentication protocol: none, md5, sha1 (default: md5)")
 		snmpv3PrivProto = flag.String("snmpv3-priv", "none", "SNMPv3 privacy protocol: none, des, aes128 (default: none)")
 		port            = flag.String("port", "8080", "Server port (default: 8080)")
+		snmpPort        = flag.Int("snmp-port", DEFAULT_SNMP_PORT, "UDP port for SNMP listener on each device (default: 161)")
 		noNamespace     = flag.Bool("no-namespace", false, "Disable network namespace isolation (use root namespace)")
 		showHelp        = flag.Bool("help", false, "Show this help message")
 		ifScenario      = flag.Int("if-scenario", 2, "Interface state scenario: 1=all-shutdown, 2=all-normal (default), 3=all-failure, 4=pct-failure")
@@ -129,7 +130,8 @@ func main() {
 		fmt.Println("Examples:")
 		fmt.Printf("  %s                                                    # Start server only\n", os.Args[0])
 		fmt.Printf("  %s -auto-start-ip 192.168.100.1 -auto-count 5       # Auto-create 5 devices\n", os.Args[0])
-		fmt.Printf("  %s -auto-start-ip 10.10.10.1 -auto-count 3 -port 9090  # Custom port\n", os.Args[0])
+		fmt.Printf("  %s -auto-start-ip 10.10.10.1 -auto-count 3 -port 9090  # Custom API port\n", os.Args[0])
+		fmt.Printf("  %s -auto-start-ip 10.10.10.1 -auto-count 3 -snmp-port 1161  # Non-privileged SNMP port\n", os.Args[0])
 		fmt.Printf("  %s -auto-start-ip 192.168.100.1 -auto-count 30000      # 30K devices (uses namespace)\n", os.Args[0])
 		fmt.Printf("  %s -auto-start-ip 192.168.100.1 -auto-count 100 -no-namespace  # Disable namespace\n", os.Args[0])
 		fmt.Printf("  %s -auto-start-ip 192.168.100.1 -auto-count 2 \\      # SNMPv3 with MD5 auth\n", os.Args[0])
@@ -222,7 +224,7 @@ func main() {
 					*snmpv3EngineID, *snmpv3AuthProto, *snmpv3PrivProto)
 			}
 
-			err := manager.CreateDevices(*autoStartIP, *autoCount, *autoNetmask, "", v3Config, false, "")
+			err := manager.CreateDevices(*autoStartIP, *autoCount, *autoNetmask, "", v3Config, false, "", *snmpPort)
 			if err != nil {
 				log.Printf("Failed to auto-create devices: %v", err)
 			} else {

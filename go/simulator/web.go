@@ -41,14 +41,23 @@ func createDevicesHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	snmpPort := req.SNMPPort
+	if snmpPort == 0 {
+		snmpPort = DEFAULT_SNMP_PORT
+	}
+	if snmpPort < 1 || snmpPort > 65535 {
+		sendErrorResponse(w, "snmp_port must be between 1 and 65535", http.StatusBadRequest)
+		return
+	}
+
 	// Use CreateDevicesWithOptions if pre-allocation parameters are specified
 	if req.PreAllocate || req.MaxWorkers > 0 {
 		// If PreAllocate is not explicitly set but MaxWorkers is provided, enable pre-allocation
 		preAllocate := req.PreAllocate || req.MaxWorkers > 0
-		err = manager.CreateDevicesWithOptions(req.StartIP, req.DeviceCount, req.Netmask, req.ResourceFile, req.SNMPv3, preAllocate, req.MaxWorkers, req.RoundRobin, req.Category)
+		err = manager.CreateDevicesWithOptions(req.StartIP, req.DeviceCount, req.Netmask, req.ResourceFile, req.SNMPv3, preAllocate, req.MaxWorkers, req.RoundRobin, req.Category, snmpPort)
 	} else {
 		// Use default behavior (auto pre-allocates for 10+ devices)
-		err = manager.CreateDevices(req.StartIP, req.DeviceCount, req.Netmask, req.ResourceFile, req.SNMPv3, req.RoundRobin, req.Category)
+		err = manager.CreateDevices(req.StartIP, req.DeviceCount, req.Netmask, req.ResourceFile, req.SNMPv3, req.RoundRobin, req.Category, snmpPort)
 	}
 	if err != nil {
 		sendErrorResponse(w, err.Error(), http.StatusInternalServerError)

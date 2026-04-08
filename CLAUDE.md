@@ -17,6 +17,7 @@ sudo ./simulator [flags]
 -auto-start-ip <IP>     # Auto-create devices starting at this IP
 -auto-count <N>         # Number of devices to auto-create
 -port <port>            # HTTP API port (default: 8080)
+-snmp-port <port>       # UDP port for SNMP listener on each device (default: 161)
 -snmpv3-engine-id <id>  # Enable SNMPv3 (omit for v2c only)
 -snmpv3-auth <proto>    # none | md5 | sha1
 -snmpv3-priv <proto>    # none | des | aes128

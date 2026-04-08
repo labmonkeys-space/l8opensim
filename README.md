@@ -80,7 +80,8 @@ Options:
   -auto-start-ip string       Auto-create devices starting from this IP (e.g., 192.168.100.1)
   -auto-count int             Number of devices to auto-create (requires -auto-start-ip)
   -auto-netmask string        Netmask for auto-created devices (default: "24")
-  -port string                Server port (default: "8080")
+  -port string                HTTP API server port (default: "8080")
+  -snmp-port int              UDP port for the SNMP listener on each device (default: 161)
   -snmpv3-engine-id string    Enable SNMPv3 with specified engine ID
   -snmpv3-auth string         SNMPv3 auth protocol: none, md5, sha1 (default: "md5")
   -snmpv3-priv string         SNMPv3 privacy protocol: none, des, aes128 (default: "none")
@@ -99,8 +100,11 @@ sudo ./simulator
 # Auto-create 5 devices starting from 192.168.100.1
 sudo ./simulator -auto-start-ip 192.168.100.1 -auto-count 5
 
-# Custom port and subnet
+# Custom API port and subnet
 sudo ./simulator -auto-start-ip 10.10.10.1 -auto-count 100 -port 9090
+
+# Use a non-privileged SNMP port (avoids requiring CAP_NET_BIND_SERVICE)
+sudo ./simulator -auto-start-ip 10.10.10.1 -auto-count 10 -snmp-port 1161
 
 # Enable SNMPv3 with MD5 authentication and AES128 privacy
 sudo ./simulator -snmpv3-engine-id 0x80001234 -snmpv3-auth md5 -snmpv3-priv aes128
@@ -181,6 +185,16 @@ curl -X POST http://localhost:8080/api/v1/devices \
     "round_robin": true
   }'
 
+# Create devices on a non-privileged SNMP port
+curl -X POST http://localhost:8080/api/v1/devices \
+  -H "Content-Type: application/json" \
+  -d '{
+    "start_ip": "192.168.100.1",
+    "device_count": 5,
+    "netmask": "24",
+    "snmp_port": 1161
+  }'
+
 # Create devices filtered by category
 curl -X POST http://localhost:8080/api/v1/devices \
   -H "Content-Type: application/json" \
@@ -257,6 +271,9 @@ snmpget -v2c -c public 192.168.100.1 1.3.6.1.2.1.1.1.0
 
 # Walk interface table
 snmpwalk -v2c -c public 192.168.100.1 1.3.6.1.2.1.2.2.1
+
+# Query on a custom SNMP port (e.g. 1161)
+snmpwalk -v2c -c public -p 1161 192.168.100.1 1.3.6.1.2.1.1
 
 # SNMPv3 query (when enabled)
 snmpget -v3 -l authPriv -u admin -a MD5 -A authpass123 -x AES -X privpass123 \
@@ -479,11 +496,13 @@ Metrics are exposed via NVIDIA DCGM SNMP OIDs and cycle through 100 pre-generate
 
 Each device type has its own directory under `go/simulator/resources/` with JSON files split for maintainability. The loader automatically merges all JSON files in a device directory. There are currently 341 JSON resource files across 28 device types.
 
+OIDs in resource files may be written with or without a leading dot — the loader normalises them to the net-snmp convention (`.1.3.6.1…`) at startup.
+
 ```json
 {
   "snmp": [
     {
-      "oid": "1.3.6.1.2.1.1.1.0",
+      "oid": ".1.3.6.1.2.1.1.1.0",
       "response": "Cisco IOS Software, Router Version 15.1"
     }
   ],
@@ -625,10 +644,11 @@ The simulator is optimized for high-scale deployments:
 ### Common Issues
 
 1. **Permission Denied**: Ensure running with `sudo` for TUN interface creation
-2. **Port Conflicts**: Use `-port` flag to specify alternative port
-3. **TUN Module Missing**: Run `sudo modprobe tun`
-4. **High Resource Usage**: Increase file limits with `./increase_file_limits.sh` and use network namespaces (enabled by default)
-5. **SNMP Integer Encoding**: Fixed panic issues with negative integer values in ASN.1 encoding
+2. **Port Conflicts**: Use `-port` flag to specify an alternative HTTP API port
+3. **SNMP Privileged Port**: Port 161 requires root or `CAP_NET_BIND_SERVICE`; use `-snmp-port 1161` to bind a non-privileged port instead
+4. **TUN Module Missing**: Run `sudo modprobe tun`
+5. **High Resource Usage**: Increase file limits with `./increase_file_limits.sh` and use network namespaces (enabled by default)
+6. **SNMP Integer Encoding**: Fixed panic issues with negative integer values in ASN.1 encoding
 
 ### Debug Commands
 
@@ -636,8 +656,8 @@ The simulator is optimized for high-scale deployments:
 # Check TUN interfaces
 ip addr show | grep sim
 
-# Verify device processes
-ss -tulpn | grep -E "(161|22)"
+# Verify device processes (adjust port if using -snmp-port)
+ss -tulpn | grep -E "(161|1161|22)"
 
 # Monitor system resources
 htop

@@ -192,7 +192,8 @@ type CreateDevicesRequest struct {
 	Category     string         `json:"category,omitempty"`      // Optional: filter round robin to a category
 	SNMPv3       *SNMPv3Config  `json:"snmpv3,omitempty"`
 	PreAllocate  bool           `json:"pre_allocate,omitempty"` // Optional: explicitly enable/disable pre-allocation
-	MaxWorkers   int            `json:"max_workers,omitempty"` // Optional: max workers for pre-allocation
+	MaxWorkers   int            `json:"max_workers,omitempty"`  // Optional: max workers for pre-allocation
+	SNMPPort     int            `json:"snmp_port,omitempty"`    // Optional: UDP port for SNMP listener (default: 161)
 }
 
 // RoundRobinDeviceTypes defines all 28 device flavors for round robin creation

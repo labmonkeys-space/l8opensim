@@ -25,12 +25,16 @@ import (
 	"time"
 )
 
-func (sm *SimulatorManager) CreateDevices(startIP string, count int, netmask string, resourceFile string, v3Config *SNMPv3Config, roundRobin bool, category string) error {
-	return sm.CreateDevicesWithOptions(startIP, count, netmask, resourceFile, v3Config, true, 0, roundRobin, category)
+func (sm *SimulatorManager) CreateDevices(startIP string, count int, netmask string, resourceFile string, v3Config *SNMPv3Config, roundRobin bool, category string, snmpPort int) error {
+	return sm.CreateDevicesWithOptions(startIP, count, netmask, resourceFile, v3Config, true, 0, roundRobin, category, snmpPort)
 }
 
 // CreateDevicesWithOptions creates devices with optional pre-allocation control
-func (sm *SimulatorManager) CreateDevicesWithOptions(startIP string, count int, netmask string, resourceFile string, v3Config *SNMPv3Config, preAllocate bool, maxWorkers int, roundRobin bool, category string) error {
+func (sm *SimulatorManager) CreateDevicesWithOptions(startIP string, count int, netmask string, resourceFile string, v3Config *SNMPv3Config, preAllocate bool, maxWorkers int, roundRobin bool, category string, snmpPort int) error {
+	if snmpPort == 0 {
+		snmpPort = DEFAULT_SNMP_PORT
+	}
+
 	// Set device creation status
 	sm.isCreatingDevices.Store(true)
 	sm.deviceCreateProgress.Store(0)
@@ -147,7 +151,7 @@ func (sm *SimulatorManager) CreateDevicesWithOptions(startIP string, count int, 
 
 	if sm.tunPoolSize > 0 {
 		// Pre-allocation was done - create devices in parallel
-		sm.createDevicesParallel(count, netmask, resourceFile, resources, v3Config, &successCount, roundRobin, roundRobinResources, roundRobinResourceFiles)
+		sm.createDevicesParallel(count, netmask, resourceFile, resources, v3Config, &successCount, roundRobin, roundRobinResources, roundRobinResourceFiles, snmpPort)
 	} else {
 		// No pre-allocation - create devices sequentially (original logic)
 		for i := 0; i < count; i++ {
@@ -225,7 +229,7 @@ func (sm *SimulatorManager) CreateDevicesWithOptions(startIP string, count int, 
 			device := &DeviceSimulator{
 				ID:           deviceID,
 				IP:           deviceIP,
-				SNMPPort:     DEFAULT_SNMP_PORT,
+				SNMPPort:     snmpPort,
 				SSHPort:      DEFAULT_SSH_PORT,
 				APIPort:      DEFAULT_API_PORT,
 				tunIface:     tunIface,
@@ -324,7 +328,7 @@ func (sm *SimulatorManager) CreateDevicesWithOptions(startIP string, count int, 
 }
 
 // createDevicesParallel creates devices in parallel when pre-allocation was done
-func (sm *SimulatorManager) createDevicesParallel(count int, netmask string, resourceFile string, resources *DeviceResources, v3Config *SNMPv3Config, successCount *int, roundRobin bool, roundRobinResources []*DeviceResources, roundRobinResourceFiles []string) {
+func (sm *SimulatorManager) createDevicesParallel(count int, netmask string, resourceFile string, resources *DeviceResources, v3Config *SNMPv3Config, successCount *int, roundRobin bool, roundRobinResources []*DeviceResources, roundRobinResourceFiles []string, snmpPort int) {
 	// Worker pool for parallel device creation
 	sem := make(chan struct{}, sm.maxWorkers) // Limit concurrent workers
 	var wg sync.WaitGroup
@@ -383,7 +387,7 @@ func (sm *SimulatorManager) createDevicesParallel(count int, netmask string, res
 			defer func() { <-sem }()
 
 			// Create device in parallel
-			if sm.createSingleDevice(deviceIndex, ip, devID, netmask, devResourceFile, devResources, v3Config) {
+			if sm.createSingleDevice(deviceIndex, ip, devID, netmask, devResourceFile, devResources, v3Config, snmpPort) {
 				mu.Lock()
 				(*successCount)++
 				progress := *successCount
@@ -408,7 +412,7 @@ func (sm *SimulatorManager) createDevicesParallel(count int, netmask string, res
 }
 
 // createSingleDevice creates a single device - used by parallel device creation
-func (sm *SimulatorManager) createSingleDevice(deviceIndex int, deviceIP net.IP, deviceID string, netmask string, resourceFile string, resources *DeviceResources, v3Config *SNMPv3Config) bool {
+func (sm *SimulatorManager) createSingleDevice(deviceIndex int, deviceIP net.IP, deviceID string, netmask string, resourceFile string, resources *DeviceResources, v3Config *SNMPv3Config, snmpPort int) bool {
 	// Check if we have a pre-allocated interface for this IP
 	var tunIface *TunInterface
 
@@ -438,14 +442,13 @@ func (sm *SimulatorManager) createSingleDevice(deviceIndex int, deviceIP net.IP,
 		}
 	}
 
-	// Create device with default ports
 	sysLocationValue := getRandomCity()
 	sysNameValue := getRandomDeviceName()
 
 	device := &DeviceSimulator{
 		ID:           deviceID,
 		IP:           make(net.IP, len(deviceIP)),
-		SNMPPort:     DEFAULT_SNMP_PORT,
+		SNMPPort:     snmpPort,
 		SSHPort:      DEFAULT_SSH_PORT,
 		APIPort:      DEFAULT_API_PORT,
 		tunIface:     tunIface,
