@@ -282,12 +282,15 @@ type oidTypeEntry struct {
 }
 
 // oidTypeTable maps standard MIB OID column prefixes to their RFC-mandated
-// ASN.1 application type tags. Leaf OIDs are matched by HasPrefix(oid, prefix+".").
-// The trailing "." in the check prevents digit-extension false matches
-// (e.g. column prefix "...1" cannot match "...10.*"), so ordering is irrelevant
-// for correctness.
+// ASN.1 application type tags. snmpTypeTag() matches a leaf OID against each
+// entry using HasPrefix(oid, prefix+".") OR exact equality (oid == prefix),
+// so both ".1.3.6.1.2.1.1.2.0" and the bare ".1.3.6.1.2.1.1.2" match the
+// sysObjectID entry. The trailing "." in the HasPrefix check prevents
+// digit-extension false matches (e.g. prefix "...1" cannot match "...10.*"),
+// so ordering within the table is irrelevant for correctness.
 var oidTypeTable = []oidTypeEntry{
 	// MIB-II system group
+	{".1.3.6.1.2.1.1.2", ASN1_OBJECT_ID}, // sysObjectID
 	{".1.3.6.1.2.1.1.3", ASN1_TIMETICKS}, // sysUpTime
 
 	// ifTable — RFC 2863
@@ -362,6 +365,9 @@ func encodeTypedValue(oid, value string) []byte {
 
 	tag := snmpTypeTag(oid)
 	switch tag {
+	case ASN1_OBJECT_ID:
+		return encodeOID(value)
+
 	case ASN1_IPADDRESS:
 		return encodeIPAddress(value)
 
