@@ -289,6 +289,14 @@ func (sm *SimulatorManager) buildResourceIndexes(resources *DeviceResources) {
 		resources.sortedOIDs = append(resources.sortedOIDs, oid)
 	}
 
+	// Sort OIDs into lexicographic order. Resource JSON files group OIDs by
+	// interface (all columns for interface 1, then interface 2, etc.), not by
+	// column, so the raw order is not lexicographic. Binary search in
+	// findNextOID and the oidNextMap both require lexicographic ordering.
+	sort.Slice(resources.sortedOIDs, func(i, j int) bool {
+		return compareOIDsLexicographically(resources.sortedOIDs[i], resources.sortedOIDs[j]) < 0
+	})
+
 	// Build oidNextMap from sortedOIDs rather than from the raw SNMP slice.
 	// The old loop used SNMP[i+1] which could land on a skipped special OID
 	// (sysName/sysLocation). Those OIDs are absent from oidIndex, so the fast
