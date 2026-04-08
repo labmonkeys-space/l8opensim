@@ -2,52 +2,63 @@
   "snmp": [
     {
       "oid": "1.3.6.1.2.1.31.1.1.1.1.1",
-      "response": "GigabitEthernet0/0"
+      "response": "mgmt0"
     },
     {
       "oid": "1.3.6.1.2.1.31.1.1.1.15.1",
-      "response": "1000"
+      "response": "25000"
     },
     {
       "oid": "1.3.6.1.2.1.31.1.1.1.18.1",
-      "response": "WAN uplink to ISP-A"
+      "response": "management"
     },
     {
       "oid": "1.3.6.1.2.1.31.1.1.1.1.2",
-      "response": "GigabitEthernet0/1"
+      "response": "ib0"
     },
     {
       "oid": "1.3.6.1.2.1.31.1.1.1.15.2",
-      "response": "1000"
+      "response": "400000"
     },
     {
       "oid": "1.3.6.1.2.1.31.1.1.1.18.2",
-      "response": "LAN distribution"
+      "response": "gpu-fabric-rail-0"
     },
     {
       "oid": "1.3.6.1.2.1.31.1.1.1.1.3",
-      "response": "GigabitEthernet0/2"
+      "response": "ib1"
     },
     {
       "oid": "1.3.6.1.2.1.31.1.1.1.15.3",
-      "response": "1000"
+      "response": "400000"
     },
     {
       "oid": "1.3.6.1.2.1.31.1.1.1.18.3",
-      "response": "DMZ segment"
+      "response": "gpu-fabric-rail-1"
     },
     {
       "oid": "1.3.6.1.2.1.31.1.1.1.1.4",
-      "response": "GigabitEthernet0/3"
+      "response": "ib2"
     },
     {
       "oid": "1.3.6.1.2.1.31.1.1.1.15.4",
-      "response": "1000"
+      "response": "400000"
     },
     {
       "oid": "1.3.6.1.2.1.31.1.1.1.18.4",
-      "response": ""
+      "response": "gpu-fabric-rail-2"
+    },
+    {
+      "oid": "1.3.6.1.2.1.31.1.1.1.1.5",
+      "response": "ib3"
+    },
+    {
+      "oid": "1.3.6.1.2.1.31.1.1.1.15.5",
+      "response": "400000"
+    },
+    {
+      "oid": "1.3.6.1.2.1.31.1.1.1.18.5",
+      "response": "gpu-fabric-rail-3"
     }
-  ],
-  "ssh": null
+  ]
 }
