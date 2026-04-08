@@ -80,3 +80,11 @@ Each device type has resource files under `resources/<device-type>/` containing 
 
 Follow Conventional Commits: `<type>[scope]: <description>`
 Types: `feat`, `fix`, `docs`, `style`, `refactor`, `perf`, `test`, `chore`, `ci`, `build`, `revert`
+
+## Pull requests
+
+This repo is a fork. Always create PRs against **origin** (`labmonkeys-space/l8opensim`), never against upstream (`saichler/l8opensim`):
+
+```bash
+gh pr create --repo labmonkeys-space/l8opensim --base main ...
+```
