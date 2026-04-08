@@ -12,6 +12,7 @@ A powerful, scalable network and infrastructure simulator that provides realisti
 - **28 Device Types**: Routers, switches, firewalls, servers, GPU servers (NVIDIA DGX/HGX), storage systems, and Linux servers across 8 categories
 - **GPU Server Simulation**: NVIDIA DGX-A100, DGX-H100, and HGX-H200 with per-GPU metrics (utilization, VRAM, temperature, power, fan speed, clock speeds) via NVIDIA DCGM OIDs
 - **Dynamic Metrics**: Realistic CPU, memory, temperature, and GPU metrics with 100-point sine-wave cycling patterns and correlated metric generation
+- **Dynamic HC Interface Counters**: `ifHCInOctets`/`ifHCOutOctets` (ifXTable) are monotonically increasing Counter64 values computed analytically on-demand — no polling loop or goroutine. Byte-rate follows a sine wave between 60 % and 100 % of interface speed on a 1-hour period; counters are pre-seeded with ~24 h of traffic for realism from the first poll
 - **Network Namespace Isolation**: Devices run in a dedicated `opensim` network namespace for realistic isolation
 - **TUN Interface Integration**: Each device gets its own IP address via TUN interfaces with parallel pre-allocation for fast creation
 - **HTTPS Storage APIs**: Secure REST API endpoints for storage device simulation with shared TLS certificates
@@ -280,6 +281,24 @@ snmpget -v3 -l authPriv -u admin -a MD5 -A authpass123 -x AES -X privpass123 \
   -e 0x80001234 192.168.100.1 1.3.6.1.2.1.1.1.0
 ```
 
+#### Dynamic HC Interface Traffic Counters
+
+`ifHCInOctets` (`.1.3.6.1.2.1.31.1.1.1.6`) and `ifHCOutOctets` (`.1.3.6.1.2.1.31.1.1.1.10`) are generated dynamically — the byte-rate oscillates between 60 % and 100 % of the interface's reported speed on a 1-hour sine wave. Each interface has a random phase offset so interfaces do not peak simultaneously. Counter values are pre-seeded with ~24 h of traffic so they appear realistic from the very first poll.
+
+```bash
+# Walk ifXTable to see all HC counters (updates every poll)
+snmpwalk -v2c -c public 192.168.100.1 1.3.6.1.2.1.31.1.1
+
+# Fetch HC in/out for interface 1 directly
+snmpget -v2c -c public 192.168.100.1 \
+  1.3.6.1.2.1.31.1.1.1.6.1 \
+  1.3.6.1.2.1.31.1.1.1.10.1
+
+# Continuous traffic rate monitoring (poll every 10 s)
+watch -n 10 "snmpget -v2c -c public 192.168.100.1 \
+  1.3.6.1.2.1.31.1.1.1.6.1 1.3.6.1.2.1.31.1.1.1.10.1"
+```
+
 ### Routing Protocol Commands
 ```bash
 # On supported router devices
@@ -483,6 +502,7 @@ Metrics are exposed via NVIDIA DCGM SNMP OIDs and cycle through 100 pre-generate
 - **Complete physical inventory**: Chassis, line cards, power supplies, fans, temperature sensors
 - **entAliasMappingTable**: Proper mapping between physical ports and logical interfaces
 - **Dynamic metrics**: Realistic CPU, memory, and temperature cycling with 100-point sine-wave patterns
+- **Dynamic HC interface counters**: `ifHCInOctets`/`ifHCOutOctets` computed on-demand (O(1)) as monotonically increasing Counter64 — rate oscillates between 60–100 % of `ifHighSpeed`/`ifSpeed` on a 1-hour sine cycle; per-interface phase offsets prevent simultaneous peaks; visible on both GET and GETNEXT/GETBULK
 - **GPU metrics via NVIDIA DCGM OIDs**: Per-GPU utilization, VRAM, temperature, power, fan speed, clock speeds
 - **SNMPv3 support**: Engine ID, MD5/SHA1 authentication, DES/AES128 privacy
 - **Device profiles**: Per-category CPU/memory/temperature baselines with configurable spike ranges
