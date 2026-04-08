@@ -20,7 +20,6 @@ import (
 	"crypto/des"
 	"crypto/md5"
 	"fmt"
-	"strconv"
 )
 
 // SNMP request parser
@@ -158,19 +157,8 @@ func (s *SNMPServer) createSNMPResponse(oid, value string, requestData []byte) [
 	// Parse incoming request to get actual community and request ID
 	req := s.parseIncomingRequest(requestData)
 
-	// Determine SNMP data type based on OID and value
-	var valueBytes []byte
-
-	if value == "endOfMibView" {
-		// Special handling for endOfMibView (SNMPv2c)
-		valueBytes = []byte{0x82, 0x00} // endOfMibView exception
-	} else if intVal, err := strconv.Atoi(value); err == nil {
-		// Integer value
-		valueBytes = encodeInteger(intVal)
-	} else {
-		// String value
-		valueBytes = encodeOctetString(value)
-	}
+	// Encode value with the correct ASN.1 type for this OID (RFC 1902).
+	valueBytes := encodeTypedValue(oid, value)
 
 	// Create variable binding (OID + value)
 	oidBytes := encodeOID(oid)
@@ -220,20 +208,9 @@ func (s *SNMPServer) createGetBulkResponse(oids []string, responses []string, re
 	var varBindList []byte
 
 	for i, oid := range oids {
-		// Determine proper value encoding (same logic as createSNMPResponse)
-		var valueBytes []byte
+		// Encode value with the correct ASN.1 type for this OID (RFC 1902).
 		value := responses[i]
-
-		if value == "endOfMibView" {
-			// Special handling for endOfMibView (SNMPv2c)
-			valueBytes = []byte{0x82, 0x00} // endOfMibView exception
-		} else if intVal, err := strconv.Atoi(value); err == nil {
-			// Integer value
-			valueBytes = encodeInteger(intVal)
-		} else {
-			// String value
-			valueBytes = encodeOctetString(value)
-		}
+		valueBytes := encodeTypedValue(oid, value)
 
 		// Create variable binding: SEQUENCE { OID, value } - CORRECT ORDER
 		oidBytes := encodeOID(oid)
