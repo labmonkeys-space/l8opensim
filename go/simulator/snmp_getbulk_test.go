@@ -391,6 +391,54 @@ func TestHandleGetBulkEndOfMib(t *testing.T) {
 	}
 }
 
+// TestParseIncomingRequest_RequestID verifies that parseIncomingRequest
+// correctly extracts the request-id from GET, GETNEXT, and GETBULK PDUs.
+// Before the 0xa5 fix, GETBULK fell through and always returned the default
+// request-id of 123, causing all GETBULK responses to be dropped by clients.
+func TestParseIncomingRequest_RequestID(t *testing.T) {
+	s := &SNMPServer{device: &DeviceSimulator{}}
+
+	tests := []struct {
+		name      string
+		pdu       []byte
+		wantReqID int
+	}{
+		{
+			name:      "GETBULK request-id 42",
+			pdu:       buildGetBulkPDU(0, 10, []string{".1.3.6.1.2.1.2.2.1.2"}),
+			wantReqID: 42,
+		},
+		{
+			name: "GETBULK request-id 12345678 (multi-byte)",
+			pdu: func() []byte {
+				// Build a GETBULK PDU with a 3-byte request-id.
+				varBindList := encodeSequence(append(encodeOID(".1.3.6.1.2.1.2.2.1.2"), encodeNull()...))
+				pduContents := encodeInteger(12345678)
+				pduContents = append(pduContents, encodeInteger(0)...)   // nonRepeaters
+				pduContents = append(pduContents, encodeInteger(10)...)  // maxRepetitions
+				pduContents = append(pduContents, encodeSequence(varBindList)...)
+				pdu := []byte{ASN1_GET_BULK}
+				pdu = append(pdu, encodeLength(len(pduContents))...)
+				pdu = append(pdu, pduContents...)
+				msg := encodeInteger(1)
+				msg = append(msg, encodeOctetString("public")...)
+				msg = append(msg, pdu...)
+				return encodeSequence(msg)
+			}(),
+			wantReqID: 12345678,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			req := s.parseIncomingRequest(tc.pdu)
+			if req.RequestID != tc.wantReqID {
+				t.Errorf("RequestID = %d, want %d", req.RequestID, tc.wantReqID)
+			}
+		})
+	}
+}
+
 // TestHandleGetBulkFallback verifies backward compatibility: when the PDU
 // cannot be parsed for OIDs, the single startOID fallback still works.
 func TestHandleGetBulkFallback(t *testing.T) {
