@@ -58,22 +58,22 @@ func (s *SNMPServer) parseIncomingRequest(data []byte) SNMPRequest {
 	// Parse version
 	if pos < len(data) && data[pos] == ASN1_INTEGER {
 		pos++
-		versionLen := int(data[pos])
-		pos++
-		if pos+versionLen <= len(data) && versionLen == 1 {
+		versionLen, newPos := parseLength(data, pos)
+		pos = newPos
+		if versionLen == 1 && pos < len(data) {
 			req.Version = int(data[pos])
+		}
+		if versionLen > 0 {
 			pos += versionLen
-		} else {
-			pos += versionLen // skip if we can't parse
 		}
 	}
 
 	// Parse community
 	if pos < len(data) && data[pos] == ASN1_OCTET_STRING {
 		pos++
-		communityLen := int(data[pos])
-		pos++
-		if pos+communityLen <= len(data) {
+		communityLen, newPos := parseLength(data, pos)
+		pos = newPos
+		if communityLen > 0 && pos+communityLen <= len(data) {
 			req.Community = string(data[pos : pos+communityLen])
 			pos += communityLen
 		}
@@ -88,9 +88,9 @@ func (s *SNMPServer) parseIncomingRequest(data []byte) SNMPRequest {
 		// Parse request ID
 		if pos < len(data) && data[pos] == ASN1_INTEGER {
 			pos++
-			reqIDLen := int(data[pos])
-			pos++
-			if pos+reqIDLen <= len(data) && reqIDLen <= 4 {
+			reqIDLen, newPos := parseLength(data, pos)
+			pos = newPos
+			if reqIDLen > 0 && reqIDLen <= 4 && pos+reqIDLen <= len(data) {
 				req.RequestID = 0
 				for i := 0; i < reqIDLen; i++ {
 					req.RequestID = (req.RequestID << 8) | int(data[pos+i])
@@ -103,8 +103,10 @@ func (s *SNMPServer) parseIncomingRequest(data []byte) SNMPRequest {
 		for i := 0; i < 2; i++ {
 			if pos < len(data) && data[pos] == ASN1_INTEGER {
 				pos++
-				pos += s.skipLength(data[pos:])
-				pos++ // skip value
+				fieldLen, newPos := parseLength(data, pos)
+				if fieldLen >= 0 {
+					pos = newPos + fieldLen
+				}
 			}
 		}
 
@@ -121,9 +123,9 @@ func (s *SNMPServer) parseIncomingRequest(data []byte) SNMPRequest {
 				// Parse OID
 				if pos < len(data) && data[pos] == ASN1_OID {
 					pos++
-					oidLen := int(data[pos])
-					pos++
-					if pos+oidLen <= len(data) {
+					oidLen, newPos := parseLength(data, pos)
+					pos = newPos
+					if oidLen > 0 && pos+oidLen <= len(data) {
 						oidBytes := data[pos : pos+oidLen]
 						if oid := decodeOID(oidBytes); oid != "" {
 							req.OID = oid
