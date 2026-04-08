@@ -34,67 +34,67 @@
     },
     {
       "oid": "1.3.6.1.2.1.2.2.1.2.1",
-      "response": "GigabitEthernet0/0/1"
+      "response": "ethernet1/1"
     },
     {
       "oid": "1.3.6.1.2.1.2.2.1.2.10",
-      "response": "GigabitEthernet0/0/10"
+      "response": "ethernet1/10"
     },
     {
       "oid": "1.3.6.1.2.1.2.2.1.2.11",
-      "response": "GigabitEthernet0/0/11"
+      "response": "ethernet1/11"
     },
     {
       "oid": "1.3.6.1.2.1.2.2.1.2.12",
-      "response": "GigabitEthernet0/0/12"
+      "response": "ethernet1/12"
     },
     {
       "oid": "1.3.6.1.2.1.2.2.1.2.13",
-      "response": "GigabitEthernet0/0/13"
+      "response": "ethernet1/13"
     },
     {
       "oid": "1.3.6.1.2.1.2.2.1.2.14",
-      "response": "GigabitEthernet0/0/14"
+      "response": "ethernet1/14"
     },
     {
       "oid": "1.3.6.1.2.1.2.2.1.2.15",
-      "response": "GigabitEthernet0/0/15"
+      "response": "ethernet1/15"
     },
     {
       "oid": "1.3.6.1.2.1.2.2.1.2.16",
-      "response": "GigabitEthernet0/0/16"
+      "response": "ethernet1/16"
     },
     {
       "oid": "1.3.6.1.2.1.2.2.1.2.2",
-      "response": "GigabitEthernet0/0/2"
+      "response": "ethernet1/2"
     },
     {
       "oid": "1.3.6.1.2.1.2.2.1.2.3",
-      "response": "GigabitEthernet0/0/3"
+      "response": "ethernet1/3"
     },
     {
       "oid": "1.3.6.1.2.1.2.2.1.2.4",
-      "response": "GigabitEthernet0/0/4"
+      "response": "ethernet1/4"
     },
     {
       "oid": "1.3.6.1.2.1.2.2.1.2.5",
-      "response": "GigabitEthernet0/0/5"
+      "response": "ethernet1/5"
     },
     {
       "oid": "1.3.6.1.2.1.2.2.1.2.6",
-      "response": "GigabitEthernet0/0/6"
+      "response": "ethernet1/6"
     },
     {
       "oid": "1.3.6.1.2.1.2.2.1.2.7",
-      "response": "GigabitEthernet0/0/7"
+      "response": "ethernet1/7"
     },
     {
       "oid": "1.3.6.1.2.1.2.2.1.2.8",
-      "response": "GigabitEthernet0/0/8"
+      "response": "ethernet1/8"
     },
     {
       "oid": "1.3.6.1.2.1.2.2.1.2.9",
-      "response": "GigabitEthernet0/0/9"
+      "response": "ethernet1/9"
     },
     {
       "oid": "1.3.6.1.2.1.2.2.1.3.1",
