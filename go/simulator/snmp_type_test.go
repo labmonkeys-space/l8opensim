@@ -28,6 +28,9 @@ func TestSnmpTypeTag(t *testing.T) {
 		oid  string
 		want byte
 	}{
+		// sysObjectID → OBJECT IDENTIFIER
+		{".1.3.6.1.2.1.1.2.0", ASN1_OBJECT_ID},
+
 		// sysUpTime → TimeTicks
 		{".1.3.6.1.2.1.1.3.0", ASN1_TIMETICKS},
 
@@ -165,6 +168,36 @@ func TestEncodeIPAddress(t *testing.T) {
 }
 
 // ── encodeTypedValue ─────────────────────────────────────────────────────────
+
+func TestEncodeTypedValue_SysObjectID(t *testing.T) {
+	// sysObjectID value must be encoded as OBJECT IDENTIFIER (0x06), not OCTET STRING.
+	// The value may arrive with or without a leading dot from JSON resource files.
+	for _, val := range []string{"1.3.6.1.4.1.9.1.1", ".1.3.6.1.4.1.9.1.1"} {
+		got := encodeTypedValue(".1.3.6.1.2.1.1.2.0", val)
+		if len(got) == 0 || got[0] != ASN1_OBJECT_ID {
+			t.Errorf("sysObjectID value %q: tag = 0x%02x, want OBJECT IDENTIFIER (0x%02x)", val, got[0], ASN1_OBJECT_ID)
+		}
+	}
+
+	// Both forms must produce identical wire bytes (encodeOID strips the dot).
+	a := encodeTypedValue(".1.3.6.1.2.1.1.2.0", "1.3.6.1.4.1.9.1.1")
+	b := encodeTypedValue(".1.3.6.1.2.1.1.2.0", ".1.3.6.1.4.1.9.1.1")
+	if !bytesEqual(a, b) {
+		t.Errorf("sysObjectID with/without dot produce different bytes: %x vs %x", a, b)
+	}
+
+	// Round-trip: encoded payload must decode back to the canonical dotted form.
+	const canonical = ".1.3.6.1.4.1.9.1.1"
+	encoded := encodeTypedValue(".1.3.6.1.2.1.1.2.0", canonical)
+	if len(encoded) < 2 {
+		t.Fatalf("encoded sysObjectID too short (%d bytes)", len(encoded))
+	}
+	_, payloadStart := parseLength(encoded, 1)
+	decoded := decodeOID(encoded[payloadStart:])
+	if decoded != canonical {
+		t.Errorf("sysObjectID round-trip: got %q, want %q", decoded, canonical)
+	}
+}
 
 func TestEncodeTypedValue_EndOfMibView(t *testing.T) {
 	got := encodeTypedValue(".1.3.6.1.2.1.2.2.1.5.1", "endOfMibView")
