@@ -332,44 +332,46 @@ func TestHandleGetBulkNonRepeaters(t *testing.T) {
 	}
 }
 
-// TestHandleGetBulkEndOfMib verifies that once a column is exhausted, all
-// remaining rows for that column are padded with endOfMibView as required by
-// RFC 3416 §4.2.3, while other columns continue walking.
+// TestHandleGetBulkEndOfMib verifies RFC 3416 §4.2.3 endOfMibView padding.
+//
+// SNMP agents do not know about column boundaries — findNextOID always returns
+// the lexicographically next OID in the MIB regardless of column prefix.
+// endOfMibView is only emitted when the MIB is fully exhausted (no more OIDs).
+// Once a column hits end-of-MIB, handleGetBulk must pad all remaining
+// repetitions for that column with the original requested OID + endOfMibView.
 func TestHandleGetBulkEndOfMib(t *testing.T) {
-	// col1 has 1 entry, col2 has 2 entries; ask for maxRep=2.
+	// Single OID in the MIB. After one repetition the MIB is exhausted and
+	// the remaining 2 repetitions must be padded with endOfMibView.
 	s := newTestServer(map[string]string{
-		"1.3.6.1.2.1.2.2.1.2.1": "eth0",           // only one ifDescr entry
-		"1.3.6.1.2.1.2.2.1.7.1": "1",               // ifAdminStatus.1
-		"1.3.6.1.2.1.2.2.1.7.2": "1",               // ifAdminStatus.2
+		"1.3.6.1.2.1.2.2.1.2.1": "eth0",
 	})
 
-	colOIDs := []string{
-		"1.3.6.1.2.1.2.2.1.2", // ifDescr column — exhausts after row 1
-		"1.3.6.1.2.1.2.2.1.7", // ifAdminStatus column — has 2 rows
-	}
-	pdu := buildGetBulkPDU(0, 2, colOIDs)
+	colOIDs := []string{"1.3.6.1.2.1.2.2.1.2"} // ifDescr column prefix
+	pdu := buildGetBulkPDU(0, 3, colOIDs)
 
 	resp := s.handleGetBulk(colOIDs[0], pdu)
 
-	_, gotVals, err := parseGetBulkResponse(resp)
+	gotOIDs, gotVals, err := parseGetBulkResponse(resp)
 	if err != nil {
 		t.Fatalf("parseGetBulkResponse: %v", err)
 	}
 
-	// Expected (2 reps × 2 cols = 4 varbinds):
-	// rep 0: ifDescr.1="eth0",       ifAdminStatus.1="1"
-	// rep 1: ifDescr col exhausted → "endOfMibView",  ifAdminStatus.2="1"
-	if len(gotVals) != 4 {
-		t.Fatalf("varbind count: got %d, want 4\nValues: %v", len(gotVals), gotVals)
+	// 3 reps × 1 col = 3 varbinds.
+	if len(gotVals) != 3 {
+		t.Fatalf("varbind count: got %d, want 3\nOIDs: %v\nVals: %v", len(gotVals), gotOIDs, gotVals)
 	}
+
+	// rep 0: the real entry
 	if gotVals[0] == "endOfMibView" {
-		t.Errorf("rep0/col0: should have a real value, got endOfMibView")
+		t.Errorf("rep0: expected real value, got endOfMibView")
+	}
+
+	// rep 1 and rep 2: endOfMibView padding (MIB fully exhausted)
+	if gotVals[1] != "endOfMibView" {
+		t.Errorf("rep1: expected endOfMibView (MIB exhausted), got %q", gotVals[1])
 	}
 	if gotVals[2] != "endOfMibView" {
-		t.Errorf("rep1/col0: expected endOfMibView after column exhaustion, got %q", gotVals[2])
-	}
-	if gotVals[3] == "endOfMibView" {
-		t.Errorf("rep1/col1: should have a real value (ifAdminStatus.2), got endOfMibView")
+		t.Errorf("rep2: expected endOfMibView (MIB exhausted), got %q", gotVals[2])
 	}
 }
 
