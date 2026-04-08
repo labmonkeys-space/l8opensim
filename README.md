@@ -85,13 +85,15 @@ Options:
   -snmpv3-auth string         SNMPv3 auth protocol: none, md5, sha1 (default: "md5")
   -snmpv3-priv string         SNMPv3 privacy protocol: none, des, aes128 (default: "none")
   -no-namespace               Disable network namespace isolation (use root namespace)
+  -if-scenario int            Interface state scenario: 1=all-shutdown, 2=all-normal (default), 3=all-failure, 4=pct-failure
+  -if-failure-pct int         Percentage of interfaces with oper-down (used with -if-scenario 4, 0–100, default: 10)
   -help                       Show help message
 ```
 
 ### Examples
 
 ```bash
-# Start server only
+# Start server only (all interfaces up/up by default)
 sudo ./simulator
 
 # Auto-create 5 devices starting from 192.168.100.1
@@ -105,6 +107,38 @@ sudo ./simulator -snmpv3-engine-id 0x80001234 -snmpv3-auth md5 -snmpv3-priv aes1
 
 # Disable network namespace isolation
 sudo ./simulator -no-namespace -auto-start-ip 192.168.100.1 -auto-count 10
+
+# Simulate a maintenance window — all interfaces admin-shutdown (scenario 1)
+sudo ./simulator -auto-start-ip 192.168.100.1 -auto-count 10 -if-scenario 1
+
+# Simulate a link failure — all interfaces admin-up but oper-down (scenario 3)
+sudo ./simulator -auto-start-ip 192.168.100.1 -auto-count 10 -if-scenario 3
+
+# Simulate a partial outage — 30% of interfaces oper-down (scenario 4)
+sudo ./simulator -auto-start-ip 192.168.100.1 -auto-count 10 \
+    -if-scenario 4 -if-failure-pct 30
+```
+
+### Interface State Scenarios
+
+The `-if-scenario` flag controls the SNMP admin/oper status reported for all simulated interfaces, allowing you to reproduce common network conditions without editing resource files.
+
+| Scenario | Name | ifAdminStatus | ifOperStatus | Use case |
+|----------|------|--------------|--------------|----------|
+| 1 | all-shutdown | down (2) | down (2) | Planned maintenance, device decommission |
+| 2 | all-normal *(default)* | up (1) | up (1) | Normal steady-state operations |
+| 3 | all-failure | up (1) | down (2) | Link failures, SFP issues, cable pull |
+| 4 | pct-failure | up (1) | down for n% | Partial outage, staged rollout testing |
+
+Scenario 4 uses a deterministic rule (`ifIndex % 100 < n`) so test runs are reproducible across restarts.
+
+```bash
+# Verify interface states with snmpwalk
+# All oper-down with scenario 3:
+snmpwalk -v2c -c public 192.168.100.1 1.3.6.1.2.1.2.2.1.8   # ifOperStatus
+
+# Spot-check admin status (should all be "1" in scenarios 2/3/4):
+snmpwalk -v2c -c public 192.168.100.1 1.3.6.1.2.1.2.2.1.7   # ifAdminStatus
 ```
 
 ## Web Interface
