@@ -35,6 +35,7 @@ type MetricsCycler struct {
 	memIndex   uint32               // atomic, current position
 	tempIndex  uint32               // atomic, current position
 	gpuMetrics []*GPUMetrics        // Per-GPU cycling metrics (nil for non-GPU devices)
+	ifCounters *IfCounterCycler     // Per-interface HC counter cycling (nil if no HC OIDs)
 }
 
 // NewMetricsCycler creates a cycler with 100 data points generated from the
