@@ -29,44 +29,44 @@ func TestSnmpTypeTag(t *testing.T) {
 		want byte
 	}{
 		// sysUpTime → TimeTicks
-		{"1.3.6.1.2.1.1.3.0", ASN1_TIMETICKS},
+		{".1.3.6.1.2.1.1.3.0", ASN1_TIMETICKS},
 
 		// ifSpeed → Gauge32
-		{"1.3.6.1.2.1.2.2.1.5.1", ASN1_GAUGE32},
-		{"1.3.6.1.2.1.2.2.1.5.24", ASN1_GAUGE32},
+		{".1.3.6.1.2.1.2.2.1.5.1", ASN1_GAUGE32},
+		{".1.3.6.1.2.1.2.2.1.5.24", ASN1_GAUGE32},
 
 		// ifLastChange → TimeTicks
-		{"1.3.6.1.2.1.2.2.1.9.1", ASN1_TIMETICKS},
+		{".1.3.6.1.2.1.2.2.1.9.1", ASN1_TIMETICKS},
 
 		// ifInOctets → Counter32
-		{"1.3.6.1.2.1.2.2.1.10.1", ASN1_COUNTER32},
+		{".1.3.6.1.2.1.2.2.1.10.1", ASN1_COUNTER32},
 
 		// ifHighSpeed → Gauge32
-		{"1.3.6.1.2.1.31.1.1.1.15.1", ASN1_GAUGE32},
+		{".1.3.6.1.2.1.31.1.1.1.15.1", ASN1_GAUGE32},
 
 		// ifHCInOctets → Counter64
-		{"1.3.6.1.2.1.31.1.1.1.6.1", ASN1_COUNTER64},
+		{".1.3.6.1.2.1.31.1.1.1.6.1", ASN1_COUNTER64},
 
 		// ifHCOutOctets → Counter64
-		{"1.3.6.1.2.1.31.1.1.1.10.1", ASN1_COUNTER64},
+		{".1.3.6.1.2.1.31.1.1.1.10.1", ASN1_COUNTER64},
 
 		// ipRouteDest → IpAddress
-		{"1.3.6.1.2.1.4.21.1.1.192.168.1.0", ASN1_IPADDRESS},
+		{".1.3.6.1.2.1.4.21.1.1.192.168.1.0", ASN1_IPADDRESS},
 
 		// ipRouteNextHop → IpAddress
-		{"1.3.6.1.2.1.4.21.1.7.0.0.0.0", ASN1_IPADDRESS},
+		{".1.3.6.1.2.1.4.21.1.7.0.0.0.0", ASN1_IPADDRESS},
 
 		// ifIndex → INTEGER (not in table → 0)
-		{"1.3.6.1.2.1.2.2.1.1.1", 0},
+		{".1.3.6.1.2.1.2.2.1.1.1", 0},
 
 		// ifAdminStatus → INTEGER (not in table → 0)
-		{"1.3.6.1.2.1.2.2.1.7.1", 0},
+		{".1.3.6.1.2.1.2.2.1.7.1", 0},
 
 		// sysDescr → OCTET STRING (not in table → 0)
-		{"1.3.6.1.2.1.1.1.0", 0},
+		{".1.3.6.1.2.1.1.1.0", 0},
 
 		// Unrecognised → 0
-		{"1.2.3.4.5", 0},
+		{".1.2.3.4.5", 0},
 	}
 
 	for _, tc := range tests {
@@ -82,11 +82,11 @@ func TestSnmpTypeTag(t *testing.T) {
 // "1.3.6.1.2.1.2.2.1.10.1" (ifInOctets), which would give the wrong type.
 func TestSnmpTypeTag_NoPrefixFalseMatch(t *testing.T) {
 	// ifInOctets (column 10) must not match ifIndex (column 1)
-	if got := snmpTypeTag("1.3.6.1.2.1.2.2.1.10.1"); got != ASN1_COUNTER32 {
+	if got := snmpTypeTag(".1.3.6.1.2.1.2.2.1.10.1"); got != ASN1_COUNTER32 {
 		t.Errorf("ifInOctets OID: got 0x%02x, want ASN1_COUNTER32 (0x%02x)", got, ASN1_COUNTER32)
 	}
 	// ifHCOutOctets (column 10 in ifXTable) must not match ifInMulticastPkts (column 2)
-	if got := snmpTypeTag("1.3.6.1.2.1.31.1.1.1.10.1"); got != ASN1_COUNTER64 {
+	if got := snmpTypeTag(".1.3.6.1.2.1.31.1.1.1.10.1"); got != ASN1_COUNTER64 {
 		t.Errorf("ifHCOutOctets OID: got 0x%02x, want ASN1_COUNTER64 (0x%02x)", got, ASN1_COUNTER64)
 	}
 }
@@ -167,7 +167,7 @@ func TestEncodeIPAddress(t *testing.T) {
 // ── encodeTypedValue ─────────────────────────────────────────────────────────
 
 func TestEncodeTypedValue_EndOfMibView(t *testing.T) {
-	got := encodeTypedValue("1.3.6.1.2.1.2.2.1.5.1", "endOfMibView")
+	got := encodeTypedValue(".1.3.6.1.2.1.2.2.1.5.1", "endOfMibView")
 	want := []byte{0x82, 0x00}
 	if !bytesEqual(got, want) {
 		t.Errorf("endOfMibView: got %x, want %x", got, want)
@@ -176,35 +176,35 @@ func TestEncodeTypedValue_EndOfMibView(t *testing.T) {
 
 func TestEncodeTypedValue_Gauge32(t *testing.T) {
 	// ifSpeed = 1000 Mbps expressed in bps = 1000000000
-	got := encodeTypedValue("1.3.6.1.2.1.2.2.1.5.1", "1000000000")
+	got := encodeTypedValue(".1.3.6.1.2.1.2.2.1.5.1", "1000000000")
 	if len(got) == 0 || got[0] != ASN1_GAUGE32 {
 		t.Errorf("ifSpeed tag: got 0x%02x, want Gauge32 (0x%02x)", got[0], ASN1_GAUGE32)
 	}
 }
 
 func TestEncodeTypedValue_Counter32(t *testing.T) {
-	got := encodeTypedValue("1.3.6.1.2.1.2.2.1.10.1", "123456") // ifInOctets
+	got := encodeTypedValue(".1.3.6.1.2.1.2.2.1.10.1", "123456") // ifInOctets
 	if len(got) == 0 || got[0] != ASN1_COUNTER32 {
 		t.Errorf("ifInOctets tag: got 0x%02x, want Counter32 (0x%02x)", got[0], ASN1_COUNTER32)
 	}
 }
 
 func TestEncodeTypedValue_Counter64(t *testing.T) {
-	got := encodeTypedValue("1.3.6.1.2.1.31.1.1.1.6.1", "13897247566") // ifHCInOctets
+	got := encodeTypedValue(".1.3.6.1.2.1.31.1.1.1.6.1", "13897247566") // ifHCInOctets
 	if len(got) == 0 || got[0] != ASN1_COUNTER64 {
 		t.Errorf("ifHCInOctets tag: got 0x%02x, want Counter64 (0x%02x)", got[0], ASN1_COUNTER64)
 	}
 }
 
 func TestEncodeTypedValue_TimeTicks(t *testing.T) {
-	got := encodeTypedValue("1.3.6.1.2.1.1.3.0", "123456789") // sysUpTime
+	got := encodeTypedValue(".1.3.6.1.2.1.1.3.0", "123456789") // sysUpTime
 	if len(got) == 0 || got[0] != ASN1_TIMETICKS {
 		t.Errorf("sysUpTime tag: got 0x%02x, want TimeTicks (0x%02x)", got[0], ASN1_TIMETICKS)
 	}
 }
 
 func TestEncodeTypedValue_IpAddress(t *testing.T) {
-	got := encodeTypedValue("1.3.6.1.2.1.4.21.1.1.192.168.1.0", "192.168.1.0") // ipRouteDest
+	got := encodeTypedValue(".1.3.6.1.2.1.4.21.1.1.192.168.1.0", "192.168.1.0") // ipRouteDest
 	if len(got) == 0 || got[0] != ASN1_IPADDRESS {
 		t.Errorf("ipRouteDest tag: got 0x%02x, want IpAddress (0x%02x)", got[0], ASN1_IPADDRESS)
 	}
@@ -212,7 +212,7 @@ func TestEncodeTypedValue_IpAddress(t *testing.T) {
 
 func TestEncodeTypedValue_Integer(t *testing.T) {
 	// ifAdminStatus is not in the type table → should be INTEGER
-	got := encodeTypedValue("1.3.6.1.2.1.2.2.1.7.1", "1")
+	got := encodeTypedValue(".1.3.6.1.2.1.2.2.1.7.1", "1")
 	if len(got) == 0 || got[0] != ASN1_INTEGER {
 		t.Errorf("ifAdminStatus tag: got 0x%02x, want INTEGER (0x%02x)", got[0], ASN1_INTEGER)
 	}
@@ -220,7 +220,7 @@ func TestEncodeTypedValue_Integer(t *testing.T) {
 
 func TestEncodeTypedValue_OctetString(t *testing.T) {
 	// sysDescr → OCTET STRING (non-integer string, not in type table)
-	got := encodeTypedValue("1.3.6.1.2.1.1.1.0", "Cisco IOS")
+	got := encodeTypedValue(".1.3.6.1.2.1.1.1.0", "Cisco IOS")
 	if len(got) == 0 || got[0] != ASN1_OCTET_STRING {
 		t.Errorf("sysDescr tag: got 0x%02x, want OCTET STRING (0x%02x)", got[0], ASN1_OCTET_STRING)
 	}

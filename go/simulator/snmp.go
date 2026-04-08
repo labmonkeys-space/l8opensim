@@ -82,7 +82,7 @@ func (s *SNMPServer) handleSNMPv3Request(requestData []byte) []byte {
 		// log.Printf("Failed to extract OID from scoped PDU: %v, using default", err)
 		// For encrypted requests where decryption failed, use a reasonable default
 		// Since snmpwalk typically starts with 1.3.6.1.2.1.1, use system description
-		oid = "1.3.6.1.2.1.1.1.0" // System description OID
+		oid = ".1.3.6.1.2.1.1.1.0" // System description OID
 		pduType = ASN1_GET_REQUEST // Default to GET
 		// log.Printf("SNMPv3: Using default OID %s for failed decryption case", oid)
 	}
@@ -296,7 +296,7 @@ func (s *SNMPServer) createSNMPv3DiscoveryResponse(requestMsg *SNMPv3Message) []
 	// log.Printf("SNMPv3: Creating discovery response with engine ID: %s", s.v3Config.EngineID)
 
 	// Create discovery response scoped PDU (typically a report PDU)
-	reportOID := "1.3.6.1.6.3.15.1.1.4.0" // usmStatsUnknownEngineIDs
+	reportOID := ".1.3.6.1.6.3.15.1.1.4.0" // usmStatsUnknownEngineIDs
 	reportValue := "1"                     // Counter value
 
 	// Create simple report scoped PDU

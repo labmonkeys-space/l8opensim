@@ -38,8 +38,8 @@ type IfStateConfig struct {
 var ifStateConfig = &IfStateConfig{Scenario: IfScenarioAllNormal}
 
 const (
-	ifAdminStatusPrefix = "1.3.6.1.2.1.2.2.1.7."
-	ifOperStatusPrefix  = "1.3.6.1.2.1.2.2.1.8."
+	ifAdminStatusPrefix = ".1.3.6.1.2.1.2.2.1.7."
+	ifOperStatusPrefix  = ".1.3.6.1.2.1.2.2.1.8."
 )
 
 // getIfStateOverride returns a non-empty response string for ifAdminStatus and

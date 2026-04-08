@@ -306,8 +306,13 @@ func (tun *TunInterface) reconfigure(newIP net.IP, netmask string) error {
 // compareOIDsLexicographically compares two OID strings lexicographically
 // Returns -1 if oid1 < oid2, 0 if equal, 1 if oid1 > oid2
 func compareOIDsLexicographically(oid1, oid2 string) int {
-	parts1 := strings.Split(oid1, ".")
-	parts2 := strings.Split(oid2, ".")
+	var parts1, parts2 []string
+	if s := strings.TrimPrefix(oid1, "."); s != "" {
+		parts1 = strings.Split(s, ".")
+	}
+	if s := strings.TrimPrefix(oid2, "."); s != "" {
+		parts2 = strings.Split(s, ".")
+	}
 
 	maxLen := len(parts1)
 	if len(parts2) > maxLen {

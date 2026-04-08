@@ -367,7 +367,7 @@ func (s *SNMPServer) parseSNMPv3GetBulkParams(scopedPDU []byte) (int, int) {
 func (s *SNMPServer) createSNMPv3GetBulkResponse(oids []string, responses []string, msg *SNMPv3Message) []byte {
 	if len(oids) == 0 {
 		// Fallback to single response if no OIDs found
-		responseBytes, err := s.createSNMPv3Response("1.3.6.1.2.1.1.1.0", "No data", msg)
+		responseBytes, err := s.createSNMPv3Response(".1.3.6.1.2.1.1.1.0", "No data", msg)
 		if err != nil {
 			return []byte{}
 		}

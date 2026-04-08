@@ -207,7 +207,7 @@ func safeAt(data []byte, pos int) byte {
 
 func TestParseAllOIDsFromRequest_SingleOID(t *testing.T) {
 	s := &SNMPServer{device: &DeviceSimulator{}}
-	want := []string{"1.3.6.1.2.1.2.2.1.2"}
+	want := []string{".1.3.6.1.2.1.2.2.1.2"}
 
 	pdu := buildGetBulkPDU(0, 10, want)
 	got := s.parseAllOIDsFromRequest(pdu)
@@ -223,12 +223,12 @@ func TestParseAllOIDsFromRequest_SingleOID(t *testing.T) {
 func TestParseAllOIDsFromRequest_MultipleOIDs(t *testing.T) {
 	s := &SNMPServer{device: &DeviceSimulator{}}
 	want := []string{
-		"1.3.6.1.2.1.2.2.1.2",  // ifDescr column
-		"1.3.6.1.2.1.2.2.1.5",  // ifSpeed column
-		"1.3.6.1.2.1.2.2.1.7",  // ifAdminStatus column
-		"1.3.6.1.2.1.2.2.1.8",  // ifOperStatus column
-		"1.3.6.1.2.1.31.1.1.1.1",  // ifName column
-		"1.3.6.1.2.1.31.1.1.1.18", // ifAlias column
+		".1.3.6.1.2.1.2.2.1.2",  // ifDescr column
+		".1.3.6.1.2.1.2.2.1.5",  // ifSpeed column
+		".1.3.6.1.2.1.2.2.1.7",  // ifAdminStatus column
+		".1.3.6.1.2.1.2.2.1.8",  // ifOperStatus column
+		".1.3.6.1.2.1.31.1.1.1.1",  // ifName column
+		".1.3.6.1.2.1.31.1.1.1.18", // ifAlias column
 	}
 
 	pdu := buildGetBulkPDU(0, 10, want)
@@ -265,20 +265,20 @@ func TestParseAllOIDsFromRequest_MalformedPDU(t *testing.T) {
 // produces correctly interleaved responses: col1.row1, col2.row1, col1.row2, …
 func TestHandleGetBulkMultiColumn(t *testing.T) {
 	s := newTestServer(map[string]string{
-		"1.3.6.1.2.1.2.2.1.2.1": "eth0",
-		"1.3.6.1.2.1.2.2.1.2.2": "eth1",
-		"1.3.6.1.2.1.2.2.1.5.1": "1000000000",
-		"1.3.6.1.2.1.2.2.1.5.2": "1000000000",
+		".1.3.6.1.2.1.2.2.1.2.1": "eth0",
+		".1.3.6.1.2.1.2.2.1.2.2": "eth1",
+		".1.3.6.1.2.1.2.2.1.5.1": "1000000000",
+		".1.3.6.1.2.1.2.2.1.5.2": "1000000000",
 	})
 
 	// Ask for ifDescr column and ifSpeed column, 2 repetitions.
 	colOIDs := []string{
-		"1.3.6.1.2.1.2.2.1.2", // ifDescr column prefix
-		"1.3.6.1.2.1.2.2.1.5", // ifSpeed column prefix
+		".1.3.6.1.2.1.2.2.1.2", // ifDescr column prefix
+		".1.3.6.1.2.1.2.2.1.5", // ifSpeed column prefix
 	}
 	pdu := buildGetBulkPDU(0, 2, colOIDs)
 
-	resp := s.handleGetBulk("1.3.6.1.2.1.2.2.1.2", pdu)
+	resp := s.handleGetBulk(".1.3.6.1.2.1.2.2.1.2", pdu)
 
 	gotOIDs, gotVals, err := parseGetBulkResponse(resp)
 	if err != nil {
@@ -287,10 +287,10 @@ func TestHandleGetBulkMultiColumn(t *testing.T) {
 
 	// Expected interleaved order: ifDescr.1, ifSpeed.1, ifDescr.2, ifSpeed.2
 	wantOIDs := []string{
-		"1.3.6.1.2.1.2.2.1.2.1",
-		"1.3.6.1.2.1.2.2.1.5.1",
-		"1.3.6.1.2.1.2.2.1.2.2",
-		"1.3.6.1.2.1.2.2.1.5.2",
+		".1.3.6.1.2.1.2.2.1.2.1",
+		".1.3.6.1.2.1.2.2.1.5.1",
+		".1.3.6.1.2.1.2.2.1.2.2",
+		".1.3.6.1.2.1.2.2.1.5.2",
 	}
 	wantVals := []string{"eth0", "1000000000", "eth1", "1000000000"}
 
@@ -311,15 +311,15 @@ func TestHandleGetBulkMultiColumn(t *testing.T) {
 // with GETNEXT semantics and repeater OIDs are iterated max-repetitions times.
 func TestHandleGetBulkNonRepeaters(t *testing.T) {
 	s := newTestServer(map[string]string{
-		"1.3.6.1.2.1.1.1.0":     "Cisco IOS",     // sysDescr (non-repeater target)
-		"1.3.6.1.2.1.2.2.1.2.1": "eth0",
-		"1.3.6.1.2.1.2.2.1.2.2": "eth1",
+		".1.3.6.1.2.1.1.1.0":     "Cisco IOS",     // sysDescr (non-repeater target)
+		".1.3.6.1.2.1.2.2.1.2.1": "eth0",
+		".1.3.6.1.2.1.2.2.1.2.2": "eth1",
 	})
 
 	// non-repeaters=1 (sysDescr column), repeater=ifDescr column, maxRep=2
 	colOIDs := []string{
-		"1.3.6.1.2.1.1.1", // non-repeater: next after sysDescr prefix → sysDescr.0
-		"1.3.6.1.2.1.2.2.1.2", // repeater: ifDescr column
+		".1.3.6.1.2.1.1.1", // non-repeater: next after sysDescr prefix → sysDescr.0
+		".1.3.6.1.2.1.2.2.1.2", // repeater: ifDescr column
 	}
 	pdu := buildGetBulkPDU(1, 2, colOIDs)
 
@@ -336,15 +336,15 @@ func TestHandleGetBulkNonRepeaters(t *testing.T) {
 	}
 
 	// First entry is the non-repeater GETNEXT result.
-	if gotOIDs[0] != "1.3.6.1.2.1.1.1.0" {
-		t.Errorf("non-repeater OID: got %q, want %q", gotOIDs[0], "1.3.6.1.2.1.1.1.0")
+	if gotOIDs[0] != ".1.3.6.1.2.1.1.1.0" {
+		t.Errorf("non-repeater OID: got %q, want %q", gotOIDs[0], ".1.3.6.1.2.1.1.1.0")
 	}
 	// Next two are the repeater column.
-	if gotOIDs[1] != "1.3.6.1.2.1.2.2.1.2.1" {
-		t.Errorf("repeater[0] OID: got %q, want %q", gotOIDs[1], "1.3.6.1.2.1.2.2.1.2.1")
+	if gotOIDs[1] != ".1.3.6.1.2.1.2.2.1.2.1" {
+		t.Errorf("repeater[0] OID: got %q, want %q", gotOIDs[1], ".1.3.6.1.2.1.2.2.1.2.1")
 	}
-	if gotOIDs[2] != "1.3.6.1.2.1.2.2.1.2.2" {
-		t.Errorf("repeater[1] OID: got %q, want %q", gotOIDs[2], "1.3.6.1.2.1.2.2.1.2.2")
+	if gotOIDs[2] != ".1.3.6.1.2.1.2.2.1.2.2" {
+		t.Errorf("repeater[1] OID: got %q, want %q", gotOIDs[2], ".1.3.6.1.2.1.2.2.1.2.2")
 	}
 }
 
@@ -359,10 +359,10 @@ func TestHandleGetBulkEndOfMib(t *testing.T) {
 	// Single OID in the MIB. After one repetition the MIB is exhausted and
 	// the remaining 2 repetitions must be padded with endOfMibView.
 	s := newTestServer(map[string]string{
-		"1.3.6.1.2.1.2.2.1.2.1": "eth0",
+		".1.3.6.1.2.1.2.2.1.2.1": "eth0",
 	})
 
-	colOIDs := []string{"1.3.6.1.2.1.2.2.1.2"} // ifDescr column prefix
+	colOIDs := []string{".1.3.6.1.2.1.2.2.1.2"} // ifDescr column prefix
 	pdu := buildGetBulkPDU(0, 3, colOIDs)
 
 	resp := s.handleGetBulk(colOIDs[0], pdu)
@@ -395,16 +395,16 @@ func TestHandleGetBulkEndOfMib(t *testing.T) {
 // cannot be parsed for OIDs, the single startOID fallback still works.
 func TestHandleGetBulkFallback(t *testing.T) {
 	s := newTestServer(map[string]string{
-		"1.3.6.1.2.1.1.1.0": "Cisco IOS",
-		"1.3.6.1.2.1.1.2.0": "1.3.6.1.4.1.9",
+		".1.3.6.1.2.1.1.1.0": "Cisco IOS",
+		".1.3.6.1.2.1.1.2.0": ".1.3.6.1.4.1.9",
 	})
 
 	// Pass a garbage PDU — parseAllOIDsFromRequest returns empty, fallback activates.
-	// handleGetBulk falls back to startOID="1.3.6.1.2.1.1.1", so GETNEXT produces
+	// handleGetBulk falls back to startOID=".1.3.6.1.2.1.1.1", so GETNEXT produces
 	// the first OID in the MIB: 1.3.6.1.2.1.1.1.0 (sysDescr).
 	garblePDU := []byte{0x00, 0x01, 0x02, 0x03}
 
-	resp := s.handleGetBulk("1.3.6.1.2.1.1.1", garblePDU)
+	resp := s.handleGetBulk(".1.3.6.1.2.1.1.1", garblePDU)
 
 	gotOIDs, gotVals, err := parseGetBulkResponse(resp)
 	if err != nil {
@@ -414,8 +414,8 @@ func TestHandleGetBulkFallback(t *testing.T) {
 		t.Fatal("fallback produced no varbinds")
 	}
 	// The fallback must return 1.3.6.1.2.1.1.1.0 (the first — and only — OID
-	// lexicographically greater than the start prefix "1.3.6.1.2.1.1.1").
-	wantOID := "1.3.6.1.2.1.1.1.0"
+	// lexicographically greater than the start prefix ".1.3.6.1.2.1.1.1").
+	wantOID := ".1.3.6.1.2.1.1.1.0"
 	wantVal := "Cisco IOS"
 	if gotOIDs[0] != wantOID {
 		t.Errorf("fallback OID: got %q, want %q", gotOIDs[0], wantOID)
