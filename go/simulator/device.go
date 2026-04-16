@@ -250,6 +250,13 @@ func (sm *SimulatorManager) CreateDevicesWithOptions(startIP string, count int, 
 			device.metricsCycler.InitGPUMetrics(int64(i), profile.GPU)
 			device.metricsCycler.InitIfCounters(deviceResources, int64(i)^0x4843_0000)
 
+			// Initialize flow exporter if flow export is enabled.
+			if sm.flowActive {
+				flowProfile := GetFlowProfile(deviceResourceFile)
+				device.flowExporter = NewFlowExporter(device, flowProfile,
+					sm.flowActiveTimeout, sm.flowInactiveTimeout, sm.flowTemplateInterval)
+			}
+
 			// Cache the dynamic values using atomic for lock-free access
 			device.cachedSysName.Store(sysNameValue)
 			device.cachedSysLocation.Store(sysLocationValue)
@@ -470,6 +477,13 @@ func (sm *SimulatorManager) createSingleDevice(deviceIndex int, deviceIP net.IP,
 	device.metricsCycler = NewMetricsCycler(int64(deviceIndex), profile)
 	device.metricsCycler.InitGPUMetrics(int64(deviceIndex), profile.GPU)
 	device.metricsCycler.InitIfCounters(resources, int64(deviceIndex)^0x4843_0000)
+
+	// Initialize flow exporter if flow export is enabled.
+	if sm.flowActive {
+		flowProfile := GetFlowProfile(resourceFile)
+		device.flowExporter = NewFlowExporter(device, flowProfile,
+			sm.flowActiveTimeout, sm.flowInactiveTimeout, sm.flowTemplateInterval)
+	}
 
 	// Cache the dynamic values using atomic for lock-free access
 	device.cachedSysName.Store(sysNameValue)

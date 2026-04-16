@@ -20,6 +20,7 @@ import (
 	"net"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"golang.org/x/crypto/ssh"
 )
@@ -80,6 +81,7 @@ type DeviceSimulator struct {
 	cachedSysName     atomic.Value // Stores string
 	cachedSysLocation atomic.Value // Stores string
 	metricsCycler *MetricsCycler   // Per-device cycling CPU/memory metrics
+	flowExporter  *FlowExporter   // NetFlow/IPFIX exporter (nil if flow export disabled)
 	netNamespace  *NetNamespace   // Network namespace (nil if using root namespace)
 	running      bool
 	mu           sync.RWMutex
@@ -170,6 +172,18 @@ type SimulatorManager struct {
 	isCreatingDevices    atomic.Value      // bool - true when device creation is in progress
 	deviceCreateProgress atomic.Value      // int - number of devices created so far
 	deviceCreateTotal    atomic.Value      // int - total number of devices to create
+
+	// Flow export state (nil/zero when disabled; set by InitFlowExport)
+	flowConn             *net.UDPConn
+	flowCollectorAddr    *net.UDPAddr
+	flowEncoder          FlowEncoder
+	flowBufPool          sync.Pool // supplies []byte(1500); set via flowBufPool.New
+	flowActive           bool
+	flowTickInterval     time.Duration
+	flowActiveTimeout    time.Duration
+	flowInactiveTimeout  time.Duration
+	flowTemplateInterval time.Duration
+	flowStopCh           chan struct{} // closed by Shutdown to stop the ticker goroutine
 
 	mu              sync.RWMutex
 }

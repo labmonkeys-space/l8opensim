@@ -101,6 +101,14 @@ func main() {
 		showHelp        = flag.Bool("help", false, "Show this help message")
 		ifScenario      = flag.Int("if-scenario", 2, "Interface state scenario: 1=all-shutdown, 2=all-normal (default), 3=all-failure, 4=pct-failure")
 		ifFailurePct    = flag.Int("if-failure-pct", 10, "Percentage of interfaces with oper-down (used with -if-scenario 4, 0–100)")
+
+		// Flow export flags
+		flowCollector        = flag.String("flow-collector", "", "NetFlow/IPFIX collector address (host:port, e.g. 192.168.1.100:2055); disables flow export when empty")
+		flowProtocol         = flag.String("flow-protocol", "netflow9", "Flow export protocol: netflow9 (default)")
+		flowActiveSecs       = flag.Int("flow-active-timeout", 30, "Active flow timeout in seconds (default: 30)")
+		flowInactiveSecs     = flag.Int("flow-inactive-timeout", 15, "Inactive flow timeout in seconds (default: 15)")
+		flowTemplateIntervalSecs = flag.Int("flow-template-interval", 60, "Template retransmission interval in seconds (default: 60)")
+		flowTickSecs         = flag.Int("flow-tick-interval", 5, "Flow ticker interval in seconds (default: 5)")
 	)
 
 	flag.Parse()
@@ -168,6 +176,21 @@ func main() {
 		err = manager.LoadResources("resources/cisco_ios.json")
 		if err != nil {
 			log.Fatalf("Failed to load any resources: %v", err)
+		}
+	}
+
+	// Enable flow export if a collector address was provided.
+	if *flowCollector != "" {
+		err := manager.InitFlowExport(
+			*flowCollector,
+			*flowProtocol,
+			time.Duration(*flowActiveSecs)*time.Second,
+			time.Duration(*flowInactiveSecs)*time.Second,
+			time.Duration(*flowTemplateIntervalSecs)*time.Second,
+			time.Duration(*flowTickSecs)*time.Second,
+		)
+		if err != nil {
+			log.Fatalf("Failed to initialize flow export: %v", err)
 		}
 	}
 

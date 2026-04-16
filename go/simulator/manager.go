@@ -318,6 +318,15 @@ func (sm *SimulatorManager) Shutdown() error {
 	log.Println("Shutting down simulator manager...")
 	startTime := time.Now()
 
+	// Stop the flow ticker goroutine and close the shared UDP socket.
+	if sm.flowActive && sm.flowStopCh != nil {
+		close(sm.flowStopCh)
+	}
+	if sm.flowConn != nil {
+		sm.flowConn.Close()
+		sm.flowConn = nil
+	}
+
 	if sm.useNamespace && sm.netNamespace != nil {
 		// Fast path: when using a namespace, deleting it instantly destroys all
 		// TUN interfaces inside it. No need to delete them one by one.
