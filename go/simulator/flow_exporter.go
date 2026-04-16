@@ -40,6 +40,16 @@ type FlowEncoder interface {
 	PacketSizes() (baseOverhead int, templateSize int, recordSize int)
 }
 
+// FlowTickStats holds per-tick export counters returned by Tick.
+// tickAllFlowExporters sums these across all devices and adds them to the
+// cumulative atomic counters on SimulatorManager.
+type FlowTickStats struct {
+	PacketsSent    uint64
+	BytesSent      uint64
+	RecordsSent    uint64
+	LastTemplateMs int64 // unix ms of the most-recent template send this tick; 0 if none
+}
+
 // FlowExporter is owned by one DeviceSimulator. It ties the FlowCache and
 // encoder together and is driven by the shared SimulatorManager ticker goroutine.
 // It has no goroutines of its own — see SimulatorManager.startFlowTicker.
@@ -78,7 +88,9 @@ func NewFlowExporter(device *DeviceSimulator, profile *FlowProfile, activeTimeou
 //
 // bufPool must supply []byte slices of at least 1500 bytes.
 // Write errors are ignored (best-effort delivery; collector may be down).
-func (fe *FlowExporter) Tick(now time.Time, encoder FlowEncoder, conn *net.UDPConn, collectorAddr *net.UDPAddr, bufPool *sync.Pool) {
+// The returned FlowTickStats are summed by tickAllFlowExporters into the
+// cumulative atomic counters on SimulatorManager.
+func (fe *FlowExporter) Tick(now time.Time, encoder FlowEncoder, conn *net.UDPConn, collectorAddr *net.UDPAddr, bufPool *sync.Pool) FlowTickStats {
 	uptimeMs := uint32(now.Sub(fe.startTime).Milliseconds())
 	deviceIP := domainIDtoIP(fe.domainID)
 
@@ -90,11 +102,13 @@ func (fe *FlowExporter) Tick(now time.Time, encoder FlowEncoder, conn *net.UDPCo
 
 	sendTemplate := fe.seqNo == 0 || now.Sub(fe.lastTempl) >= fe.templateInterval
 	if len(expired) == 0 && !sendTemplate {
-		return
+		return FlowTickStats{}
 	}
 
 	buf := bufPool.Get().([]byte)
 	defer bufPool.Put(buf)
+
+	var stats FlowTickStats
 
 	// Paginate: send as many records as fit in each 1500-byte UDP datagram.
 	// Capacity depends on the active encoder's protocol (NF9: 45B/record,
@@ -128,9 +142,13 @@ func (fe *FlowExporter) Tick(now time.Time, encoder FlowEncoder, conn *net.UDPCo
 		}
 
 		conn.WriteTo(buf[:n], collectorAddr) //nolint:errcheck
+		stats.PacketsSent++
+		stats.BytesSent += uint64(n)
+		stats.RecordsSent += uint64(len(batch))
 		fe.seqNo++
 		if sendTemplate {
 			fe.lastTempl = now
+			stats.LastTemplateMs = now.UnixMilli()
 			sendTemplate = false
 		}
 
@@ -138,6 +156,7 @@ func (fe *FlowExporter) Tick(now time.Time, encoder FlowEncoder, conn *net.UDPCo
 			break
 		}
 	}
+	return stats
 }
 
 // domainIDtoIP converts a uint32 ObservationDomainID back to a net.IP.
@@ -180,6 +199,8 @@ func (sm *SimulatorManager) InitFlowExport(collectorAddr, protocol string, activ
 
 	sm.flowConn = conn
 	sm.flowCollectorAddr = addr
+	sm.flowCollectorStr = collectorAddr
+	sm.flowProtocol = strings.ToLower(protocol)
 	sm.flowEncoder = enc
 	sm.flowActiveTimeout = activeTimeout
 	sm.flowInactiveTimeout = inactiveTimeout
@@ -241,7 +262,56 @@ func (sm *SimulatorManager) tickAllFlowExporters(now time.Time) {
 		return // flow export was shut down between tick and snapshot
 	}
 
+	var totalPackets, totalBytes, totalRecords uint64
+	var lastTemplMs int64
 	for _, fe := range exporters {
-		fe.Tick(now, encoder, conn, collectorAddr, &sm.flowBufPool)
+		s := fe.Tick(now, encoder, conn, collectorAddr, &sm.flowBufPool)
+		totalPackets += s.PacketsSent
+		totalBytes += s.BytesSent
+		totalRecords += s.RecordsSent
+		if s.LastTemplateMs > lastTemplMs {
+			lastTemplMs = s.LastTemplateMs
+		}
+	}
+	if totalPackets > 0 {
+		sm.flowStatPackets.Add(totalPackets)
+		sm.flowStatBytes.Add(totalBytes)
+		sm.flowStatRecords.Add(totalRecords)
+	}
+	if lastTemplMs > 0 {
+		sm.flowStatLastTmpl.Store(lastTemplMs)
+	}
+}
+
+// GetFlowStatus returns a snapshot of the current flow export state and
+// cumulative counters. Returns {Enabled: false} when flow export is off.
+func (sm *SimulatorManager) GetFlowStatus() FlowStatus {
+	if !sm.flowActive.Load() {
+		return FlowStatus{Enabled: false}
+	}
+
+	sm.mu.RLock()
+	devicesExporting := 0
+	for _, d := range sm.devices {
+		if d.flowExporter != nil {
+			devicesExporting++
+		}
+	}
+	sm.mu.RUnlock()
+
+	var lastTemplate string
+	if ms := sm.flowStatLastTmpl.Load(); ms > 0 {
+		lastTemplate = time.UnixMilli(ms).UTC().Format(time.RFC3339)
+	}
+
+	return FlowStatus{
+		Enabled:            true,
+		Protocol:           sm.flowProtocol,
+		Collector:          sm.flowCollectorStr,
+		TotalFlowsExported: sm.flowStatRecords.Load(),
+		TotalPacketsSent:   sm.flowStatPackets.Load(),
+		TotalBytesSent:     sm.flowStatBytes.Load(),
+		DevicesExporting:   devicesExporting,
+		LastTemplateSend:   lastTemplate,
 	}
 }

@@ -87,6 +87,11 @@ func systemStatsHandler(w http.ResponseWriter, r *http.Request) {
 	sendDataResponse(w, stats)
 }
 
+func flowStatusHandler(w http.ResponseWriter, r *http.Request) {
+	status := manager.GetFlowStatus()
+	sendDataResponse(w, status)
+}
+
 func deleteDeviceHandler(w http.ResponseWriter, r *http.Request) {
 	vars := mux.Vars(r)
 	deviceID := vars["id"]
@@ -245,6 +250,7 @@ func setupRoutes() *mux.Router {
 	api.HandleFunc("/resources", listResourcesHandler).Methods("GET")
 	api.HandleFunc("/status", statusHandler).Methods("GET")
 	api.HandleFunc("/system-stats", systemStatsHandler).Methods("GET")
+	api.HandleFunc("/flows/status", flowStatusHandler).Methods("GET")
 	api.HandleFunc("/debug/pprof-memory", pprofMemoryHandler).Methods("GET")
 	api.HandleFunc("/debug/cpu-profile", cpuProfileHandler).Methods("GET")
 

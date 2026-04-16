@@ -25,6 +25,7 @@ A powerful, scalable network and infrastructure simulator that provides realisti
 - **Linux Server Simulation**: Comprehensive Ubuntu server with 36+ SSH commands
 - **CDP & LLDP Support**: Cisco Discovery Protocol and LLDP for network topology discovery
 - **World Cities**: Device sysLocation populated from 98 world cities datasets for realistic geographic distribution
+- **Flow Export**: Per-device NetFlow v9 (RFC 3954) and IPFIX (RFC 7011) export to any UDP collector; protocol-aware batch pagination, template refresh, and a `/api/v1/flows/status` endpoint with cumulative counters
 - **Layer 8 Integration**: Optional L8 vnet overlay with HTTPS web proxy for distributed deployment
 
 ## Quick Start
@@ -89,6 +90,12 @@ Options:
   -no-namespace               Disable network namespace isolation (use root namespace)
   -if-scenario int            Interface state scenario: 1=all-shutdown, 2=all-normal (default), 3=all-failure, 4=pct-failure
   -if-failure-pct int         Percentage of interfaces with oper-down (used with -if-scenario 4, 0–100, default: 10)
+  -flow-collector string      Enable flow export to this UDP collector (e.g., 192.168.1.10:2055)
+  -flow-protocol string       Flow export protocol: netflow9 (default) | ipfix
+  -flow-tick duration         How often to emit flows (default: 10s)
+  -flow-active-timeout dur    Active flow expiry timeout (default: 5m)
+  -flow-inactive-timeout dur  Inactive flow expiry timeout (default: 1m)
+  -flow-template-interval dur Re-send template every N seconds (default: 10m)
   -help                       Show help message
 ```
 
@@ -146,6 +153,60 @@ snmpwalk -v2c -c public 192.168.100.1 1.3.6.1.2.1.2.2.1.8   # ifOperStatus
 snmpwalk -v2c -c public 192.168.100.1 1.3.6.1.2.1.2.2.1.7   # ifAdminStatus
 ```
 
+## Flow Export (NetFlow v9 / IPFIX)
+
+OpenSim can emit synthetic flow telemetry to any NetFlow v9 (RFC 3954) or IPFIX (RFC 7011) collector. Each simulated device generates realistic flows that reflect its role (edge router, data-center switch, firewall, etc.) and exports them over a single shared UDP socket.
+
+### Starting flow export
+
+```bash
+# Export NetFlow v9 to a local collector on port 2055
+sudo ./simulator -auto-start-ip 10.0.0.1 -auto-count 100 \
+  -flow-collector 192.168.1.10:2055
+
+# Use IPFIX instead
+sudo ./simulator -auto-start-ip 10.0.0.1 -auto-count 100 \
+  -flow-collector 192.168.1.10:4739 -flow-protocol ipfix
+
+# Faster ticks for high-fidelity testing
+sudo ./simulator -auto-start-ip 10.0.0.1 -auto-count 10 \
+  -flow-collector 127.0.0.1:9999 -flow-tick 1s
+```
+
+### Protocol details
+
+| Protocol | Version field | Template ID | Record size | Timestamps |
+|----------|--------------|-------------|-------------|------------|
+| NetFlow v9 | `9` | FlowSet ID 0 | 45 B/record | SysUptime-relative ms (FIRST/LAST_SWITCHED) |
+| IPFIX | `10` | Set ID 2 | 53 B/record | Absolute epoch ms (IE 152/153) |
+
+Both protocols use the same 18-field template (bytes, packets, protocol, ToS, TCP flags, src/dst ports, src/dst IPv4, src/dst mask, ingress/egress interface, next-hop, src/dst AS, timestamps).
+
+### Flow status API
+
+```bash
+curl http://localhost:8080/api/v1/flows/status
+```
+
+```json
+{
+  "success": true,
+  "message": "Success",
+  "data": {
+    "enabled": true,
+    "protocol": "ipfix",
+    "collector": "192.168.1.10:4739",
+    "total_flows_exported": 1824300,
+    "total_packets_sent": 91215,
+    "total_bytes_sent": 136823040,
+    "devices_exporting": 100,
+    "last_template_send": "2026-04-16T10:35:00Z"
+  }
+}
+```
+
+When flow export is disabled the response is `{"enabled": false}`.
+
 ## Web Interface
 
 Access the web UI at `http://localhost:8080/` for:
@@ -172,6 +233,7 @@ Access the web UI at `http://localhost:8080/` for:
 | `/api/v1/resources` | GET | List available device resource types |
 | `/api/v1/status` | GET | Manager status |
 | `/api/v1/system-stats` | GET | System stats (file descriptors, memory) |
+| `/api/v1/flows/status` | GET | Flow export status and cumulative counters |
 | `/health` | GET | Health check endpoint |
 
 ### Create Devices

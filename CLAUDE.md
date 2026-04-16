@@ -23,6 +23,14 @@ sudo ./simulator [flags]
 -snmpv3-priv <proto>    # none | des | aes128
 -no-namespace           # Disable network namespace isolation
 
+# Flow export flags (NetFlow v9 / IPFIX)
+-flow-collector <host:port>       # Enable flow export to this UDP collector
+-flow-protocol <proto>            # netflow9 (default) | ipfix
+-flow-tick <duration>             # How often to emit flows (default: 10s)
+-flow-active-timeout <duration>   # Active flow expiry timeout (default: 5m)
+-flow-inactive-timeout <duration> # Inactive flow expiry timeout (default: 1m)
+-flow-template-interval <dur>     # Re-send template every N ticks (default: 10m)
+
 # Tests
 cd go
 go test ./...
@@ -59,7 +67,9 @@ docker build --no-cache --platform=linux/amd64 -t saichler/opensim-web:latest .
 
 **Network infrastructure:** `tun.go` creates TUN interfaces, `netns.go` manages the `opensim` network namespace, `prealloc.go` does parallel pre-allocation of TUN interfaces (configurable worker count 100–200) for fast scaling.
 
-**Web API:** `web.go` (route setup) + `api.go` (handlers) + `web_routes*.go` (Linux route script generation). Serves device CRUD, CSV export, system stats.
+**Web API:** `web.go` (route setup) + `api.go` (handlers) + `web_routes*.go` (Linux route script generation). Serves device CRUD, CSV export, system stats, and flow export status (`GET /api/v1/flows/status`).
+
+**Flow export:** `flow_exporter.go` (FlowExporter, FlowEncoder interface, SimulatorManager integration) + `netflow9.go` (NetFlow9Encoder, RFC 3954) + `ipfix.go` (IPFIXEncoder, RFC 7011). One shared UDP socket and ticker goroutine; per-device FlowExporter owns a FlowCache. Protocols: `netflow9` (20B header, 45B/record) and `ipfix` (16B header, 53B/record, absolute epoch-ms timestamps).
 
 **Resource loading:** `resources.go` loads and caches the 341 JSON files at startup. Each device type directory has split JSON files for SNMP, SSH, and REST responses that are merged at load time.
 
