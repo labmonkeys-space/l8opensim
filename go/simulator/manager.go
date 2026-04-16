@@ -319,8 +319,12 @@ func (sm *SimulatorManager) Shutdown() error {
 	startTime := time.Now()
 
 	// Stop the flow ticker goroutine and close the shared UDP socket.
-	if sm.flowActive && sm.flowStopCh != nil {
-		close(sm.flowStopCh)
+	// flowStopOnce ensures close(flowStopCh) is safe on repeated Shutdown() calls.
+	// flowWg.Wait() ensures the ticker goroutine has exited before we close flowConn,
+	// eliminating the data race between WriteTo and conn.Close()/nil.
+	if sm.flowActive.Load() {
+		sm.flowStopOnce.Do(func() { close(sm.flowStopCh) })
+		sm.flowWg.Wait()
 	}
 	if sm.flowConn != nil {
 		sm.flowConn.Close()

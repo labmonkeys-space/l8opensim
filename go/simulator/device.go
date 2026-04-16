@@ -251,7 +251,7 @@ func (sm *SimulatorManager) CreateDevicesWithOptions(startIP string, count int, 
 			device.metricsCycler.InitIfCounters(deviceResources, int64(i)^0x4843_0000)
 
 			// Initialize flow exporter if flow export is enabled.
-			if sm.flowActive {
+			if sm.flowActive.Load() {
 				flowProfile := GetFlowProfile(deviceResourceFile)
 				device.flowExporter = NewFlowExporter(device, flowProfile,
 					sm.flowActiveTimeout, sm.flowInactiveTimeout, sm.flowTemplateInterval)
@@ -479,7 +479,7 @@ func (sm *SimulatorManager) createSingleDevice(deviceIndex int, deviceIP net.IP,
 	device.metricsCycler.InitIfCounters(resources, int64(deviceIndex)^0x4843_0000)
 
 	// Initialize flow exporter if flow export is enabled.
-	if sm.flowActive {
+	if sm.flowActive.Load() {
 		flowProfile := GetFlowProfile(resourceFile)
 		device.flowExporter = NewFlowExporter(device, flowProfile,
 			sm.flowActiveTimeout, sm.flowInactiveTimeout, sm.flowTemplateInterval)

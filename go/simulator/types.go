@@ -177,13 +177,15 @@ type SimulatorManager struct {
 	flowConn             *net.UDPConn
 	flowCollectorAddr    *net.UDPAddr
 	flowEncoder          FlowEncoder
-	flowBufPool          sync.Pool // supplies []byte(1500); set via flowBufPool.New
-	flowActive           bool
+	flowBufPool          sync.Pool     // supplies []byte(1500); set via flowBufPool.New
+	flowActive           atomic.Bool   // true after InitFlowExport; safe for concurrent reads
 	flowTickInterval     time.Duration
 	flowActiveTimeout    time.Duration
 	flowInactiveTimeout  time.Duration
 	flowTemplateInterval time.Duration
-	flowStopCh           chan struct{} // closed by Shutdown to stop the ticker goroutine
+	flowStopCh           chan struct{}  // closed by Shutdown to stop the ticker goroutine
+	flowStopOnce         sync.Once     // ensures flowStopCh is closed exactly once
+	flowWg               sync.WaitGroup // tracks the ticker goroutine; Wait before closing flowConn
 
 	mu              sync.RWMutex
 }

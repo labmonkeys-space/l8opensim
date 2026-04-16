@@ -145,6 +145,10 @@ func domainIDtoIP(id uint32) net.IP {
 // collectorAddr is "host:port" (e.g. "192.168.1.100:2055").
 // protocol is "netflow9" (the only supported value for Phase 2).
 func (sm *SimulatorManager) InitFlowExport(collectorAddr, protocol string, activeTimeout, inactiveTimeout, templateInterval, tickInterval time.Duration) error {
+	if sm.flowActive.Load() {
+		return fmt.Errorf("flow export: already active; call Shutdown() before re-initializing")
+	}
+
 	addr, err := net.ResolveUDPAddr("udp4", collectorAddr)
 	if err != nil {
 		return fmt.Errorf("flow export: invalid collector address %q: %w", collectorAddr, err)
@@ -176,7 +180,8 @@ func (sm *SimulatorManager) InitFlowExport(collectorAddr, protocol string, activ
 		return buf
 	}
 	sm.flowStopCh = make(chan struct{})
-	sm.flowActive = true
+	sm.flowStopOnce = sync.Once{}
+	sm.flowActive.Store(true)
 
 	log.Printf("Flow export: %s → %s (protocol: %s, tick: %s, active-timeout: %s)",
 		conn.LocalAddr(), collectorAddr, protocol, tickInterval, activeTimeout)
@@ -189,7 +194,9 @@ func (sm *SimulatorManager) InitFlowExport(collectorAddr, protocol string, activ
 // every active device's FlowExporter at flowTickInterval. The goroutine exits
 // when flowStopCh is closed.
 func (sm *SimulatorManager) startFlowTicker() {
+	sm.flowWg.Add(1)
 	go func() {
+		defer sm.flowWg.Done()
 		ticker := time.NewTicker(sm.flowTickInterval)
 		defer ticker.Stop()
 		for {
@@ -214,9 +221,17 @@ func (sm *SimulatorManager) tickAllFlowExporters(now time.Time) {
 			exporters = append(exporters, d.flowExporter)
 		}
 	}
+	// Snapshot shared transport fields under the lock to avoid racing with Shutdown.
+	conn := sm.flowConn
+	collectorAddr := sm.flowCollectorAddr
+	encoder := sm.flowEncoder
 	sm.mu.RUnlock()
 
+	if conn == nil {
+		return // flow export was shut down between tick and snapshot
+	}
+
 	for _, fe := range exporters {
-		fe.Tick(now, sm.flowEncoder, sm.flowConn, sm.flowCollectorAddr, &sm.flowBufPool)
+		fe.Tick(now, encoder, conn, collectorAddr, &sm.flowBufPool)
 	}
 }
