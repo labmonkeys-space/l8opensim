@@ -163,9 +163,11 @@ func (sm *SimulatorManager) InitFlowExport(collectorAddr, protocol string, activ
 	switch strings.ToLower(protocol) {
 	case "netflow9", "nf9", "":
 		enc = NetFlow9Encoder{}
+	case "ipfix", "ipfix10":
+		enc = IPFIXEncoder{}
 	default:
 		conn.Close()
-		return fmt.Errorf("flow export: unknown protocol %q (supported: netflow9)", protocol)
+		return fmt.Errorf("flow export: unknown protocol %q (supported: netflow9, ipfix)", protocol)
 	}
 
 	sm.flowConn = conn

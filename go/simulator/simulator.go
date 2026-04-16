@@ -104,7 +104,7 @@ func main() {
 
 		// Flow export flags
 		flowCollector        = flag.String("flow-collector", "", "NetFlow/IPFIX collector address (host:port, e.g. 192.168.1.100:2055); disables flow export when empty")
-		flowProtocol         = flag.String("flow-protocol", "netflow9", "Flow export protocol: netflow9 (default)")
+		flowProtocol         = flag.String("flow-protocol", "netflow9", "Flow export protocol: netflow9 (default), ipfix")
 		flowActiveSecs       = flag.Int("flow-active-timeout", 30, "Active flow timeout in seconds (default: 30)")
 		flowInactiveSecs     = flag.Int("flow-inactive-timeout", 15, "Inactive flow timeout in seconds (default: 15)")
 		flowTemplateIntervalSecs = flag.Int("flow-template-interval", 60, "Template retransmission interval in seconds (default: 60)")
