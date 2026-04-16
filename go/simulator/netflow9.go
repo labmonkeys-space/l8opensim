@@ -119,6 +119,12 @@ func buildNF9Template() []byte {
 // the caller so the encoder can be shared across goroutines without locking.
 type NetFlow9Encoder struct{}
 
+// PacketSizes returns the NF9 per-packet overhead, template flowset size, and
+// per-record size. Used by Tick() to compute protocol-correct batch capacity.
+func (NetFlow9Encoder) PacketSizes() (int, int, int) {
+	return nf9HeaderSize + 4, nf9TemplFlowSetSize, nf9RecordSize
+}
+
 // EncodePacket serialises a complete NetFlow v9 UDP payload into buf and
 // returns the number of bytes written.
 //

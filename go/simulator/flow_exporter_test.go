@@ -276,6 +276,116 @@ func TestFlowExporter_Tick_TemplateRetransmit(t *testing.T) {
 	}
 }
 
+// TestFlowExporter_Tick_IPFIXTemplateOnFirstCall verifies that the first Tick
+// with an IPFIXEncoder sends an IPFIX message containing a Template Set.
+func TestFlowExporter_Tick_IPFIXTemplateOnFirstCall(t *testing.T) {
+	ln, ch := testUDPListener(t)
+	defer ln.Close()
+
+	conn := testSender(t)
+	defer conn.Close()
+
+	collectorAddr := ln.LocalAddr().(*net.UDPAddr)
+
+	fe := NewFlowExporter(testDevice("10.2.3.4"), flowProfileEdgeRouter,
+		10*time.Minute, 5*time.Minute, 10*time.Minute)
+
+	fe.Tick(time.Now(), IPFIXEncoder{}, conn, collectorAddr, testPool())
+
+	pkt := receivePacket(ch)
+	if pkt == nil {
+		t.Fatal("no UDP packet received on first IPFIX Tick (expected template)")
+	}
+
+	decoded := decodeIPFIXPacket(t, pkt)
+	if decoded.Header.Version != 10 {
+		t.Errorf("IPFIX version = %d, want 10", decoded.Header.Version)
+	}
+	if len(decoded.Templates) != 1 {
+		t.Errorf("template count = %d, want 1", len(decoded.Templates))
+	}
+	if fe.seqNo != 1 {
+		t.Errorf("seqNo after first Tick = %d, want 1", fe.seqNo)
+	}
+}
+
+// TestFlowExporter_Tick_IPFIXPagination verifies that 80 expired records are
+// fully delivered across multiple IPFIX datagrams with no silent record loss.
+// This specifically exercises the pagination logic with ipfixRecordSize=53
+// (which is larger than nf9RecordSize=45 and was previously causing 5 records
+// to be silently discarded per datagram).
+func TestFlowExporter_Tick_IPFIXPagination(t *testing.T) {
+	ln, ch := testUDPListener(t)
+	defer ln.Close()
+
+	conn := testSender(t)
+	defer conn.Close()
+
+	collectorAddr := ln.LocalAddr().(*net.UDPAddr)
+
+	profile := &FlowProfile{
+		TCPWeight: 1.0, UDPWeight: 0, ICMPWeight: 0,
+		DstPorts:        []PortWeight{{443, 1.0}},
+		SrcPortMin:      1024, SrcPortMax: 65535,
+		BytesMin:        100, BytesMax: 200,
+		PktsMin:         1, PktsMax: 2,
+		DurationMinMs:   100, DurationMaxMs: 200,
+		ConcurrentFlows: 100,
+		MaxFlows:        256,
+	}
+
+	fe := NewFlowExporter(testDevice("10.2.3.5"), profile,
+		1*time.Millisecond, 1*time.Millisecond, 10*time.Minute)
+
+	// Insert 80 distinct flows all with past timestamps so they expire immediately.
+	past := time.Now().Add(-1 * time.Hour)
+	for i := 0; i < 80; i++ {
+		fe.cache.Add(FlowRecord{
+			SrcIP:    net.ParseIP("10.0.0.1").To4(),
+			DstIP:    net.ParseIP("10.0.0.2").To4(),
+			NextHop:  net.IPv4(0, 0, 0, 0).To4(),
+			SrcPort:  uint16(1024 + i),
+			DstPort:  443,
+			Protocol: 6,
+			Bytes:    100,
+			Packets:  1,
+		}, past)
+	}
+
+	if got := fe.cache.Len(); got != 80 {
+		t.Fatalf("expected 80 cache entries, got %d", got)
+	}
+
+	fe.Tick(time.Now(), IPFIXEncoder{}, conn, collectorAddr, testPool())
+
+	// Collect all received packets.
+	var packets [][]byte
+	for {
+		pkt := receivePacket(ch)
+		if pkt == nil {
+			break
+		}
+		packets = append(packets, pkt)
+	}
+
+	if len(packets) < 2 {
+		t.Errorf("expected ≥2 IPFIX packets for 80 records, got %d", len(packets))
+	}
+
+	// Count total records across all packets — must equal 80 with no loss.
+	total := 0
+	for _, pkt := range packets {
+		decoded := decodeIPFIXPacket(t, pkt)
+		if decoded.Header.Version != 10 {
+			t.Errorf("packet version = %d, want 10 (IPFIX)", decoded.Header.Version)
+		}
+		total += len(decoded.Records)
+	}
+	if total != 80 {
+		t.Errorf("total IPFIX records across all packets = %d, want 80 (no silent loss)", total)
+	}
+}
+
 // TestFlowExporter_Tick_Pagination verifies that when more records expire than
 // fit in a single 1500-byte UDP datagram, multiple packets are sent.
 func TestFlowExporter_Tick_Pagination(t *testing.T) {

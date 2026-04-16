@@ -131,6 +131,12 @@ func buildIPFIXTemplateSet() []byte {
 //   - The Length header field covers the entire message in bytes (NF9 uses FlowSet count)
 type IPFIXEncoder struct{}
 
+// PacketSizes returns the IPFIX per-packet overhead, template set size, and
+// per-record size. Used by Tick() to compute protocol-correct batch capacity.
+func (IPFIXEncoder) PacketSizes() (int, int, int) {
+	return ipfixHeaderSize + 4, ipfixTemplSetSize, ipfixRecordSize
+}
+
 // EncodePacket serialises a complete IPFIX UDP payload into buf and returns
 // the number of bytes written.
 //
@@ -162,8 +168,14 @@ func (IPFIXEncoder) EncodePacket(
 
 	// Compute absolute device-start epoch so per-record uptime-relative times
 	// can be converted to absolute epoch milliseconds for the IPFIX wire format.
+	// Clamp to zero to guard against a negative result if uptimeMs exceeds nowMs
+	// (e.g. NTP step-back or synthetic clock in tests), which would otherwise
+	// wrap via uint64 cast to a timestamp in year ~584 million CE.
 	nowMs := time.Now().UnixMilli()
 	deviceStartMs := nowMs - int64(uptimeMs)
+	if deviceStartMs < 0 {
+		deviceStartMs = 0
+	}
 
 	// Minimum required buffer size.
 	overhead := ipfixHeaderSize + 4 // msg header + data Set header

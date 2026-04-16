@@ -28,10 +28,16 @@ import (
 
 // FlowEncoder is the protocol-agnostic interface satisfied by both NetFlow v9
 // and IPFIX encoders. uptimeMs is the device uptime in milliseconds at export
-// time; IPFIX encoders may ignore it (IPFIX uses absolute timestamps).
+// time; IPFIX encoders may use it to compute absolute timestamps.
 type FlowEncoder interface {
 	EncodePacket(domainID uint32, seqNo uint32, uptimeMs uint32,
 		records []FlowRecord, includeTemplate bool, buf []byte) (int, error)
+	// PacketSizes returns the three per-packet size constants that Tick() needs
+	// to compute batch capacity correctly for each protocol:
+	//   baseOverhead — message/packet header + data-set/flowset header (bytes)
+	//   templateSize — template set/flowset byte length
+	//   recordSize   — bytes per flow record on the wire
+	PacketSizes() (baseOverhead int, templateSize int, recordSize int)
 }
 
 // FlowExporter is owned by one DeviceSimulator. It ties the FlowCache and
@@ -91,16 +97,18 @@ func (fe *FlowExporter) Tick(now time.Time, encoder FlowEncoder, conn *net.UDPCo
 	defer bufPool.Put(buf)
 
 	// Paginate: send as many records as fit in each 1500-byte UDP datagram.
-	// With a 20-byte packet header, 80-byte template, and 45 bytes per record,
-	// one 1500-byte datagram carries up to 30 records. Most ticks produce fewer.
+	// Capacity depends on the active encoder's protocol (NF9: 45B/record,
+	// IPFIX: 53B/record), so we ask the encoder for its sizes rather than
+	// hard-coding NF9 constants here.
+	baseOverhead, templSize, recSize := encoder.PacketSizes()
 	for {
-		overhead := nf9HeaderSize + 4 // NF9 packet header + data FlowSet header
+		overhead := baseOverhead
 		if sendTemplate {
-			overhead += nf9TemplFlowSetSize
+			overhead += templSize
 		}
 		var batch []FlowRecord
-		if len(buf) >= overhead+nf9RecordSize {
-			cap := (len(buf) - overhead) / nf9RecordSize
+		if len(buf) >= overhead+recSize {
+			cap := (len(buf) - overhead) / recSize
 			if cap >= len(expired) {
 				batch = expired
 				expired = nil
