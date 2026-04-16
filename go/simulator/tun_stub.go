@@ -21,6 +21,7 @@ package main
 
 import (
 	"net"
+	"strconv"
 	"strings"
 )
 
@@ -35,44 +36,42 @@ func createTunInterfaceInNamespaceViaExec(nsName, tunName string, ip net.IP, net
 func (tun *TunInterface) destroy() error { return nil }
 
 // compareOIDsLexicographically compares two OID strings numerically component
-// by component. Returns negative / zero / positive like strings.Compare.
-// This implementation is portable and identical to the one in tun.go.
+// by component. Returns -1, 0, or 1. Identical to the Linux implementation in
+// tun.go — kept in sync to ensure consistent SNMP GETNEXT ordering on all
+// platforms.
 func compareOIDsLexicographically(oid1, oid2 string) int {
-	parts1 := strings.Split(strings.TrimPrefix(oid1, "."), ".")
-	parts2 := strings.Split(strings.TrimPrefix(oid2, "."), ".")
-
-	minLen := len(parts1)
-	if len(parts2) < minLen {
-		minLen = len(parts2)
+	var parts1, parts2 []string
+	if s := strings.TrimPrefix(oid1, "."); s != "" {
+		parts1 = strings.Split(s, ".")
+	}
+	if s := strings.TrimPrefix(oid2, "."); s != "" {
+		parts2 = strings.Split(s, ".")
 	}
 
-	for i := 0; i < minLen; i++ {
-		n1 := parseOIDComponent(parts1[i])
-		n2 := parseOIDComponent(parts2[i])
-		if n1 < n2 {
-			return -1
+	maxLen := len(parts1)
+	if len(parts2) > maxLen {
+		maxLen = len(parts2)
+	}
+
+	for i := 0; i < maxLen; i++ {
+		var val1, val2 int
+		if i < len(parts1) {
+			val1, _ = strconv.Atoi(parts1[i])
 		}
-		if n1 > n2 {
+		if i < len(parts2) {
+			val2, _ = strconv.Atoi(parts2[i])
+		}
+		if val1 < val2 {
+			return -1
+		} else if val1 > val2 {
 			return 1
 		}
 	}
 
 	if len(parts1) < len(parts2) {
 		return -1
-	}
-	if len(parts1) > len(parts2) {
+	} else if len(parts1) > len(parts2) {
 		return 1
 	}
 	return 0
-}
-
-func parseOIDComponent(s string) int {
-	n := 0
-	for _, c := range s {
-		if c < '0' || c > '9' {
-			break
-		}
-		n = n*10 + int(c-'0')
-	}
-	return n
 }

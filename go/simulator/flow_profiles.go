@@ -256,14 +256,14 @@ var flowProfileMap = map[string]*FlowProfile{
 	// Core Routers
 	"asr9k.json":           flowProfileCoreRouter,
 	"cisco_crs_x.json":     flowProfileCoreRouter,
-	"huawei_ne8000.json":   flowProfileCoreRouter,
 	"nokia_7750_sr12.json": flowProfileCoreRouter,
 	"juniper_mx960.json":   flowProfileCoreRouter,
 
 	// Edge Routers
-	"juniper_mx240.json": flowProfileEdgeRouter,
-	"nec_ix3315.json":    flowProfileEdgeRouter,
-	"cisco_ios.json":     flowProfileEdgeRouter,
+	"juniper_mx240.json":  flowProfileEdgeRouter,
+	"nec_ix3315.json":     flowProfileEdgeRouter,
+	"cisco_ios.json":      flowProfileEdgeRouter,
+	"huawei_ne8000.json":  flowProfileEdgeRouter,
 
 	// Data Center Switches
 	"cisco_nexus_9500.json": flowProfileDCSwitch,

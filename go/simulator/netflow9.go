@@ -18,6 +18,7 @@ package main
 import (
 	"encoding/binary"
 	"fmt"
+	"math"
 	"time"
 )
 
@@ -150,6 +151,9 @@ func (NetFlow9Encoder) EncodePacket(
 	if includeTemplate {
 		overhead += nf9TemplFlowSetSize
 	}
+	if len(buf) < overhead {
+		return 0, fmt.Errorf("netflow9: buffer too small (%d bytes), need at least %d", len(buf), overhead)
+	}
 	if len(buf) < overhead+nf9RecordSize && len(records) > 0 {
 		return 0, fmt.Errorf("netflow9: buffer too small (%d bytes), need at least %d", len(buf), overhead+nf9RecordSize)
 	}
@@ -223,8 +227,13 @@ func (NetFlow9Encoder) EncodePacket(
 // encodeNF9Record writes a single flow record into buf at pos, following the
 // field order defined in nf9Fields. Returns the new position.
 func encodeNF9Record(buf []byte, pos int, r FlowRecord) int {
-	// IN_BYTES (4)
-	binary.BigEndian.PutUint32(buf[pos:], uint32(r.Bytes))
+	// IN_BYTES (4) — NetFlow v9 field is 4 bytes; clamp to avoid silent wrap for
+	// large flows (GPU/Storage profiles can exceed 4 GB per flow).
+	inBytes := r.Bytes
+	if inBytes > math.MaxUint32 {
+		inBytes = math.MaxUint32
+	}
+	binary.BigEndian.PutUint32(buf[pos:], uint32(inBytes))
 	pos += 4
 	// IN_PKTS (4)
 	binary.BigEndian.PutUint32(buf[pos:], r.Packets)

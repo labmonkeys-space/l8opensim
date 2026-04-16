@@ -146,9 +146,28 @@ func (fc *FlowCache) GenerateFlows(profile *FlowProfile, deviceIP net.IP, rng *r
 	fc.mu.Lock()
 	need := profile.ConcurrentFlows - len(fc.flows)
 	fc.mu.Unlock()
-	for i := 0; i < need; i++ {
-		r := syntheticFlow(profile, deviceIP, rng, startUptimeMs)
-		fc.Add(r, now)
+	if need <= 0 {
+		return
+	}
+
+	// Generate synthetic records outside the lock (pure CPU, no shared state).
+	batch := make([]FlowRecord, need)
+	for i := range batch {
+		batch[i] = syntheticFlow(profile, deviceIP, rng, startUptimeMs)
+	}
+
+	// Insert the whole batch under a single lock acquisition to avoid TOCTOU
+	// between the need-check and the individual Add calls.
+	fc.mu.Lock()
+	defer fc.mu.Unlock()
+	for _, r := range batch {
+		if len(fc.flows) >= fc.maxFlows {
+			break
+		}
+		key := recordKey(r)
+		if _, ok := fc.flows[key]; !ok {
+			fc.flows[key] = &flowEntry{record: r, createdAt: now, lastSeenAt: now}
+		}
 	}
 }
 
@@ -182,13 +201,16 @@ func syntheticFlow(profile *FlowProfile, deviceIP net.IP, rng *rand.Rand, startU
 		srcPort = profile.SrcPortMin
 	}
 
-	// Random destination in 10.0.0.0/8.
+	// Random destination in 10.0.0.1–10.255.255.254 (exclude network/broadcast).
 	var dstRaw [4]byte
-	binary.BigEndian.PutUint32(dstRaw[:], 0x0A000000|uint32(rng.Intn(0x00FFFFFF)))
+	binary.BigEndian.PutUint32(dstRaw[:], 0x0A000000|uint32(rng.Intn(0x00FFFFFE)+1))
 	dstIP := net.IP(append([]byte{}, dstRaw[:]...))
 
 	durationMs := uint32(profile.SampleDurationMs(rng))
 	endMs := startUptimeMs + durationMs
+	if endMs < startUptimeMs { // uint32 overflow guard (~49-day uptime wrap)
+		endMs = startUptimeMs
+	}
 
 	var tcpFlags uint8
 	if proto == 6 {
