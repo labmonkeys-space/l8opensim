@@ -457,3 +457,135 @@ func TestFlowExporter_Tick_Pagination(t *testing.T) {
 		t.Errorf("total records across all packets = %d, want 80", total)
 	}
 }
+
+// TestFlowTickStats_Counters verifies that Tick() returns non-zero PacketsSent,
+// BytesSent, and RecordsSent when there are records to export.
+func TestFlowTickStats_Counters(t *testing.T) {
+	ln, ch := testUDPListener(t)
+	defer ln.Close()
+	conn := testSender(t)
+	defer conn.Close()
+	collectorAddr := ln.LocalAddr().(*net.UDPAddr)
+
+	fe := NewFlowExporter(testDevice("10.0.0.3"), flowProfileEdgeRouter, 30*time.Second, 15*time.Second, 60*time.Second)
+
+	// Pre-populate 5 expired records.
+	past := time.Now().Add(-2 * time.Minute)
+	for i := 0; i < 5; i++ {
+		fe.cache.Add(FlowRecord{
+			SrcIP:    net.ParseIP("10.1.0.1").To4(),
+			DstIP:    net.ParseIP("10.2.0.1").To4(),
+			NextHop:  net.IPv4(0, 0, 0, 0).To4(),
+			SrcPort:  uint16(1000 + i),
+			DstPort:  80,
+			Protocol: 6,
+			Bytes:    500,
+			Packets:  5,
+		}, past)
+	}
+
+	stats := fe.Tick(time.Now(), NetFlow9Encoder{}, conn, collectorAddr, testPool())
+	// Drain sent packets so the listener goroutine can exit cleanly.
+	receivePacket(ch)
+
+	if stats.PacketsSent == 0 {
+		t.Error("PacketsSent = 0, want >0")
+	}
+	if stats.BytesSent == 0 {
+		t.Error("BytesSent = 0, want >0")
+	}
+	if stats.RecordsSent != 5 {
+		t.Errorf("RecordsSent = %d, want 5", stats.RecordsSent)
+	}
+	// seqNo == 0 on first call, so a template must have been sent.
+	if stats.LastTemplateMs == 0 {
+		t.Error("LastTemplateMs = 0 on first Tick, want non-zero")
+	}
+}
+
+// TestFlowTickStats_NoRecordsNoTemplate verifies that Tick() returns zero stats
+// when there is nothing to export and no template is due.
+func TestFlowTickStats_NoRecordsNoTemplate(t *testing.T) {
+	ln, _ := testUDPListener(t)
+	defer ln.Close()
+	conn := testSender(t)
+	defer conn.Close()
+	collectorAddr := ln.LocalAddr().(*net.UDPAddr)
+
+	fe := NewFlowExporter(testDevice("10.0.0.4"), flowProfileEdgeRouter, 30*time.Second, 15*time.Second, 60*time.Minute)
+
+	// Advance past the first (seqNo==0) template send so the next call has no template due.
+	fe.Tick(time.Now(), NetFlow9Encoder{}, conn, collectorAddr, testPool())
+	// Second tick with empty cache and no template interval elapsed → zero stats.
+	stats := fe.Tick(time.Now(), NetFlow9Encoder{}, conn, collectorAddr, testPool())
+
+	if stats.PacketsSent != 0 || stats.BytesSent != 0 || stats.RecordsSent != 0 || stats.LastTemplateMs != 0 {
+		t.Errorf("expected zero stats on idle tick, got %+v", stats)
+	}
+}
+
+// TestGetFlowStatus_Disabled verifies that GetFlowStatus returns {Enabled:false}
+// when flow export has not been initialised.
+func TestGetFlowStatus_Disabled(t *testing.T) {
+	sm := &SimulatorManager{devices: make(map[string]*DeviceSimulator)}
+	status := sm.GetFlowStatus()
+	if status.Enabled {
+		t.Error("expected Enabled=false when flow export is off")
+	}
+	if status.Protocol != "" || status.Collector != "" {
+		t.Errorf("expected empty Protocol/Collector when disabled, got %+v", status)
+	}
+}
+
+// TestGetFlowStatus_Enabled verifies that GetFlowStatus reflects the values set
+// by InitFlowExport and the cumulative counters updated by tickAllFlowExporters.
+func TestGetFlowStatus_Enabled(t *testing.T) {
+	ln, ch := testUDPListener(t)
+	defer ln.Close()
+
+	collectorStr := ln.LocalAddr().String()
+	sm := NewSimulatorManagerWithOptions(false)
+	err := sm.InitFlowExport(collectorStr, "netflow9", 30*time.Second, 15*time.Second, 60*time.Second, 100*time.Millisecond)
+	if err != nil {
+		t.Fatalf("InitFlowExport: %v", err)
+	}
+	defer sm.Shutdown()
+
+	// Add a device with a flow exporter.
+	device := testDevice("10.5.0.1")
+	device.flowExporter = NewFlowExporter(device, flowProfileEdgeRouter, 30*time.Second, 15*time.Second, 60*time.Second)
+	sm.mu.Lock()
+	sm.devices["10.5.0.1"] = device
+	sm.mu.Unlock()
+
+	// Poll until TotalPacketsSent is updated. receivePacket() synchronises on
+	// UDP arrival, which races the atomic Add in tickAllFlowExporters — use a
+	// short polling loop to fence the counter reliably.
+	deadline := time.Now().Add(2 * time.Second)
+	var status FlowStatus
+	for time.Now().Before(deadline) {
+		receivePacket(ch)
+		status = sm.GetFlowStatus()
+		if status.TotalPacketsSent > 0 {
+			break
+		}
+	}
+	if !status.Enabled {
+		t.Error("expected Enabled=true after InitFlowExport")
+	}
+	if status.Protocol != "netflow9" {
+		t.Errorf("Protocol = %q, want \"netflow9\"", status.Protocol)
+	}
+	if status.Collector != collectorStr {
+		t.Errorf("Collector = %q, want %q", status.Collector, collectorStr)
+	}
+	if status.DevicesExporting != 1 {
+		t.Errorf("DevicesExporting = %d, want 1", status.DevicesExporting)
+	}
+	if status.TotalPacketsSent == 0 {
+		t.Error("TotalPacketsSent = 0, want >0 after at least one tick")
+	}
+	if status.LastTemplateSend == "" {
+		t.Error("LastTemplateSend is empty, want a non-empty RFC3339 timestamp")
+	}
+}

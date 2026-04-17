@@ -176,6 +176,8 @@ type SimulatorManager struct {
 	// Flow export state (nil/zero when disabled; set by InitFlowExport)
 	flowConn             *net.UDPConn
 	flowCollectorAddr    *net.UDPAddr
+	flowCollectorStr     string        // original "host:port" string for status reporting
+	flowProtocol         string        // normalised protocol name ("netflow9" or "ipfix")
 	flowEncoder          FlowEncoder
 	flowBufPool          sync.Pool     // supplies []byte(1500); set via flowBufPool.New
 	flowActive           atomic.Bool   // true after InitFlowExport; safe for concurrent reads
@@ -186,6 +188,12 @@ type SimulatorManager struct {
 	flowStopCh           chan struct{}  // closed by Shutdown to stop the ticker goroutine
 	flowStopOnce         sync.Once     // ensures flowStopCh is closed exactly once
 	flowWg               sync.WaitGroup // tracks the ticker goroutine; Wait before closing flowConn
+
+	// Flow export cumulative counters (updated atomically by tickAllFlowExporters).
+	flowStatPackets  atomic.Uint64 // total UDP datagrams sent since InitFlowExport
+	flowStatBytes    atomic.Uint64 // total bytes written to UDP (headers + records + padding) since InitFlowExport
+	flowStatRecords  atomic.Uint64 // total flow records exported since InitFlowExport
+	flowStatLastTmpl atomic.Int64  // unix milliseconds of the most recent template transmission
 
 	mu              sync.RWMutex
 }
@@ -273,4 +281,16 @@ type ManagerStatus struct {
 	DeviceCreateTotal    int  `json:"device_create_total"`
 	TotalDevices         int  `json:"total_devices"`
 	RunningDevices       int  `json:"running_devices"`
+}
+
+// FlowStatus is the JSON body returned by GET /api/v1/flows/status.
+type FlowStatus struct {
+	Enabled            bool   `json:"enabled"`
+	Protocol           string `json:"protocol,omitempty"`
+	Collector          string `json:"collector,omitempty"`
+	TotalFlowsExported uint64 `json:"total_flows_exported"`
+	TotalPacketsSent   uint64 `json:"total_packets_sent"`
+	TotalBytesSent     uint64 `json:"total_bytes_sent"`
+	DevicesExporting   int    `json:"devices_exporting"`
+	LastTemplateSend   string `json:"last_template_send,omitempty"`
 }
