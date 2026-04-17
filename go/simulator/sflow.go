@@ -18,6 +18,7 @@ package main
 import (
 	"encoding/binary"
 	"fmt"
+	"log"
 	"time"
 )
 
@@ -36,13 +37,6 @@ const (
 	// Counter-record format tags (enterprise 0).
 	sflowCtrFmtGeneric   = 1 // if_counters (generic interface)
 	sflowCtrFmtProcessor = 1001
-	// memoryInformation is not a standard sFlow v5 counter type. Use a
-	// simulator-local format ID under enterprise 0 reserved here so the XDR
-	// oracle round-trips it cleanly; real collectors that care about memory
-	// should observe hrStorage via SNMP. Phase 2 emits it purely so the
-	// spec's "memory_information" counter surface has a concrete on-wire
-	// representation.
-	sflowCtrFmtMemory = 4000 // simulator-local; not a standard sFlow IE
 
 	// header_protocol enum values we emit (sflow_version_5.txt §5.3).
 	sflowHdrProtoIPv4 = 11
@@ -51,6 +45,13 @@ const (
 	//   version(4) + address_type(4) + agent_address(4) + sub_agent_id(4)
 	//   + sequence_number(4) + uptime(4) + num_samples(4) = 28 bytes.
 	sflowDatagramHeaderSize = 28
+
+	// sflowCountersSampleHeaderSize is the on-wire byte overhead of a single
+	// counters_sample wrapper: sample_type(4) + sample_length(4) +
+	// sequence_number(4) + source_id(4) + num_counter_records(4) = 20 bytes.
+	// flow_exporter.go uses this to compute pagination capacity so the
+	// overhead arithmetic isn't an unlabelled magic number at the call site.
+	sflowCountersSampleHeaderSize = 20
 
 	// Conservative worst-case size for a single flow_sample carrying one
 	// sampled_header record with a synthesized IPv4+UDP/TCP packet header.
@@ -433,8 +434,18 @@ func encodeIPv4Header(buf []byte, pos int, r FlowRecord) int {
 // EncodeCounterDatagram writes an sFlow v5 datagram containing one or more
 // counters_sample records sourced from the provided CounterRecord slices.
 //
+// Records are grouped into counters_sample wrappers by SourceID. This matters
+// for collectors such as OpenNMS Telemetryd that key if_counters records by
+// ds_index: per-interface records (SourceID = ifIndex) appear under their own
+// counters_sample and device-wide records (SourceID = 0, e.g.
+// processor_information) appear under a separate counters_sample with
+// source_id=0. Records sharing a SourceID remain in input order within their
+// group.
+//
 // The caller is expected to have already bounded the number of records so the
-// datagram fits in a single UDP buffer. Returns (0, nil) on empty input.
+// datagram fits in a single UDP buffer. Records that would overflow the
+// buffer are dropped with a log.Printf warning so silent loss is visible.
+// Returns (0, nil) on empty input.
 func (SFlowEncoder) EncodeCounterDatagram(
 	domainID uint32,
 	seqNo uint32,
@@ -449,51 +460,111 @@ func (SFlowEncoder) EncodeCounterDatagram(
 		return 0, fmt.Errorf("sflow: buffer too small for counter sample (%d bytes)", len(buf))
 	}
 
-	pos := encodeDatagramHeader(buf, domainID, seqNo, uptimeMs, 1)
-
-	// Single counters_sample carrying all records. Format (sample_type=2):
-	//   u32 sample_length (fill in last)
-	//   u32 sequence_number
-	//   u32 source_id
-	//   u32 num_counter_records
-	//   ...counter_records...
-	binary.BigEndian.PutUint32(buf[pos:], sflowSampleTypeCounters)
-	sampleLenOffset := pos + 4
-	binary.BigEndian.PutUint32(buf[sampleLenOffset:], 0)
-	bodyStart := pos + 8
-	p := bodyStart
-
-	binary.BigEndian.PutUint32(buf[p:], seqNo) // sequence_number
-	p += 4
-	binary.BigEndian.PutUint32(buf[p:], 0) // source_id (ds_class=0, ds_index=0)
-	p += 4
-	binary.BigEndian.PutUint32(buf[p:], uint32(len(records))) // num_counter_records
-	p += 4
-
+	// Group by SourceID while preserving input order: both the order of first
+	// appearance of each SourceID and the order of records within a group.
+	groupOrder := make([]uint32, 0, 4)
+	groups := make(map[uint32][]CounterRecord, 4)
 	for _, rec := range records {
-		if len(buf)-p < 8+len(rec.Body)+4 {
-			break // best-effort: skip rest rather than overflow
+		if _, seen := groups[rec.SourceID]; !seen {
+			groupOrder = append(groupOrder, rec.SourceID)
 		}
-		binary.BigEndian.PutUint32(buf[p:], rec.Format)
-		p += 4
-		recLenOffset := p
-		binary.BigEndian.PutUint32(buf[p:], uint32(len(rec.Body)))
-		p += 4
-		copy(buf[p:], rec.Body)
-		p += len(rec.Body)
-		// Pad to 4-byte boundary.
-		if rem := len(rec.Body) % 4; rem != 0 {
-			padBytes := 4 - rem
-			for i := 0; i < padBytes; i++ {
-				buf[p] = 0
-				p++
-			}
-		}
-		_ = recLenOffset
+		groups[rec.SourceID] = append(groups[rec.SourceID], rec)
 	}
 
-	binary.BigEndian.PutUint32(buf[sampleLenOffset:], uint32(p-bodyStart))
-	return p, nil
+	// Reserve datagram-header space; num_samples is filled once the number of
+	// samples actually emitted is known (a group may be skipped if the buffer
+	// can't hold even its fixed-size header).
+	pos := sflowDatagramHeaderSize
+	dropped := 0
+	samplesEmitted := uint32(0)
+
+	for _, sourceID := range groupOrder {
+		recs := groups[sourceID]
+		// Conservative check: counters_sample wrapper itself needs 20 bytes.
+		if len(buf)-pos < sflowCountersSampleHeaderSize {
+			dropped += len(recs)
+			continue
+		}
+
+		// counters_sample header: sample_type(4) + sample_length(4).
+		// Then body: sequence_number(4) + source_id(4) + num_counter_records(4)
+		// followed by the counter_records themselves.
+		binary.BigEndian.PutUint32(buf[pos:], sflowSampleTypeCounters)
+		sampleLenOffset := pos + 4
+		binary.BigEndian.PutUint32(buf[sampleLenOffset:], 0)
+		bodyStart := pos + 8
+		p := bodyStart
+
+		binary.BigEndian.PutUint32(buf[p:], seqNo) // sequence_number
+		p += 4
+		binary.BigEndian.PutUint32(buf[p:], sourceID) // source_id (ds_class=0, ds_index=sourceID)
+		p += 4
+		// num_counter_records — placeholder; backfilled after emitting records
+		// so partial overflow shrinks the count instead of lying to the decoder.
+		numRecsOffset := p
+		binary.BigEndian.PutUint32(buf[p:], 0)
+		p += 4
+
+		emitted := uint32(0)
+		for _, rec := range recs {
+			padded := len(rec.Body)
+			if rem := padded % 4; rem != 0 {
+				padded += 4 - rem
+			}
+			// 8B record header (format + length) + padded body.
+			if len(buf)-p < 8+padded {
+				dropped++
+				continue
+			}
+			binary.BigEndian.PutUint32(buf[p:], rec.Format)
+			p += 4
+			binary.BigEndian.PutUint32(buf[p:], uint32(len(rec.Body)))
+			p += 4
+			copy(buf[p:], rec.Body)
+			p += len(rec.Body)
+			// Pad to 4-byte boundary.
+			if rem := len(rec.Body) % 4; rem != 0 {
+				padBytes := 4 - rem
+				for i := 0; i < padBytes; i++ {
+					buf[p] = 0
+					p++
+				}
+			}
+			emitted++
+		}
+
+		// Skip empty samples — if every record in this group overflowed we
+		// shouldn't emit a header with num_counter_records=0.
+		if emitted == 0 {
+			// Rewind the sample wrapper we started writing.
+			continue
+		}
+
+		// Backfill sample_length (body bytes after the sample_type/length
+		// header itself) and num_counter_records.
+		binary.BigEndian.PutUint32(buf[sampleLenOffset:], uint32(p-bodyStart))
+		binary.BigEndian.PutUint32(buf[numRecsOffset:], emitted)
+
+		pos = p
+		samplesEmitted++
+	}
+
+	if samplesEmitted == 0 {
+		// Nothing fit; surface the drop without writing a half-formed datagram.
+		if dropped > 0 {
+			log.Printf("sflow: dropping %d counter records that don't fit in datagram", dropped)
+		}
+		return 0, nil
+	}
+
+	// Backfill the datagram header — encodeDatagramHeader writes 7 u32 fields
+	// including num_samples at offset 24.
+	encodeDatagramHeader(buf, domainID, seqNo, uptimeMs, samplesEmitted)
+
+	if dropped > 0 {
+		log.Printf("sflow: dropping %d counter records that don't fit in datagram", dropped)
+	}
+	return pos, nil
 }
 
 // _ compile-time guard that SFlowEncoder satisfies FlowEncoder.

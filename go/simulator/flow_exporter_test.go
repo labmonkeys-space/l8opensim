@@ -16,6 +16,8 @@
 package main
 
 import (
+	"crypto/md5"
+	"encoding/hex"
 	"net"
 	"sync"
 	"testing"
@@ -731,6 +733,213 @@ func contains(haystack, needle string) bool {
 		}
 	}
 	return false
+}
+
+// ── Byte-identity regression tests (PR #47 review fix #2) ────────────────────
+//
+// These tests guard against regressions in the NetFlow9 / IPFIX / NetFlow5
+// wire output after the `MaxRecordSize()` + `SeqIncrement()` FlowEncoder
+// interface extensions. The fixed-size encoders must continue to emit the
+// exact same byte layout they did before the extensions landed.
+//
+// The tests encode a canned FlowRecord slice with pinned inputs (domainID,
+// seqNo, uptimeMs), then zero out the two wall-clock timestamp fields that
+// legitimately vary between runs (unix_secs for NF9/NF5, export_time for
+// IPFIX, plus unix_nsecs for NF5) and hash the rest. Any change to the
+// structural wire layout — field order, sizes, padding, template content —
+// flips the hash.
+//
+// If a legitimate change bumps the layout, update the pinned hash below;
+// the point is that the change is visible and reviewed, not silent.
+
+// canonicalFlowRecords returns the canned FlowRecord slice used by every
+// byte-identity test. Keep this stable — pinned hashes depend on it.
+func canonicalFlowRecords() []FlowRecord {
+	return []FlowRecord{
+		{
+			SrcIP:    net.ParseIP("10.0.0.1").To4(),
+			DstIP:    net.ParseIP("10.0.0.2").To4(),
+			NextHop:  net.IPv4(0, 0, 0, 0).To4(),
+			SrcPort:  54321,
+			DstPort:  443,
+			Protocol: 6,
+			TCPFlags: 0x18,
+			ToS:      0,
+			Bytes:    9876,
+			Packets:  7,
+			StartMs:  1000,
+			EndMs:    2500,
+			InIface:  3,
+			OutIface: 4,
+			SrcMask:  24,
+			DstMask:  24,
+		},
+		{
+			SrcIP:    net.ParseIP("10.0.0.3").To4(),
+			DstIP:    net.ParseIP("10.0.0.4").To4(),
+			NextHop:  net.IPv4(0, 0, 0, 0).To4(),
+			SrcPort:  55555,
+			DstPort:  53,
+			Protocol: 17,
+			TCPFlags: 0,
+			ToS:      0,
+			Bytes:    128,
+			Packets:  1,
+			StartMs:  2000,
+			EndMs:    2100,
+			InIface:  5,
+			OutIface: 6,
+			SrcMask:  24,
+			DstMask:  24,
+		},
+	}
+}
+
+// zeroBytes sets buf[start:start+count] to zero. Used to mask wall-clock
+// fields before hashing.
+func zeroBytes(buf []byte, start, count int) {
+	for i := start; i < start+count && i < len(buf); i++ {
+		buf[i] = 0
+	}
+}
+
+// TestByteIdentity_NetFlow9 pins the structural (non-wall-clock) bytes of a
+// NetFlow v9 packet against an MD5 hash. NetFlow v9 header layout:
+//
+//	u16 version (=9)       // 0..2
+//	u16 count              // 2..4
+//	u32 uptimeMs           // 4..8   (caller-supplied, stable)
+//	u32 unix_secs          // 8..12  (wall clock — masked)
+//	u32 seqNo              // 12..16 (caller-supplied, stable)
+//	u32 domainID           // 16..20 (caller-supplied, stable)
+func TestByteIdentity_NetFlow9(t *testing.T) {
+	enc := NetFlow9Encoder{}
+	buf := make([]byte, 1500)
+	n, err := enc.EncodePacket(0x0A000001, 42, 5000, canonicalFlowRecords(), true, buf)
+	if err != nil {
+		t.Fatalf("EncodePacket: %v", err)
+	}
+	out := append([]byte(nil), buf[:n]...)
+	// Mask unix_secs at offset 8 (4 bytes).
+	zeroBytes(out, 8, 4)
+
+	const wantHash = "db530ac552b2a47f7a27d4ef673e1598"
+	got := md5.Sum(out)
+	gotHex := hex.EncodeToString(got[:])
+	if gotHex != wantHash {
+		t.Errorf("NetFlow9 byte-identity hash mismatch:\n  got:  %s\n  want: %s\n  "+
+			"(structural bytes changed; if intentional, update wantHash — length was %d)",
+			gotHex, wantHash, n)
+	}
+}
+
+// TestByteIdentity_IPFIX pins IPFIX structural bytes. IPFIX header layout:
+//
+//	u16 version (=10)       // 0..2
+//	u16 length              // 2..4
+//	u32 export_time         // 4..8  (wall clock — masked)
+//	u32 seqNo               // 8..12 (caller-supplied, stable)
+//	u32 domainID            // 12..16
+//
+// Within data records, lastSwitched / firstSwitched are absolute epoch ms
+// computed from uptimeMs and wall-clock time. Because the test freezes
+// uptimeMs to a known value and those fields resolve relative to the *test's*
+// wall-clock, they also drift. We mask them too.
+func TestByteIdentity_IPFIX(t *testing.T) {
+	enc := IPFIXEncoder{}
+	buf := make([]byte, 1500)
+	n, err := enc.EncodePacket(0x0A000001, 42, 5000, canonicalFlowRecords(), true, buf)
+	if err != nil {
+		t.Fatalf("EncodePacket: %v", err)
+	}
+	out := append([]byte(nil), buf[:n]...)
+
+	// Mask export_time at offset 4 (4 bytes).
+	zeroBytes(out, 4, 4)
+
+	// IPFIX records contain absolute epoch-ms timestamps (flowStartMilliseconds
+	// and flowEndMilliseconds). These are 8-byte fields positioned at the end
+	// of each 53-byte data record. With templates + header, the data record
+	// section starts at:
+	//   header(16) + templateSet(80) + dataSetHeader(4) = 100.
+	// Each record is 53 bytes; the last 16 bytes are the two 8-byte timestamps.
+	const ipfixRecStart = 100
+	const ipfixRecLen = 53
+	const tsTailBytes = 16
+	for i := 0; i < len(canonicalFlowRecords()); i++ {
+		recStart := ipfixRecStart + i*ipfixRecLen
+		zeroBytes(out, recStart+ipfixRecLen-tsTailBytes, tsTailBytes)
+	}
+
+	const wantHash = "3307363c55a2bd3d40ddca19cd4e9598"
+	got := md5.Sum(out)
+	gotHex := hex.EncodeToString(got[:])
+	if gotHex != wantHash {
+		t.Errorf("IPFIX byte-identity hash mismatch:\n  got:  %s\n  want: %s\n  "+
+			"(structural bytes changed; if intentional, update wantHash — length was %d)",
+			gotHex, wantHash, n)
+	}
+}
+
+// TestByteIdentity_NetFlow5 pins NetFlow v5 structural bytes. NF5 header:
+//
+//	u16 version (=5)         // 0..2
+//	u16 count                // 2..4
+//	u32 uptimeMs             // 4..8   (caller-supplied, stable)
+//	u32 unix_secs            // 8..12  (wall clock — masked)
+//	u32 unix_nsecs           // 12..16 (wall clock — masked)
+//	u32 seqNo                // 16..20 (caller-supplied, stable)
+//	u8  engine_type          // 20
+//	u8  engine_id            // 21
+//	u16 sampling_interval    // 22..24
+func TestByteIdentity_NetFlow5(t *testing.T) {
+	enc := &NetFlow5Encoder{}
+	buf := make([]byte, 1500)
+	n, err := enc.EncodePacket(0x0A000001, 42, 5000, canonicalFlowRecords(), false, buf)
+	if err != nil {
+		t.Fatalf("EncodePacket: %v", err)
+	}
+	out := append([]byte(nil), buf[:n]...)
+	// Mask unix_secs + unix_nsecs at offsets 8 and 12 (8 bytes total).
+	zeroBytes(out, 8, 8)
+
+	const wantHash = "32619195905a513bd84a1677d438587b"
+	got := md5.Sum(out)
+	gotHex := hex.EncodeToString(got[:])
+	if gotHex != wantHash {
+		t.Errorf("NetFlow5 byte-identity hash mismatch:\n  got:  %s\n  want: %s\n  "+
+			"(structural bytes changed; if intentional, update wantHash — length was %d)",
+			gotHex, wantHash, n)
+	}
+}
+
+// TestByteIdentity_NetFlow9_Deterministic is a secondary cross-check: two
+// encodes of identical inputs SHALL produce byte-identical output once the
+// wall-clock field is masked. Catches any accidental non-deterministic
+// behaviour in the encoder that the pinned-hash tests might mask by updating.
+func TestByteIdentity_NetFlow9_Deterministic(t *testing.T) {
+	enc := NetFlow9Encoder{}
+	buf1 := make([]byte, 1500)
+	buf2 := make([]byte, 1500)
+	recs := canonicalFlowRecords()
+	n1, err := enc.EncodePacket(0x0A000001, 42, 5000, recs, true, buf1)
+	if err != nil {
+		t.Fatalf("encode 1: %v", err)
+	}
+	n2, err := enc.EncodePacket(0x0A000001, 42, 5000, recs, true, buf2)
+	if err != nil {
+		t.Fatalf("encode 2: %v", err)
+	}
+	if n1 != n2 {
+		t.Fatalf("encode lengths differ: %d vs %d", n1, n2)
+	}
+	zeroBytes(buf1, 8, 4)
+	zeroBytes(buf2, 8, 4)
+	for i := 0; i < n1; i++ {
+		if buf1[i] != buf2[i] {
+			t.Fatalf("NetFlow9 non-deterministic at byte %d: %02x vs %02x", i, buf1[i], buf2[i])
+		}
+	}
 }
 
 // TestFlowExporter_Close_Idempotent verifies that Close is safe on nil and

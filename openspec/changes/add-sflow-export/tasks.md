@@ -37,14 +37,14 @@
 - [x] 5.2 Extract interface counter state from `IfCounterCycler` in `go/simulator/if_counters.go` into an `InterfaceCounterSource` adapter implementing `CounterSource`. `IfCounterCycler` keeps its public SNMP surface; internally it delegates math to the new source.
 - [x] 5.3 Regression test: SNMP responses for `ifHCInOctets`, `ifHCOutOctets`, `ifInUcastPkts`, `ifOutUcastPkts`, `ifInErrors`, `ifInDiscards`, broadcast/multicast counters are byte-identical against a fixed device state before and after the refactor.
 - [x] 5.4 Add `CPUCounterSource` — per-device CPU utilization. Idle/user/system/wait percentages × 100 (the sFlow convention). Driven from a new simple cycler or tied to `MetricsCycler`.
-- [x] 5.5 Add `MemoryCounterSource` — per-device memory totals and usage (total, used, free, cached in bytes).
-- [x] 5.6 Wire `InterfaceCounterSource`, `CPUCounterSource`, and `MemoryCounterSource` registration into the device lifecycle in `go/simulator/device.go`.
+- [x] 5.5 ~~Add `MemoryCounterSource` — per-device memory totals and usage (total, used, free, cached in bytes).~~ Superseded by task 11.4: `total_memory` and `free_memory` are now folded into `CPUCounterSource`'s standard `processor_information` record (format 1001) to avoid emitting a simulator-local counter format that strict collectors would drop.
+- [x] 5.6 Wire `InterfaceCounterSource` and `CPUCounterSource` registration into the device lifecycle in `go/simulator/flow_exporter.go` (`registerSFlowCounterSources`).
 
 ## 6. sFlow v5 Phase 2 — counter samples
 
-- [x] 6.1 Extend `SFlowEncoder` to emit `COUNTERS_SAMPLE` records (prefer `counters_sample_expanded`). Encode `if_counters`, `processor_information`, and `memory_information` counter-record types.
+- [x] 6.1 Extend `SFlowEncoder` to emit `COUNTERS_SAMPLE` records. Encode `if_counters` (format 1) and `processor_information` (format 1001) counter-record types. Records are grouped per-`SourceID` (see task 11.1) — one `counters_sample` per ifIndex plus one device-wide sample with `source_id = 0`. Memory is carried inside `processor_information` (no standalone memory record).
 - [x] 6.2 Update `FlowExporter.Tick` (sFlow code path) so each tick collects `Snapshot` from all registered `CounterSource`s for the device and includes them as counter samples alongside flow samples in the emitted datagram batch.
-- [x] 6.3 Add counter-sample test cases to `sflow_test.go`: round-trip assertion that decoded `if_counters` equals `InterfaceCounterSource.Snapshot` output at the same time, and similarly for CPU and memory samples.
+- [x] 6.3 Add counter-sample test cases to `sflow_test.go`: round-trip assertion that decoded `if_counters` equals `InterfaceCounterSource.Snapshot` output at the same time, and similarly for CPU samples (memory values are carried inside the CPU `processor_information` record per task 5.5).
 - [x] 6.4 Verify counter sample emission respects the 1500-byte MTU: devices with many interfaces SHALL split counter records across multiple datagrams rather than produce an oversize packet.
 
 ## 7. Per-device source IP and agent identity
@@ -71,3 +71,15 @@
 
 - [ ] 10.1 Update project memory (`MEMORY.md`) if appropriate — add an entry documenting sFlow support and the synthetic-sampling caveat so future operator questions can be routed to the README note.
 - [ ] 10.2 Archive the OpenSpec change per the experimental workflow (`openspec archive add-sflow-export`) once it is merged and deployed.
+
+## 11. PR #47 review fixes (round 2)
+
+- [x] 11.1 **Counter-sample source_id grouping.** `SFlowEncoder.EncodeCounterDatagram` now groups `CounterRecord`s by `SourceID`: per-interface records appear under their own `counters_sample` with `source_id = ifIndex`, device-wide records (processor/memory) share a single `counters_sample` with `source_id = 0`. Required for collectors that key `if_counters` by ds_index (OpenNMS Telemetryd).
+- [x] 11.2 **Expose SourceID on CounterRecord.** Added `CounterRecord.SourceID` field. `InterfaceCounterSource.Snapshot` tags each record with its ifIndex; `CPUCounterSource` uses `SourceID = 0`.
+- [x] 11.3 **Byte-identity regression tests for NF9 / IPFIX / NF5.** Added `TestByteIdentity_NetFlow9`, `TestByteIdentity_IPFIX`, `TestByteIdentity_NetFlow5`, and `TestByteIdentity_NetFlow9_Deterministic` in `flow_exporter_test.go`. Each pins an MD5 hash of structural (non-wall-clock) datagram bytes for a canonical `FlowRecord` slice; future layout changes trip the hash and must update the test explicitly.
+- [x] 11.4 **Fold memory into processor_information.** Removed `MemoryCounterSource`, `sflowCtrFmtMemory` constant, and the separate memory encode path. `CPUCounterSource` now emits a single `processor_information` record with the `total_memory` / `free_memory` fields populated (standard sFlow v5 format 1001). Strict collectors no longer see a simulator-local format ID.
+- [x] 11.5 **Counter-sample pagination arithmetic.** Replaced the magic `16` in `flow_exporter.go` with named constant `sflowCountersSampleHeaderSize = 20` (8 sample header + 4 seq_no + 4 source_id + 4 num_counter_records) defined in `sflow.go`. Fix for the 4-byte underestimation.
+- [x] 11.6 **Log silent record loss in counter pagination.** `EncodeCounterDatagram` now logs `sflow: dropping N counter records that don't fit in datagram` when records can't fit in the buffer.
+- [x] 11.7 **Dead `recLenOffset` assignment.** Removed from `EncodeCounterDatagram`.
+- [x] 11.8 **Hand-rolled `itoa`.** Replaced with `strconv.Itoa` in `counter_source.go`.
+- [x] 11.9 **Unused `device *DeviceSimulator` fields.** Removed from `CPUCounterSource` (and `MemoryCounterSource` deleted wholesale in 11.4).

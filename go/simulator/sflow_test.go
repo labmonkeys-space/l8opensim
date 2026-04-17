@@ -704,3 +704,125 @@ func TestSFlowCounterDatagramMTU(t *testing.T) {
 		t.Fatal("expected at least one counter record in sample")
 	}
 }
+
+// TestSFlowCounterDatagramGroupsBySourceID verifies the PR #47 review fix for
+// counter-sample source_id grouping: collectors such as OpenNMS Telemetryd key
+// if_counters records by ds_index (ifIndex) and misattribute metrics when all
+// records are packed into a single counters_sample with source_id=0. The
+// encoder SHALL emit one counters_sample per distinct SourceID, so N per-
+// interface records plus one device-wide record (SourceID=0) yield N+1
+// samples in the datagram.
+func TestSFlowCounterDatagramGroupsBySourceID(t *testing.T) {
+	enc := SFlowEncoder{}
+	buf := make([]byte, 1500)
+
+	// Three interfaces (ifIndex 1, 2, 3) plus one device-wide processor
+	// record. Expected: 4 counters_samples with source_id = 1, 2, 3, 0.
+	recs := []CounterRecord{
+		{
+			Format:   sflowCtrFmtGeneric,
+			SourceID: 1,
+			Body:     encodeIfCountersBody(1, 1_000_000_000, 100, 200, 1, 2),
+		},
+		{
+			Format:   sflowCtrFmtGeneric,
+			SourceID: 2,
+			Body:     encodeIfCountersBody(2, 1_000_000_000, 300, 400, 3, 4),
+		},
+		{
+			Format:   sflowCtrFmtGeneric,
+			SourceID: 3,
+			Body:     encodeIfCountersBody(3, 1_000_000_000, 500, 600, 5, 6),
+		},
+		{
+			Format:   sflowCtrFmtProcessor,
+			SourceID: 0,
+			Body:     make([]byte, 28), // processor_information fixed body
+		},
+	}
+
+	n, err := enc.EncodeCounterDatagram(0x0A000001, 7, 1000, recs, buf)
+	if err != nil {
+		t.Fatalf("EncodeCounterDatagram error: %v", err)
+	}
+	dg := decodeSFlow(t, buf[:n])
+
+	if got := int(dg.Header.NumSamples); got != 4 {
+		t.Fatalf("num_samples = %d, want 4 (one per source_id, including device-wide)", got)
+	}
+	if len(dg.Samples) != 4 {
+		t.Fatalf("decoded samples = %d, want 4", len(dg.Samples))
+	}
+
+	wantSourceIDs := []uint32{1, 2, 3, 0}
+	for i, s := range dg.Samples {
+		if s.Type != sflowSampleTypeCounters {
+			t.Errorf("sample[%d] type = %d, want %d (counters_sample)", i, s.Type, sflowSampleTypeCounters)
+			continue
+		}
+		if s.CounterSmpl == nil {
+			t.Errorf("sample[%d] counter sample not decoded", i)
+			continue
+		}
+		if s.CounterSmpl.SourceID != wantSourceIDs[i] {
+			t.Errorf("sample[%d] source_id = %d, want %d", i, s.CounterSmpl.SourceID, wantSourceIDs[i])
+		}
+		if s.CounterSmpl.NumRecords != 1 {
+			t.Errorf("sample[%d] num_counter_records = %d, want 1", i, s.CounterSmpl.NumRecords)
+		}
+	}
+}
+
+// TestSFlowInterfaceCounterSource_OneSamplePerIfIndex exercises the end-to-end
+// path: InterfaceCounterSource produces one record per interface, and when
+// those records are passed through EncodeCounterDatagram the output has one
+// counters_sample per interface with source_id = ifIndex. This is the
+// spec scenario "counters_sample source_id keyed by ds_index".
+func TestSFlowInterfaceCounterSource_OneSamplePerIfIndex(t *testing.T) {
+	const gbps = 1_000_000_000
+	res := buildTestResources(t, []uint64{gbps, gbps, gbps})
+
+	c := &MetricsCycler{}
+	c.InitIfCounters(res, 9999)
+	if c.ifCounters == nil {
+		t.Fatal("InitIfCounters did not create ifCounters")
+	}
+
+	adapter := NewInterfaceCounterSource(c.ifCounters)
+	recs := adapter.Snapshot(time.Now())
+	if len(recs) != 3 {
+		t.Fatalf("Snapshot returned %d records, want 3", len(recs))
+	}
+
+	// Each adapter-produced record must carry SourceID = ifIndex (1, 2, 3).
+	gotIDs := map[uint32]bool{}
+	for _, r := range recs {
+		gotIDs[r.SourceID] = true
+	}
+	for want := uint32(1); want <= 3; want++ {
+		if !gotIDs[want] {
+			t.Errorf("adapter missing CounterRecord with SourceID=%d", want)
+		}
+	}
+
+	enc := SFlowEncoder{}
+	buf := make([]byte, 1500)
+	n, err := enc.EncodeCounterDatagram(0x0A000001, 1, 1000, recs, buf)
+	if err != nil {
+		t.Fatalf("EncodeCounterDatagram error: %v", err)
+	}
+	dg := decodeSFlow(t, buf[:n])
+	if got := int(dg.Header.NumSamples); got != 3 {
+		t.Errorf("num_samples = %d, want 3 (one per ifIndex)", got)
+	}
+	// Every sample should be counters_sample with source_id matching an ifIndex.
+	for i, s := range dg.Samples {
+		if s.Type != sflowSampleTypeCounters {
+			t.Errorf("sample[%d] type = %d, want %d", i, s.Type, sflowSampleTypeCounters)
+			continue
+		}
+		if s.CounterSmpl.SourceID < 1 || s.CounterSmpl.SourceID > 3 {
+			t.Errorf("sample[%d] source_id = %d, want in [1,3]", i, s.CounterSmpl.SourceID)
+		}
+	}
+}
