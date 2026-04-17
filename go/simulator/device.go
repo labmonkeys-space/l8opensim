@@ -26,14 +26,14 @@ import (
 )
 
 // makeDeviceID builds a device ID from an IP and an optional device-type slug.
-// When slug is empty the ID is just the IP; otherwise it is "<ip>-<slug>"
-// (e.g. "10.0.0.1-cisco-catalyst-9500"). The "device-" prefix is intentionally
+// When slug is empty the ID is just the IP; otherwise it is "<slug>-<ip>"
+// (e.g. "cisco-catalyst-9500-10.0.0.1"). The "device-" prefix is intentionally
 // omitted so the ID reflects the device identity directly.
 func makeDeviceID(ip net.IP, typeSlug string) string {
 	if typeSlug == "" {
 		return ip.String()
 	}
-	return fmt.Sprintf("%s-%s", ip.String(), typeSlug)
+	return fmt.Sprintf("%s-%s", typeSlug, ip.String())
 }
 
 func (sm *SimulatorManager) CreateDevices(startIP string, count int, netmask string, resourceFile string, v3Config *SNMPv3Config, roundRobin bool, category string, snmpPort int) error {
