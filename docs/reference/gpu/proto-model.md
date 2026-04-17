@@ -1,8 +1,19 @@
-# Plan: GPU Device Protobuf Model for Probler
+# GPU protobuf model
+
+!!! note "Source of truth"
+    The authoritative definition lives in
+    `probler/proto/inventory.proto`. This page is the reference write-up
+    originally authored as a design plan and kept here so the navigation
+    flow (simulator → pollaris → model) is complete.
 
 ## Overview
 
-Add a `GpuDevice` protobuf model to `probler/proto/inventory.proto` that represents GPU server devices (NVIDIA DGX/HGX) at the same level as `NetworkDevice`. The model must capture the GPU-specific hierarchy: a host system containing multiple GPUs, each with their own utilization, memory, thermal, power, and clock metrics — plus host-level CPU, memory, storage, and network interfaces.
+A `GpuDevice` protobuf model in `probler/proto/inventory.proto` represents
+GPU server devices (NVIDIA DGX / HGX) at the same level as `NetworkDevice`.
+The model captures the GPU-specific hierarchy: a host system containing
+multiple GPUs, each with their own utilization, memory, thermal, power, and
+clock metrics — plus host-level CPU, memory, storage, and network
+interfaces.
 
 ## Design Principles
 

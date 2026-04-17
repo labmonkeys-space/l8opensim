@@ -1,8 +1,19 @@
-# Plan: NVIDIA DCGM GPU Cluster Simulation
+# NVIDIA DCGM simulation
+
+!!! note "Simulator side of the GPU story"
+    This page covers the **simulator** — the metric OID types, the GPU
+    cycler extension, device profiles, resource file layout, and
+    integration points. Pair it with [Protobuf model](proto-model.md) (the
+    shape of the output data) and [Pollaris and parsing rules](pollaris.md)
+    (the collector side).
 
 ## Overview
 
-Add simulation of NVIDIA Data Center GPU Manager (DCGM) servers to OpenSim. Each simulated device represents a GPU server (e.g., DGX A100, DGX H100, HGX H200) with multiple GPUs. The simulation exposes GPU metrics via all three existing protocols: SNMP (enterprise MIB OIDs), SSH (`nvidia-smi` CLI), and REST API (DCGM HTTP endpoints).
+l8opensim simulates NVIDIA Data Center GPU Manager (DCGM) servers. Each
+simulated device represents a GPU server (e.g. DGX A100, DGX H100, HGX
+H200) with multiple GPUs. The simulation exposes GPU metrics via all three
+existing protocols: SNMP (enterprise MIB OIDs), SSH (`nvidia-smi` CLI), and
+REST API (DCGM HTTP endpoints).
 
 ## What DCGM Exposes in the Real World
 

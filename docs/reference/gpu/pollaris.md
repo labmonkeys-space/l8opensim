@@ -1,0 +1,500 @@
+# GPU pollaris and parsing rules
+
+This page describes the polling definitions (pollaris) and parsing rules in
+**l8parser** that collect SNMP, SSH, and REST data from simulated NVIDIA GPU
+servers and populate the `GpuDevice` protobuf model. It's split into two
+parts:
+
+1. **[Foundational SNMP pollaris](#part-1-foundational-snmp-pollaris)** —
+   the `SnmpGpuTable` rule, the vendor detection wiring, and the initial set
+   of SNMP polls that cover about half of `GpuDevice`.
+2. **[Complete coverage (SNMP + SSH + REST)](#part-2-complete-coverage-snmp-ssh-rest)** —
+   the gap analysis for the remaining fields and the additional SSH / REST
+   polls plus new parsing rules needed to close it.
+
+The `GpuDevice` protobuf messages themselves are defined in
+[Protobuf model](proto-model.md); the simulator side of the data source is
+in [DCGM simulation](dcgm.md).
+
+---
+
+## Part 1: Foundational SNMP pollaris
+
+### Context
+
+The opensim simulator already generates GPU device data (SNMP mock data,
+REST API, SSH) for NVIDIA DGX / HGX servers. A GPU protobuf model
+(`GpuDevice`) is described in [Protobuf model](proto-model.md). This part
+creates the initial polling definitions (pollaris) and the one new parsing
+rule required to collect SNMP data from GPU devices and populate the
+`GpuDevice` model — following the same patterns used for `NetworkDevice`
+(vendor-specific pollaris) and `Cluster` (K8s pollaris).
+
+**Prerequisite:** The `GpuDevice` proto messages must be added to
+`probler/proto/inventory.proto` and bindings generated before these rules
+can be tested end-to-end.
+
+### Target project
+
+`l8parser/go/parser/boot/`
+
+### SNMP OID inventory (from opensim mock data)
+
+**NVIDIA enterprise OID prefix:** `1.3.6.1.4.1.53246`
+
+- **sysObjectID:** `1.3.6.1.4.1.53246.1.2.1` (used for vendor detection).
+
+#### Module-level (singleton)
+
+| OID | Field |
+|-----|-------|
+| `53246.1.1.1.0.1.0` | GPU Count |
+| `53246.1.1.1.0.2.0` | DCGM Version |
+
+#### Per-GPU static info (index 0-7)
+
+| OID Pattern `53246.1.1.1.1.{X}.{gpu}` | X | Field |
+|---|---|---|
+| `.1.{gpu}` | 1 | Device Name |
+| `.2.{gpu}` | 2 | UUID |
+| `.3.{gpu}` | 3 | Serial Number |
+| `.4.{gpu}` | 4 | PCI Bus ID |
+| `.13.{gpu}` | 13 | Driver Version |
+| `.14.{gpu}` | 14 | CUDA Version |
+| `.15.{gpu}` | 15 | ECC Corrected Count |
+| `.16.{gpu}` | 16 | ECC Uncorrected Count |
+| `.17.{gpu}` | 17 | Power State |
+
+#### Per-GPU dynamic metrics (OIDs 5-12)
+
+| OID Pattern | X | Field | Rule Type |
+|---|---|---|---|
+| `.5.{gpu}` | 5 | GPU Utilization % | SetTimeSeries |
+| `.6.{gpu}` | 6 | VRAM Used MiB | SetTimeSeries |
+| `.7.{gpu}` | 7 | Temperature C | SetTimeSeries |
+| `.8.{gpu}` | 8 | Power Draw W | SetTimeSeries |
+| `.9.{gpu}` | 9 | Fan Speed % | SetTimeSeries |
+| `.10.{gpu}` | 10 | SM Clock MHz | SetTimeSeries |
+| `.11.{gpu}` | 11 | Memory Clock MHz | SetTimeSeries |
+| `.12.{gpu}` | 12 | Memory Utilization % | SetTimeSeries |
+
+#### Standard MIBs (system, host resources, interfaces)
+
+- `1.3.6.1.2.1.1.*` — sysDescr, sysName, sysLocation, sysUpTime → `gpudevice.deviceinfo.*`
+- `1.3.6.1.2.1.2.2.1.*` — IF-MIB interface table → `gpudevice.system.networkinterfaces.*`
+- `1.3.6.1.2.1.25.*` — Host Resources MIB (memory, storage, CPU) → `gpudevice.system.*`
+
+### Implementation phases
+
+#### Phase 1.1: New parsing rule — `SnmpGpuTable`
+
+**New file:** `l8parser/go/parser/rules/SnmpGpuTable.go`
+
+The NVIDIA GPU SNMP data uses indexed OIDs: `{base}.{metric_id}.{gpu_index}`.
+Existing table rules (`EntityMibToPhysicals`, `IfTableToPhysicals`) are
+hardcoded for `NetworkDevice`. We need a new rule that:
+
+1. Receives a walked `CMap` of NVIDIA GPU OIDs.
+2. Groups entries by GPU index (0-7).
+3. Maps each metric OID suffix to the corresponding `gpudevice.gpus.*`
+   property.
+4. Uses `Set` for static fields, `SetTimeSeries` for dynamic metrics.
+
+**Interface:**
+
+- **Name:** `"SnmpGpuTable"`
+- **Params:**
+  - `oid_base` — base OID prefix (e.g. `1.3.6.1.4.1.53246.1.1.1.1`).
+  - `mapping` — comma-separated `oidSuffix:propertyName:type` triples
+    (e.g. `1:devicename:set,2:deviceuuid:set,5:gpuutilizationpercent:ts`).
+- **Logic:** iterate CMap keys, extract `{metric_id}` and `{gpu_index}` from
+  the OID, create / populate the `Gpu` repeated element at that index with
+  the mapped property.
+
+#### Phase 1.2: New pollaris file — `nvidia.go`
+
+**New file:** `l8parser/go/parser/boot/nvidia.go`
+
+Factory function: `CreateNvidiaGpuBootPolls() *l8tpollaris.L8Pollaris`
+
+```
+Pollaris Name: "nvidia-gpu"
+Groups: ["nvidia", "nvidia-gpu"]
+```
+
+**Polls to create:**
+
+=== "Poll 1: `nvidiaSystem` — Device info"
+
+    - **What:** `.1.3.6.1.2.1.1` (system MIB)
+    - **Operation:** `L8C_Map`
+    - **Cadence:** DEFAULT_CADENCE
+    - **Attributes:**
+        - `gpudevice.deviceinfo.hostname` ← Set from `.1.3.6.1.2.1.1.5.0` (sysName)
+        - `gpudevice.deviceinfo.vendor` ← Contains "53246" → "NVIDIA"
+        - `gpudevice.deviceinfo.location` ← Set from `.1.3.6.1.2.1.1.6.0` (sysLocation)
+        - `gpudevice.deviceinfo.uptime` ← Set from `.1.3.6.1.2.1.1.3.0` (sysUpTime)
+        - `gpudevice.deviceinfo.devicestatus` ← MapToDeviceStatus
+        - `gpudevice.deviceinfo.osversion` ← Contains from sysDescr (parse OS info)
+        - `gpudevice.deviceinfo.kernelversion` ← Contains from sysDescr (parse kernel)
+
+=== "Poll 2: `nvidiaGpuModule` — GPU count & DCGM version"
+
+    - **What:** `.1.3.6.1.4.1.53246.1.1.1.0` (NVIDIA module)
+    - **Operation:** `L8C_Map`
+    - **Cadence:** DEFAULT_CADENCE
+    - **Attributes:**
+        - `gpudevice.deviceinfo.gpucount` ← Set from `.1.3.6.1.4.1.53246.1.1.1.0.1.0`
+        - `gpudevice.deviceinfo.dcgmversion` ← Set from `.1.3.6.1.4.1.53246.1.1.1.0.2.0`
+
+=== "Poll 3: `nvidiaGpuInfo` — Per-GPU static info"
+
+    - **What:** `.1.3.6.1.4.1.53246.1.1.1.1` (NVIDIA GPU table)
+    - **Operation:** `L8C_Map`
+    - **Cadence:** DEFAULT_CADENCE
+    - **Attributes:** single attribute using `SnmpGpuTable` with static mapping:
+        - `gpudevice.gpus` ← `SnmpGpuTable(mapping: "1:devicename:set,2:deviceuuid:set,3:serialnumber:set,4:pcibusid:set,13:driverversion:set,14:cudaversion:set,15:ecccorrectedcount:set,16:eccuncorrectedcount:set,17:powerstate:set")`
+
+=== "Poll 4: `nvidiaGpuMetrics` — Per-GPU dynamic metrics"
+
+    - **What:** `.1.3.6.1.4.1.53246.1.1.1.1` (same table, different cadence)
+    - **Operation:** `L8C_Map`
+    - **Cadence:** EVERY_5_MINUTES_ALWAYS (metrics need frequent polling)
+    - **Attributes:** single attribute using `SnmpGpuTable` with time-series mapping:
+        - `gpudevice.gpus` ← `SnmpGpuTable(mapping: "5:gpuutilizationpercent:ts,6:vramusedmib:ts,7:temperaturecelsius:ts,8:powerdrawwatts:ts,9:fanspeedpercent:ts,10:smclockmhz:ts,11:memclockmhz:ts,12:memoryutilizationpercent:ts")`
+
+=== "Poll 5: `nvidiaHostResources` — Host CPU/memory/storage"
+
+    - **What:** `.1.3.6.1.2.1.25` (Host Resources MIB)
+    - **Operation:** `L8C_Map`
+    - **Cadence:** DEFAULT_CADENCE
+    - **Attributes:**
+        - `gpudevice.system.memorytotalbytes` ← Set from `.1.3.6.1.2.1.25.2.2.0`
+        - `gpudevice.system.cpumodel` ← Set from `.1.3.6.1.2.1.25.3.2.1.3.1`
+        - `gpudevice.system.cpuutilizationpercent` ← SetTimeSeries from `.1.3.6.1.2.1.25.3.3.1.2.1`
+        - `gpudevice.system.storagedescription` ← Set from `.1.3.6.1.2.1.25.2.3.1.3.2`
+        - `gpudevice.system.storagetotalbytes` ← Set from `.1.3.6.1.2.1.25.2.3.1.5.2`
+        - `gpudevice.system.storageusedbytes` ← SetTimeSeries from `.1.3.6.1.2.1.25.2.3.1.6.2`
+
+=== "Poll 6: `nvidiaInterfaces` — Network interfaces"
+
+    - **What:** `.1.3.6.1.2.1.2.2.1` (IF-MIB)
+    - **Operation:** `L8C_Table`
+    - **Cadence:** EVERY_15_MINUTES_ALWAYS
+    - **Attributes:** existing table-to-map pattern → `gpudevice.system.networkinterfaces.*`
+
+#### Phase 1.3: Updates to `SNMP.go`
+
+Add `isNvidiaOid()`:
+
+```go
+func isNvidiaOid(sysOid string) bool {
+    normalizedOid := sysOid
+    if !strings.HasPrefix(normalizedOid, ".") {
+        normalizedOid = "." + sysOid
+    }
+    return strings.HasPrefix(normalizedOid, ".1.3.6.1.4.1.53246.")
+}
+```
+
+Add NVIDIA to `GetPollarisByOid()` waterfall — before the default fallback:
+
+```go
+if isNvidiaOid(sysOid) {
+    return CreateNvidiaGpuBootPolls()
+}
+```
+
+Add NVIDIA to `GetAllPolarisModels()` — append `CreateNvidiaGpuBootPolls()`
+to the returned slice.
+
+#### Phase 1.4: Updates to `ParsingRule.go`
+
+Add GpuDevice collection field mappings to `injectIndexOrKey()`:
+
+```go
+// GpuDevice collections
+"gpus":               "{2}0",    // repeated Gpu
+"networkinterfaces":  "{2}0",    // repeated GpuNetworkInterface
+"gpu_links":          "{2}0",    // repeated GpuLink
+"checks":             "{2}0",    // repeated GpuHealthCheck
+```
+
+#### Phase 1.5: Register rule
+
+Register `SnmpGpuTable` in `l8parser/go/parser/service/Parser.go` inside
+`newParser()`, following the existing pattern:
+
+```go
+snmpGpuTable := &rules.SnmpGpuTable{}
+p.rules[snmpGpuTable.Name()] = snmpGpuTable
+```
+
+### Files (part 1)
+
+| File | Purpose |
+|------|---------|
+| `l8parser/go/parser/boot/nvidia.go` | NVIDIA GPU pollaris factory (~200 lines) — **new** |
+| `l8parser/go/parser/rules/SnmpGpuTable.go` | Custom parsing rule for GPU table OIDs (~150 lines) — **new** |
+| `l8parser/go/parser/boot/SNMP.go` | Add `isNvidiaOid()`, update `GetPollarisByOid()` / `GetAllPolarisModels()` — **modified** |
+| `l8parser/go/parser/rules/ParsingRule.go` | Add GPU collection mappings to `injectIndexOrKey()` — **modified** |
+| `l8parser/go/parser/service/Parser.go` | Register `SnmpGpuTable` rule in `newParser()` — **modified** |
+
+### Verification (part 1)
+
+1. `cd l8parser && go build ./...` — verify compilation.
+2. `go vet ./...` — verify no issues.
+3. Verify `GetAllPolarisModels()` includes the NVIDIA pollaris.
+4. Verify `GetPollarisByOid("1.3.6.1.4.1.53246.1.2.1")` returns the NVIDIA
+   pollaris.
+5. End-to-end test requires the `GpuDevice` proto model to be implemented
+   first.
+
+---
+
+## Part 2: Complete coverage (SNMP + SSH + REST)
+
+### Context
+
+The initial NVIDIA GPU pollaris (`nvidia.go`) from Part 1 covers ~50 % of
+`GpuDevice` attributes via SNMP. This part adds the missing SNMP mappings
+and introduces SSH and REST polls to achieve full coverage of all
+`GpuDevice` protobuf fields.
+
+**Target project:** `l8parser/go/parser/boot/nvidia.go` and new parsing
+rules.
+
+**Data sources (from opensim mock data):**
+
+- SNMP: OIDs under `1.3.6.1.4.1.53246.*` + standard MIBs.
+- SSH: 10 commands (`nvidia-smi`, `nvidia-smi -q -d *`, `dcgmi *`,
+  `show version`, `lscpu`).
+- REST: 7 endpoints (`/api/v1/gpu/*`, `/api/v1/dcgm/*`, `/api/v1/system/*`).
+
+### Gap analysis
+
+#### GpuDeviceInfo — 5 fields missing
+
+| Field | Source | Protocol | Command/OID/Endpoint |
+|-------|--------|----------|---------------------|
+| model | REST | RESTCONF | `/api/v1/system/info` → `gpu_model` |
+| serial_number | SSH | SSH | `dmidecode -s system-serial-number` or from `show version` |
+| ip_address | — | — | Set by collector (not polled) |
+| kernel_version | SSH | SSH | `uname -a` → parse kernel version |
+| cuda_version | SNMP | SNMPV2 | OID `.53246.1.1.1.1.14.0` (GPU 0, already in table but not at device level) |
+| last_seen | — | — | Set by collector timestamp |
+| latitude/longitude | — | — | Manual config (not polled) |
+
+#### GpuDeviceSystem — 4 fields missing
+
+| Field | Source | Protocol | Command/Endpoint |
+|-------|--------|----------|-----------------|
+| cpu_sockets | SSH | SSH | `lscpu` → parse "Socket(s)" |
+| cpu_cores_total | SSH | SSH | `lscpu` → parse "CPU(s)" |
+| memory_used_bytes | SNMP | SNMPV2 | HR MIB `.1.3.6.1.2.1.25.2.3.1.6.1` (storage index 1 = Physical Memory) |
+| memory_free_bytes | — | — | Computed: total - used (or from REST `/api/v1/system/memory`) |
+| power_supplies | REST | RESTCONF | `/api/v1/system/info` (if available) |
+| fans | REST | RESTCONF | `/api/v1/system/info` (if available) |
+
+#### Gpu (per-GPU) — 11 fields missing
+
+| Field | Source | Protocol | Command/Endpoint |
+|-------|--------|----------|-----------------|
+| gpu_index | SNMP | SNMPV2 | Implicit from OID index — set in `SnmpGpuTable` rule |
+| compute_capability | REST | RESTCONF | `/api/v1/gpu/devices` → `compute_capability` |
+| persistence_mode | REST | RESTCONF | `/api/v1/gpu/devices` → `persistence_mode` |
+| numa_node | REST | RESTCONF | `/api/v1/gpu/topology` → `numa_affinity` |
+| vram_total_mib | REST | RESTCONF | `/api/v1/gpu/devices` → `memory_total_mib` |
+| encoder_utilization_percent | SSH | SSH | `nvidia-smi -q -d UTILIZATION` → "Encoder" |
+| decoder_utilization_percent | SSH | SSH | `nvidia-smi -q -d UTILIZATION` → "Decoder" |
+| memory_temperature_celsius | SSH | SSH | `nvidia-smi -q -d TEMPERATURE` → "GPU Memory Temp" |
+| shutdown_temperature | SSH | SSH | `nvidia-smi -q -d TEMPERATURE` → "GPU Shutdown Temp" |
+| slowdown_temperature | SSH | SSH | `nvidia-smi -q -d TEMPERATURE` → "GPU Slowdown Temp" |
+| power_limit_watts | SSH | SSH | `nvidia-smi -q -d POWER` → "Default Power Limit" |
+| sm_clock_base_mhz | REST | RESTCONF | `/api/v1/gpu/devices` (if available) |
+| mem_clock_base_mhz | REST | RESTCONF | `/api/v1/gpu/devices` (if available) |
+| health (GpuComponentHealth) | REST | RESTCONF | `/api/v1/dcgm/health` → per-check status |
+| processes | SSH | SSH | `nvidia-smi` → process table at bottom |
+
+#### GpuTopology — entirely missing
+
+| Field | Source | Protocol | Command/Endpoint |
+|-------|--------|----------|-----------------|
+| nvlink_version | REST | RESTCONF | `/api/v1/gpu/topology` → `nvlink_version` |
+| nvswitch_count | REST | RESTCONF | `/api/v1/gpu/topology` → `nvswitch_count` |
+| gpu_links | REST | RESTCONF | `/api/v1/gpu/topology` → `connectivity` array |
+
+#### GpuDeviceHealth — entirely missing
+
+| Field | Source | Protocol | Command/Endpoint |
+|-------|--------|----------|-----------------|
+| overall_status | REST | RESTCONF | `/api/v1/dcgm/health` → `overall_health` |
+| checks | REST | RESTCONF | `/api/v1/dcgm/health` → `checks` object |
+
+### Implementation phases
+
+#### Phase 2.1: Fix missing SNMP attributes in existing polls
+
+**File:** `l8parser/go/parser/boot/nvidia.go`
+
+Add to existing polls:
+
+1. **`nvidiaGpuModule` poll** — add `cuda_version` from GPU 0:
+   - `gpudevice.deviceinfo.cudaversion` ← Set from `.1.3.6.1.4.1.53246.1.1.1.1.14.0`.
+2. **`nvidiaHostResources` poll** — add memory used:
+   - `gpudevice.system.memoryusedbytes` ← SetTimeSeries from
+     `.1.3.6.1.2.1.25.2.3.1.6.1` (Physical Memory used).
+3. **`SnmpGpuTable` rule update** — set `gpu_index` explicitly:
+   - Currently the rule populates GPU fields but doesn't set the `gpuindex`
+     field itself. Add logic in `SnmpGpuTable.Parse()` to set
+     `gpudevice.gpus.gpuindex` = gpu_index from OID.
+
+#### Phase 2.2: New SSH parsing rules
+
+**New file:** `l8parser/go/parser/rules/SshNvidiaSmiParse.go` (~200 lines)
+
+A parsing rule that handles `nvidia-smi` subcommand outputs. Uses a `format`
+parameter to select the parser:
+
+- **Name:** `"SshNvidiaSmiParse"`
+- **Params:** `format` — one of: `utilization`, `temperature`, `power`,
+  `version`, `lscpu`.
+
+Each format parser extracts per-GPU data from the structured `nvidia-smi`
+text output.
+
+=== "utilization"
+
+    From `nvidia-smi -q -d UTILIZATION` — parses per-GPU blocks, extracts:
+
+    - `encoder_utilization_percent` per GPU
+    - `decoder_utilization_percent` per GPU
+
+=== "temperature"
+
+    From `nvidia-smi -q -d TEMPERATURE` — parses per-GPU blocks, extracts:
+
+    - `memory_temperature_celsius` per GPU
+    - `shutdown_temperature` per GPU (static)
+    - `slowdown_temperature` per GPU (static)
+
+=== "power"
+
+    From `nvidia-smi -q -d POWER` — parses per-GPU blocks, extracts:
+
+    - `power_limit_watts` per GPU (static)
+
+=== "version"
+
+    From `show version` — parses key-value output, extracts:
+
+    - `gpudevice.deviceinfo.kernelversion`
+    - `gpudevice.deviceinfo.model` (from DGX/HGX Software line)
+    - `gpudevice.deviceinfo.serialnumber` (if present)
+
+=== "lscpu"
+
+    From `lscpu` — parses key-value output, extracts:
+
+    - `gpudevice.system.cpusockets`
+    - `gpudevice.system.cpucorestotal`
+
+**New file:** `l8parser/go/parser/rules/RestJsonParse.go` (~150 lines)
+
+A generic parsing rule that extracts fields from JSON REST API responses
+using dot-path notation.
+
+- **Name:** `"RestJsonParse"`
+- **Params:** `mapping` — comma-separated `jsonPath:propertyId` pairs, e.g.
+  `overall_health:gpudevice.health.overallstatus,nvlink_version:gpudevice.topology.nvlinkversion`.
+
+This rule deserialises the JSON response and walks the dot-paths to extract
+values, then sets them on the target properties. For array fields (like
+`connectivity`, `checks`), it iterates and populates repeated fields.
+
+#### Phase 2.3: New SSH polls in `nvidia.go`
+
+Add SSH polls using `L8PSSH` protocol:
+
+| Poll | Command | Cadence | Rule | PropertyId |
+|------|---------|---------|------|------------|
+| `nvidiaGpuUtilization` | `nvidia-smi -q -d UTILIZATION` | EVERY_5_MINUTES_ALWAYS | `SshNvidiaSmiParse(format: "utilization")` | `gpudevice.gpus` |
+| `nvidiaGpuTemperature` | `nvidia-smi -q -d TEMPERATURE` | EVERY_15_MINUTES_ALWAYS | `SshNvidiaSmiParse(format: "temperature")` | `gpudevice.gpus` |
+| `nvidiaGpuPower` | `nvidia-smi -q -d POWER` | DEFAULT_CADENCE | `SshNvidiaSmiParse(format: "power")` | `gpudevice.gpus` |
+| `nvidiaVersion` | `show version` | DEFAULT_CADENCE | `SshNvidiaSmiParse(format: "version")` | `gpudevice.deviceinfo` |
+| `nvidiaCpuInfo` | `lscpu` | DEFAULT_CADENCE | `SshNvidiaSmiParse(format: "lscpu")` | `gpudevice.system` |
+
+#### Phase 2.4: New REST polls in `nvidia.go`
+
+Add REST polls using `L8PRESTCONF` protocol:
+
+| Poll | Endpoint | Cadence | Mapping | PropertyId |
+|------|----------|---------|---------|------------|
+| `nvidiaGpuDevices` | `/api/v1/gpu/devices` | DEFAULT_CADENCE | per-GPU `compute_capability`, `persistence_mode`, `memory_total_mib` | `gpudevice.gpus` |
+| `nvidiaGpuTopology` | `/api/v1/gpu/topology` | DEFAULT_CADENCE | `nvlink_version`, `nvswitch_count`, `connectivity` → `gpu_links` | `gpudevice.topology` |
+| `nvidiaDcgmHealth` | `/api/v1/dcgm/health` | EVERY_5_MINUTES_ALWAYS | `overall_health` → `overallstatus`, `checks` → repeated `GpuHealthCheck` | `gpudevice.health` |
+| `nvidiaSystemMemory` | `/api/v1/system/memory` | EVERY_15_MINUTES_ALWAYS | `system_memory.free_gb` → `memoryfreesbytes`, `gpu_memory.*` | `gpudevice.system` |
+
+#### Phase 2.5: Update `SnmpGpuTable` rule
+
+**File:** `l8parser/go/parser/rules/SnmpGpuTable.go`
+
+Add automatic `gpu_index` population: when processing each GPU's data, also
+set `gpudevice.gpus<{2}N>.gpuindex` = N (as `uint32`).
+
+#### Phase 2.6: Register new rules
+
+**File:** `l8parser/go/parser/service/Parser.go`
+
+Register the two new rules:
+
+```go
+sshNvidiaSmiParse := &rules.SshNvidiaSmiParse{}
+p.rules[sshNvidiaSmiParse.Name()] = sshNvidiaSmiParse
+restJsonParse := &rules.RestJsonParse{}
+p.rules[restJsonParse.Name()] = restJsonParse
+```
+
+### Coverage summary after implementation
+
+| Section | Before | After |
+|---------|--------|-------|
+| GpuDeviceInfo (17 fields) | 10/17 | 15/17 (ip_address and lat/lng are config, not polled) |
+| GpuDeviceSystem (13 fields) | 8/13 | 12/13 (fans/PSU depend on device support) |
+| Gpu per-GPU (29 fields) | 14/29 | 28/29 (processes deferred) |
+| GpuTopology (3 fields) | 0/3 | 3/3 |
+| GpuDeviceHealth (2 fields) | 0/2 | 2/2 |
+| **Total** | **32/64** | **60/64** |
+
+**Remaining 4 unpolled fields:**
+
+- `ip_address` — set by collector infrastructure, not polled.
+- `latitude/longitude` — manual configuration.
+- `last_seen` — set by collector timestamp.
+
+### Files (part 2)
+
+**New:**
+
+| File | Purpose | Est. Lines |
+|------|---------|-----------|
+| `l8parser/go/parser/rules/SshNvidiaSmiParse.go` | SSH nvidia-smi/version/lscpu parser | ~300 |
+| `l8parser/go/parser/rules/RestJsonParse.go` | Generic REST JSON field extractor | ~200 |
+
+**Modified:**
+
+| File | Change |
+|------|--------|
+| `l8parser/go/parser/boot/nvidia.go` | Add 9 new polls (5 SSH + 4 REST), add missing SNMP attributes |
+| `l8parser/go/parser/rules/SnmpGpuTable.go` | Auto-set `gpuindex` field |
+| `l8parser/go/parser/service/Parser.go` | Register 2 new rules |
+
+### Verification (part 2)
+
+1. `cd l8parser/go && go build ./...` — verify compilation.
+2. `cd l8parser/go && go vet ./...` — verify no issues.
+3. Count polls in `CreateNvidiaGpuBootPolls()` — should be **15 total**.
+4. Verify all `GpuDevice` proto fields have a corresponding pollaris
+   attribute.
+5. End-to-end test requires the `GpuDevice` proto model to be implemented
+   first (see [Protobuf model](proto-model.md)).
