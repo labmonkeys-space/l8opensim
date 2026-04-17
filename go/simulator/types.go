@@ -191,6 +191,7 @@ type SimulatorManager struct {
 	flowActiveTimeout    time.Duration
 	flowInactiveTimeout  time.Duration
 	flowTemplateInterval time.Duration
+	flowSourcePerDevice  bool // bind per-device UDP socket in opensim ns so src IP = device IP
 	flowStopCh           chan struct{}  // closed by Shutdown to stop the ticker goroutine
 	flowStopOnce         sync.Once     // ensures flowStopCh is closed exactly once
 	flowWg               sync.WaitGroup // tracks the ticker goroutine; Wait before closing flowConn

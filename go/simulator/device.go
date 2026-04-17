@@ -268,6 +268,7 @@ func (sm *SimulatorManager) CreateDevicesWithOptions(startIP string, count int, 
 				flowProfile := GetFlowProfile(deviceResourceFile)
 				device.flowExporter = NewFlowExporter(device, flowProfile,
 					sm.flowActiveTimeout, sm.flowInactiveTimeout, sm.flowTemplateInterval)
+				sm.openFlowConnForDevice(device)
 			}
 
 			// Cache the dynamic values using atomic for lock-free access
@@ -498,6 +499,7 @@ func (sm *SimulatorManager) createSingleDevice(deviceIndex int, deviceIP net.IP,
 		flowProfile := GetFlowProfile(resourceFile)
 		device.flowExporter = NewFlowExporter(device, flowProfile,
 			sm.flowActiveTimeout, sm.flowInactiveTimeout, sm.flowTemplateInterval)
+		sm.openFlowConnForDevice(device)
 	}
 
 	// Cache the dynamic values using atomic for lock-free access
@@ -631,6 +633,10 @@ func (d *DeviceSimulator) Stop() error {
 		}
 	}
 
+	if d.flowExporter != nil {
+		d.flowExporter.Close() //nolint:errcheck
+	}
+
 	// Only destroy TUN interface if it's not pre-allocated and not part of bulk deletion
 	// Individual device stops will close the file descriptor but not delete the interface
 	// Bulk deletion handles the actual interface removal
@@ -666,6 +672,9 @@ func (d *DeviceSimulator) stopListenersOnly() {
 	}
 	if d.apiServer != nil {
 		d.apiServer.Stop()
+	}
+	if d.flowExporter != nil {
+		d.flowExporter.Close() //nolint:errcheck
 	}
 	if d.tunIface != nil {
 		d.tunIface.destroy() // Close FD only, no ip link delete

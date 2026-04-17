@@ -589,3 +589,127 @@ func TestGetFlowStatus_Enabled(t *testing.T) {
 		t.Error("LastTemplateSend is empty, want a non-empty RFC3339 timestamp")
 	}
 }
+
+// TestFlowExporter_Tick_PrefersPerDeviceConn verifies that Tick uses fe.conn
+// (the per-device socket) when set, ignoring the fallback conn parameter.
+// This underpins the per-device source-IP mode: each device's flows leave
+// via its own socket bound to the device IP.
+func TestFlowExporter_Tick_PrefersPerDeviceConn(t *testing.T) {
+	// Collector that receives the packets.
+	ln, ch := testUDPListener(t)
+	defer ln.Close()
+	collectorAddr := ln.LocalAddr().(*net.UDPAddr)
+
+	// Per-device socket bound to loopback — this is what Tick should use.
+	perDevice, err := net.ListenUDP("udp4", &net.UDPAddr{IP: net.ParseIP("127.0.0.1"), Port: 0})
+	if err != nil {
+		t.Fatalf("ListenUDP (per-device): %v", err)
+	}
+	defer perDevice.Close()
+
+	// Fallback conn that we explicitly close — if Tick mistakenly uses it,
+	// WriteTo would fail and no packet would arrive. If Tick correctly
+	// prefers fe.conn, the closed fallback is never touched.
+	fallback, err := net.ListenUDP("udp4", &net.UDPAddr{IP: net.ParseIP("127.0.0.1"), Port: 0})
+	if err != nil {
+		t.Fatalf("ListenUDP (fallback): %v", err)
+	}
+	fallback.Close()
+
+	fe := NewFlowExporter(testDevice("10.9.9.9"), flowProfileEdgeRouter,
+		10*time.Minute, 5*time.Minute, 10*time.Minute)
+	fe.conn.Store(perDevice)
+
+	stats := fe.Tick(time.Now(), NetFlow9Encoder{}, fallback, collectorAddr, testPool())
+
+	pkt := receivePacket(ch)
+	if pkt == nil {
+		t.Fatal("no packet received — Tick did not use per-device conn")
+	}
+	if stats.PacketsSent == 0 {
+		t.Error("stats.PacketsSent == 0, want ≥1")
+	}
+}
+
+// TestFlowExporter_Tick_CloseRace drives Tick and Close concurrently to
+// catch races on fe.conn. Meant to be run under `go test -race`; without
+// atomic.Pointer the old implementation would trip the race detector here.
+func TestFlowExporter_Tick_CloseRace(t *testing.T) {
+	ln, _ := testUDPListener(t)
+	defer ln.Close()
+	collectorAddr := ln.LocalAddr().(*net.UDPAddr)
+
+	fe := NewFlowExporter(testDevice("10.9.9.11"), flowProfileEdgeRouter,
+		10*time.Minute, 5*time.Minute, 10*time.Minute)
+
+	perDevice, err := net.ListenUDP("udp4", &net.UDPAddr{IP: net.ParseIP("127.0.0.1"), Port: 0})
+	if err != nil {
+		t.Fatalf("ListenUDP: %v", err)
+	}
+	fe.conn.Store(perDevice)
+
+	fallback, err := net.ListenUDP("udp4", &net.UDPAddr{IP: net.ParseIP("127.0.0.1"), Port: 0})
+	if err != nil {
+		t.Fatalf("ListenUDP (fallback): %v", err)
+	}
+	defer fallback.Close()
+
+	stop := make(chan struct{})
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		pool := testPool()
+		for {
+			select {
+			case <-stop:
+				return
+			default:
+				fe.Tick(time.Now(), NetFlow9Encoder{}, fallback, collectorAddr, pool)
+			}
+		}
+	}()
+
+	// Let Tick run for a bit, then close concurrently.
+	time.Sleep(10 * time.Millisecond)
+	if err := fe.Close(); err != nil {
+		t.Errorf("Close returned error: %v", err)
+	}
+	close(stop)
+	wg.Wait()
+
+	if fe.conn.Load() != nil {
+		t.Error("fe.conn should be nil after Close")
+	}
+}
+
+// TestFlowExporter_Close_Idempotent verifies that Close is safe on nil and
+// repeat invocations — required because both DeviceSimulator.Stop and
+// DeviceSimulator.stopListenersOnly call Close during shutdown paths.
+func TestFlowExporter_Close_Idempotent(t *testing.T) {
+	var nilFE *FlowExporter
+	if err := nilFE.Close(); err != nil {
+		t.Errorf("Close on nil exporter returned error: %v", err)
+	}
+
+	fe := NewFlowExporter(testDevice("10.9.9.10"), flowProfileEdgeRouter,
+		time.Second, time.Second, time.Minute)
+	if err := fe.Close(); err != nil {
+		t.Errorf("Close without conn returned error: %v", err)
+	}
+
+	conn, err := net.ListenUDP("udp4", &net.UDPAddr{IP: net.ParseIP("127.0.0.1"), Port: 0})
+	if err != nil {
+		t.Fatalf("ListenUDP: %v", err)
+	}
+	fe.conn.Store(conn)
+	if err := fe.Close(); err != nil {
+		t.Errorf("first Close returned error: %v", err)
+	}
+	if err := fe.Close(); err != nil {
+		t.Errorf("second Close returned error: %v", err)
+	}
+	if fe.conn.Load() != nil {
+		t.Error("fe.conn should be nil after Close")
+	}
+}

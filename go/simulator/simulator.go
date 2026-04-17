@@ -109,6 +109,7 @@ func main() {
 		flowInactiveSecs     = flag.Int("flow-inactive-timeout", 15, "Inactive flow timeout in seconds (default: 15)")
 		flowTemplateIntervalSecs = flag.Int("flow-template-interval", 60, "Template retransmission interval in seconds (default: 60)")
 		flowTickSecs         = flag.Int("flow-tick-interval", 5, "Flow ticker interval in seconds (default: 5)")
+		flowSourcePerDevice  = flag.Bool("flow-source-per-device", true, "Bind a per-device UDP socket inside the opensim namespace so flow packets use the device's IP as the source address (default: true). Requires the opensim ns to have a route to the collector; set to false to use a single shared socket from the host namespace")
 	)
 
 	flag.Parse()
@@ -181,6 +182,7 @@ func main() {
 
 	// Enable flow export if a collector address was provided.
 	if *flowCollector != "" {
+		manager.SetFlowSourcePerDevice(*flowSourcePerDevice)
 		err := manager.InitFlowExport(
 			*flowCollector,
 			*flowProtocol,
