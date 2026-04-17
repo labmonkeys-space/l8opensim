@@ -149,6 +149,12 @@ type APIServer struct {
 // Manager for all simulated devices
 type SimulatorManager struct {
 	devices         map[string]*DeviceSimulator
+	// deviceIPs tracks IPs currently bound to a device so that duplicate
+	// detection stays robust against changes to the device-ID format. Without
+	// it, two concurrent calls that target the same IP with different
+	// resource files would both pass the `sm.devices[deviceID]` lookup (the
+	// IDs differ by slug) and race to bind the same TUN and SNMP/SSH ports.
+	deviceIPs       map[string]struct{}
 	currentIP       net.IP
 	nextTunIndex    int
 	deviceResources *DeviceResources

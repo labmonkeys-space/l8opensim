@@ -182,8 +182,9 @@ func (sm *SimulatorManager) CreateDevicesWithOptions(startIP string, count int, 
 			copy(currentIP, sm.currentIP)
 			deviceID := makeDeviceID(currentIP, typeSlug)
 
-			// Check if device already exists
-			_, exists := sm.devices[deviceID]
+			// Check IP (not deviceID) so re-invocations with a different
+			// resource file still detect the collision.
+			_, exists := sm.deviceIPs[currentIP.String()]
 			sm.mu.RUnlock()
 
 			if exists {
@@ -294,6 +295,7 @@ func (sm *SimulatorManager) CreateDevicesWithOptions(startIP string, count int, 
 			// Add device to map with a write lock
 			sm.mu.Lock()
 			sm.devices[deviceID] = device
+			sm.deviceIPs[currentIP.String()] = struct{}{}
 			sm.incrementIP()
 			sm.mu.Unlock()
 
@@ -389,9 +391,10 @@ func (sm *SimulatorManager) createDevicesParallel(count int, netmask string, res
 		}
 		deviceID := makeDeviceID(deviceIP, slugifyDeviceType(deviceResourceFile))
 
-		// Check if device already exists
+		// Check IP (not deviceID) so the duplicate check stays robust against
+		// the device-ID format including a resource-type slug.
 		sm.mu.RLock()
-		_, exists := sm.devices[deviceID]
+		_, exists := sm.deviceIPs[deviceIP.String()]
 		sm.mu.RUnlock()
 
 		if exists {
@@ -519,6 +522,7 @@ func (sm *SimulatorManager) createSingleDevice(deviceIndex int, deviceIP net.IP,
 	// Add device to map with a write lock
 	sm.mu.Lock()
 	sm.devices[deviceID] = device
+	sm.deviceIPs[deviceIP.String()] = struct{}{}
 	sm.mu.Unlock()
 
 	return true

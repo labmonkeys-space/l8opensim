@@ -45,6 +45,7 @@ func NewSimulatorManagerWithOptions(useNamespace bool) *SimulatorManager {
 
 	sm := &SimulatorManager{
 		devices:          make(map[string]*DeviceSimulator),
+		deviceIPs:        make(map[string]struct{}),
 		nextTunIndex:     0,
 		resourcesCache:   make(map[string]*DeviceResources),
 		tunInterfacePool: make(map[string]*TunInterface),
@@ -263,6 +264,7 @@ func (sm *SimulatorManager) DeleteDevice(deviceID string) error {
 	}
 
 	delete(sm.devices, deviceID)
+	delete(sm.deviceIPs, device.IP.String())
 	return nil
 }
 
@@ -301,8 +303,9 @@ func (sm *SimulatorManager) DeleteAllDevices() error {
 		}
 	}
 
-	// Clear the devices map and pre-allocated pool
+	// Clear the devices map, IP set, and pre-allocated pool
 	sm.devices = make(map[string]*DeviceSimulator)
+	sm.deviceIPs = make(map[string]struct{})
 	sm.tunPoolMutex.Lock()
 	sm.tunInterfacePool = make(map[string]*TunInterface)
 	sm.tunPoolMutex.Unlock()

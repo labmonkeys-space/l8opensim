@@ -18,19 +18,36 @@ package main
 import (
 	"fmt"
 	mathrand "math/rand"
+	"path/filepath"
 	"strings"
 )
 
 // slugifyDeviceType turns a resource filename (e.g. "cisco_catalyst_9500.json")
-// into a lowercase slug suitable for use in device IDs and sysName values
-// (e.g. "cisco-catalyst-9500"). Returns "" when resourceFile is empty.
+// into a lowercase, URL-/hostname-safe slug (e.g. "cisco-catalyst-9500").
+// Any character outside [a-z0-9-] becomes '-', consecutive hyphens collapse,
+// and leading/trailing hyphens are trimmed. Returns "" when resourceFile is
+// empty or the result would be empty.
 func slugifyDeviceType(resourceFile string) string {
 	if resourceFile == "" {
 		return ""
 	}
-	name := strings.TrimSuffix(resourceFile, ".json")
-	name = strings.ReplaceAll(name, "_", "-")
-	return strings.ToLower(name)
+	name := strings.ToLower(filepath.Base(resourceFile))
+	name = strings.TrimSuffix(name, ".json")
+	var b strings.Builder
+	b.Grow(len(name))
+	for _, r := range name {
+		switch {
+		case r >= 'a' && r <= 'z', r >= '0' && r <= '9', r == '-':
+			b.WriteRune(r)
+		default:
+			b.WriteByte('-')
+		}
+	}
+	result := b.String()
+	for strings.Contains(result, "--") {
+		result = strings.ReplaceAll(result, "--", "-")
+	}
+	return strings.Trim(result, "-")
 }
 
 // Global lists for generating random device names
