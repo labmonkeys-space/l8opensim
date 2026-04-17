@@ -17,6 +17,7 @@ package main
 
 import (
 	"encoding/binary"
+	"strconv"
 	"time"
 )
 
@@ -25,11 +26,18 @@ import (
 // counter-record format tag (enterprise 0), Body is the XDR-encoded counter
 // body without the 8-byte record header.
 //
+// SourceID is the sFlow data source identifier that groups records into
+// counters_sample records on the wire:
+//   - For per-interface records (if_counters) it is the ifIndex
+//     (ds_class=0, ds_index=ifIndex encoded as 0<<24 | ifIndex).
+//   - For device-wide records (processor_information, memory etc.) it is 0.
+//
 // Protocol-specific encoding of this record into the target wire format is
 // owned by the encoder (see sflow.go EncodeCounterDatagram).
 type CounterRecord struct {
-	Format uint32
-	Body   []byte
+	Format   uint32
+	SourceID uint32
+	Body     []byte
 }
 
 // CounterSource produces CounterRecord snapshots at the given time. Sources
@@ -64,10 +72,14 @@ func NewInterfaceCounterSource(c *IfCounterCycler) *InterfaceCounterSource {
 }
 
 // Snapshot returns one if_counters CounterRecord per known interface, with
-// ifHCInOctets / ifHCOutOctets sourced from the cycler's sine-wave math. The
-// remaining fields (ifInUcastPkts etc.) are synthesized from the octet
-// counters using a coarse 500-byte average packet size — adequate for
-// collector smoke tests, not for graphing accuracy.
+// ifHCInOctets / ifHCOutOctets sourced from the cycler's sine-wave math. Each
+// record is tagged with SourceID = ifIndex so EncodeCounterDatagram emits one
+// counters_sample per interface (collectors such as OpenNMS Telemetryd key
+// if_counters by ds_index).
+//
+// The remaining if_counters fields (ifInUcastPkts etc.) are synthesized from
+// the octet counters using a coarse 500-byte average packet size — adequate
+// for collector smoke tests, not for graphing accuracy.
 func (s *InterfaceCounterSource) Snapshot(_ time.Time) []CounterRecord {
 	if s == nil || s.cycler == nil {
 		return nil
@@ -82,8 +94,8 @@ func (s *InterfaceCounterSource) Snapshot(_ time.Time) []CounterRecord {
 		if slot < 0 || slot >= len(s.cycler.ifSpeedBps) {
 			continue
 		}
-		inStr := s.cycler.GetHCOctets(hcInOIDPrefix + itoa(ifIndex))
-		outStr := s.cycler.GetHCOctets(hcOutOIDPrefix + itoa(ifIndex))
+		inStr := s.cycler.GetHCOctets(hcInOIDPrefix + strconv.Itoa(ifIndex))
+		outStr := s.cycler.GetHCOctets(hcOutOIDPrefix + strconv.Itoa(ifIndex))
 		inOctets := parseUintOrZero(inStr)
 		outOctets := parseUintOrZero(outStr)
 		// Synthesize packet counters from octets / 500B — coarse but
@@ -92,7 +104,11 @@ func (s *InterfaceCounterSource) Snapshot(_ time.Time) []CounterRecord {
 		outPkts := uint32(outOctets / 500)
 
 		body := encodeIfCountersBody(uint32(ifIndex), s.cycler.ifSpeedBps[slot], inOctets, outOctets, inPkts, outPkts)
-		out = append(out, CounterRecord{Format: sflowCtrFmtGeneric, Body: body})
+		out = append(out, CounterRecord{
+			Format:   sflowCtrFmtGeneric,
+			SourceID: uint32(ifIndex),
+			Body:     body,
+		})
 	}
 	return out
 }
@@ -163,30 +179,6 @@ func encodeIfCountersBody(ifIndex uint32, speedBps, inOctets, outOctets uint64, 
 	return body
 }
 
-// itoa is a tiny helper to avoid pulling strconv into this counter path for
-// hot-loop use — the caller only passes small positive ifIndex values.
-func itoa(i int) string {
-	if i == 0 {
-		return "0"
-	}
-	var buf [20]byte
-	n := len(buf)
-	neg := i < 0
-	if neg {
-		i = -i
-	}
-	for i > 0 {
-		n--
-		buf[n] = byte('0' + i%10)
-		i /= 10
-	}
-	if neg {
-		n--
-		buf[n] = '-'
-	}
-	return string(buf[n:])
-}
-
 // parseUintOrZero is tolerant of empty / malformed inputs — it returns 0
 // rather than erroring so Snapshot never blocks the tick goroutine on a
 // single malformed OID.
@@ -203,26 +195,30 @@ func parseUintOrZero(s string) uint64 {
 
 // CPUCounterSource emits a single sFlow processor_information counter record
 // per snapshot. The values are not driven from any real CPU meter — they are
-// synthesized from the device's metricsCycler so the shape looks plausible to
-// sFlow collectors (non-flat line, slowly drifting).
-type CPUCounterSource struct {
-	device *DeviceSimulator
+// synthesized constants so the shape looks plausible to sFlow collectors.
+// The standard processor_information counter already carries total_memory
+// and free_memory fields, so no separate memory counter record is needed.
+type CPUCounterSource struct{}
+
+// NewCPUCounterSource returns a per-device CPU counter source. The receiver
+// carries no device state today because values are synthetic constants; the
+// signature keeps room for MetricsCycler-driven sine-wave wiring in a
+// follow-up without changing call sites.
+func NewCPUCounterSource(_ *DeviceSimulator) *CPUCounterSource {
+	return &CPUCounterSource{}
 }
 
-// NewCPUCounterSource returns a per-device CPU counter source.
-func NewCPUCounterSource(d *DeviceSimulator) *CPUCounterSource {
-	return &CPUCounterSource{device: d}
-}
-
-// Snapshot returns a single processor_information CounterRecord. Layout
-// (simplified — the standard sFlow processor_information counter only carries
-// CPU percentage fields plus memory; real counters are surfaced via SNMP):
+// Snapshot returns a single processor_information CounterRecord. The record
+// carries device-wide counters, so SourceID is 0 (ds_class=0, ds_index=0) —
+// collectors group these under a single counters_sample per device.
 //
-//	u32 cpu_5s    (0..100)
-//	u32 cpu_1m    (0..100)
-//	u32 cpu_5m    (0..100)
-//	u64 total_memory
-//	u64 free_memory
+// Layout (sflow_version_5.txt §5.4 "processor information"):
+//
+//	u32 cpu_5s           (load 0..100)
+//	u32 cpu_1m           (load 0..100)
+//	u32 cpu_5m           (load 0..100)
+//	u64 total_memory     (bytes)
+//	u64 free_memory      (bytes)
 func (s *CPUCounterSource) Snapshot(_ time.Time) []CounterRecord {
 	body := make([]byte, 4+4+4+8+8)
 	pos := 0
@@ -236,34 +232,9 @@ func (s *CPUCounterSource) Snapshot(_ time.Time) []CounterRecord {
 	binary.BigEndian.PutUint64(body[pos:], 16*1024*1024*1024) // 16 GiB total
 	pos += 8
 	binary.BigEndian.PutUint64(body[pos:], 8*1024*1024*1024) // 8 GiB free
-	return []CounterRecord{{Format: sflowCtrFmtProcessor, Body: body}}
-}
-
-// MemoryCounterSource emits a single memory counter record per snapshot. See
-// sflowCtrFmtMemory for the format caveat — this is a simulator-local format
-// ID because sFlow v5's standard counter registry doesn't include a
-// freestanding memory type.
-type MemoryCounterSource struct {
-	device *DeviceSimulator
-}
-
-// NewMemoryCounterSource returns a per-device memory counter source.
-func NewMemoryCounterSource(d *DeviceSimulator) *MemoryCounterSource {
-	return &MemoryCounterSource{device: d}
-}
-
-// Snapshot returns one memory CounterRecord with total / used / free / cached
-// bytes. Values are synthetic constants; real memory telemetry should use
-// hrStorage via SNMP.
-func (s *MemoryCounterSource) Snapshot(_ time.Time) []CounterRecord {
-	body := make([]byte, 8*4)
-	pos := 0
-	binary.BigEndian.PutUint64(body[pos:], 16*1024*1024*1024) // total
-	pos += 8
-	binary.BigEndian.PutUint64(body[pos:], 8*1024*1024*1024) // used
-	pos += 8
-	binary.BigEndian.PutUint64(body[pos:], 8*1024*1024*1024) // free
-	pos += 8
-	binary.BigEndian.PutUint64(body[pos:], 2*1024*1024*1024) // cached
-	return []CounterRecord{{Format: sflowCtrFmtMemory, Body: body}}
+	return []CounterRecord{{
+		Format:   sflowCtrFmtProcessor,
+		SourceID: 0,
+		Body:     body,
+	}}
 }

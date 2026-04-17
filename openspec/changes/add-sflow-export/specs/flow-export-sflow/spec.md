@@ -71,39 +71,42 @@ When the selected protocol is `sflow`, the simulator SHALL convert each syntheti
 
 ### Requirement: sFlow v5 counter samples (Phase 2)
 
-When the selected protocol is `sflow` and Phase 2 counter-sample support is enabled, the simulator SHALL emit `COUNTERS_SAMPLE` (sample_type tag `counters_sample` or `counters_sample_expanded`) records alongside flow samples on each flow-export tick. Each counter sample SHALL include at minimum: one `if_counters` record per simulated interface, one `processor_information` record per device carrying CPU utilization, and one `memory_information` record per device carrying memory totals and usage.
+When the selected protocol is `sflow` and Phase 2 counter-sample support is enabled, the simulator SHALL emit `COUNTERS_SAMPLE` (sample_type tag `counters_sample` or `counters_sample_expanded`) records alongside flow samples on each flow-export tick. Each tick SHALL emit one `counters_sample` per simulated interface carrying that interface's `if_counters` record with `source_id = ifIndex`, plus one device-wide `counters_sample` with `source_id = 0` carrying a `processor_information` record (format 1001) whose standard `total_memory` and `free_memory` fields convey the device's memory totals. No non-standard counter-record format IDs SHALL be emitted.
 
 #### Scenario: Counter sample emitted per tick per device
 
 - **WHEN** the flow-export ticker fires with protocol `sflow` and Phase 2 enabled
 - **THEN** each active device SHALL emit at least one `COUNTERS_SAMPLE` record in that tick's datagram batch
 
-#### Scenario: Interface counters included
+#### Scenario: Interface counters grouped per-interface by source_id
 
-- **WHEN** a `COUNTERS_SAMPLE` is decoded for device `D`
-- **THEN** it SHALL contain one `if_counters` record for each simulated interface on `D`
+- **WHEN** a device with N simulated interfaces emits a `COUNTERS_SAMPLE` datagram
+- **THEN** the datagram SHALL contain N `counters_sample` records each with `source_id = ifIndex` and carrying exactly one `if_counters` record for that interface
 - **AND** each `if_counters` record SHALL carry non-zero `ifInOctets`, `ifOutOctets`, `ifInUcastPkts`, and `ifOutUcastPkts` fields derived from `IfCounterCycler` output
 
-#### Scenario: CPU and memory counters included
+#### Scenario: CPU and memory counters included in processor_information
 
 - **WHEN** a `COUNTERS_SAMPLE` is decoded for device `D`
-- **THEN** it SHALL contain exactly one `processor_information` record carrying at minimum `cpu_percentage` and `total_memory`
-- **AND** it SHALL contain exactly one `memory_information` record carrying `total` and `free` memory byte counts
+- **THEN** it SHALL contain exactly one `counters_sample` with `source_id = 0` carrying a `processor_information` record (format 1001)
+- **AND** the `processor_information` record SHALL carry CPU load percentages (`cpu_5s`, `cpu_1m`, `cpu_5m`) plus `total_memory` and `free_memory` byte counts
+- **AND** no counter-record format IDs outside the standard sFlow v5 registry SHALL be emitted
 
 ### Requirement: CounterSource abstraction
 
-Phase 2 counter sample emission SHALL be driven by a `CounterSource` interface rather than by direct coupling between `sflow.go` and `if_counters.go`. Existing `IfCounterCycler` state SHALL be exposed through an `InterfaceCounterSource` adapter implementing this interface without changing observable SNMP behaviour.
+Phase 2 counter sample emission SHALL be driven by a `CounterSource` interface rather than by direct coupling between `sflow.go` and `if_counters.go`. Existing `IfCounterCycler` state SHALL be exposed through an `InterfaceCounterSource` adapter implementing this interface without changing observable SNMP behaviour. Each `CounterRecord` returned by a source SHALL carry a `SourceID` identifying the data source (ifIndex for per-interface records, 0 for device-wide records) so the encoder can group records into `counters_sample` wrappers keyed by `source_id`.
 
 #### Scenario: InterfaceCounterSource reuses IfCounterCycler state
 
 - **WHEN** a device's `InterfaceCounterSource.Snapshot` is called at time `t`
 - **THEN** the returned `CounterRecord` values for interface counters SHALL equal the values that `IfCounterCycler` would produce at time `t` for the same device
+- **AND** each returned record SHALL carry `SourceID = ifIndex` so `EncodeCounterDatagram` emits one `counters_sample` per interface
 - **AND** the existing SNMP exposure of the same counters via `snmp_handlers.go` SHALL remain byte-identical before and after this refactor
 
-#### Scenario: CPU and memory counter sources are per-device
+#### Scenario: CPU counter source is per-device
 
 - **WHEN** the simulator initializes a device in sFlow mode with Phase 2 enabled
-- **THEN** the device SHALL have exactly one `CPUCounterSource` and exactly one `MemoryCounterSource` registered
+- **THEN** the device SHALL have exactly one `CPUCounterSource` registered
+- **AND** `CPUCounterSource.Snapshot` SHALL return exactly one `CounterRecord` with `SourceID = 0` and `Format = processor_information (1001)` carrying CPU load and memory totals/free fields
 
 ### Requirement: FlowEncoder interface tolerates variable-length records
 
@@ -113,11 +116,19 @@ The `FlowEncoder` interface SHALL be extended with a method that allows protocol
 
 - **WHEN** a `FlowExporter` ticks with encoder = `NetFlow9Encoder` before and after the interface extension
 - **THEN** the emitted datagrams SHALL be byte-identical for identical input records, input buffer, and timing
+- **AND** a pinned-hash regression test in `flow_exporter_test.go` SHALL assert this by MD5-hashing the structural (non-wall-clock) bytes of a canonical encode against a committed expected value
 
 #### Scenario: IPFIXEncoder output is unchanged
 
 - **WHEN** a `FlowExporter` ticks with encoder = `IPFIXEncoder` before and after the interface extension
 - **THEN** the emitted datagrams SHALL be byte-identical for identical input records, input buffer, and timing
+- **AND** a pinned-hash regression test in `flow_exporter_test.go` SHALL assert this by MD5-hashing the structural (non-wall-clock) bytes of a canonical encode against a committed expected value
+
+#### Scenario: NetFlow5Encoder output is unchanged
+
+- **WHEN** a `FlowExporter` ticks with encoder = `NetFlow5Encoder` before and after the interface extension
+- **THEN** the emitted datagrams SHALL be byte-identical for identical input records, input buffer, and timing
+- **AND** a pinned-hash regression test in `flow_exporter_test.go` SHALL assert this by MD5-hashing the structural (non-wall-clock) bytes of a canonical encode against a committed expected value
 
 #### Scenario: sFlow encoder signals variable-length pagination
 

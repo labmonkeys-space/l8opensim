@@ -220,7 +220,7 @@ If the collector doesn't see flows:
 
 NetFlow v5/v9 and IPFIX all use the same 18-field template (bytes, packets, protocol, ToS, TCP flags, src/dst ports, src/dst IPv4, src/dst mask, ingress/egress interface, next-hop, src/dst AS, timestamps) — v5 bakes this into a fixed 48-byte on-wire record and has no template mechanism at all, so `-flow-template-interval` is a silent no-op under both v5 and sFlow.
 
-sFlow v5 emits one `FLOW_SAMPLE` per `FlowRecord` with a `sampled_header` flow-record carrying a synthesised IPv4+UDP/TCP header derived from the 5-tuple. On every tick it also emits `COUNTERS_SAMPLE` records (Phase 2) for each interface's `if_counters`, a processor sample, and a memory sample. `sampling_rate` is fixed at `10 × FlowProfile.ConcurrentFlows` — see the caveat above.
+sFlow v5 emits one `FLOW_SAMPLE` per `FlowRecord` with a `sampled_header` flow-record carrying a synthesised IPv4+UDP/TCP header derived from the 5-tuple. On every tick it also emits `COUNTERS_SAMPLE` records (Phase 2): one per interface carrying that interface's `if_counters` record (with `source_id = ifIndex` so collectors such as OpenNMS Telemetryd can key by ds_index), plus one device-wide sample carrying a `processor_information` record (format 1001) whose standard `total_memory` / `free_memory` fields convey the device's memory totals. `sampling_rate` is fixed at `10 × FlowProfile.ConcurrentFlows` — see the caveat above.
 
 ### Flow status API
 

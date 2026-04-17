@@ -261,8 +261,11 @@ func (fe *FlowExporter) Tick(now time.Time, encoder FlowEncoder, conn *net.UDPCo
 		for len(allRecords) > 0 {
 			batch := allRecords
 			// Pick the largest batch that fits in a 1500-byte buf. Each record
-			// occupies at most sflowMaxCountersSampleSize bytes once wrapped.
-			maxBatch := (len(buf) - sflowDatagramHeaderSize - 16 /* sample hdr */) / sflowMaxCountersSampleSize
+			// occupies at most sflowMaxCountersSampleSize bytes once wrapped,
+			// and each counters_sample wrapper contributes
+			// sflowCountersSampleHeaderSize bytes of overhead on top of the
+			// datagram header.
+			maxBatch := (len(buf) - sflowDatagramHeaderSize - sflowCountersSampleHeaderSize) / sflowMaxCountersSampleSize
 			if maxBatch < 1 {
 				break
 			}
@@ -309,8 +312,10 @@ func (sm *SimulatorManager) registerSFlowCounterSources(device *DeviceSimulator)
 			sources = append(sources, s)
 		}
 	}
+	// CPUCounterSource's processor_information record already carries
+	// total_memory and free_memory — a separate memory counter source would
+	// emit a non-standard sFlow format ID that strict collectors drop.
 	sources = append(sources, NewCPUCounterSource(device))
-	sources = append(sources, NewMemoryCounterSource(device))
 	device.flowExporter.counterSources = sources
 }
 

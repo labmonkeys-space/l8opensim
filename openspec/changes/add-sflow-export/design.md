@@ -119,20 +119,25 @@ The alternative — sampling rate = 1 (every packet sampled) — produces correc
 
 **Decision:** Phase 2 introduces:
 ```go
+type CounterRecord struct {
+    Format   uint32 // sFlow counter-record format tag
+    SourceID uint32 // ifIndex for per-interface records, 0 for device-wide
+    Body     []byte
+}
+
 type CounterSource interface {
     // Snapshot returns counter records for the device at time t.
     Snapshot(t time.Time) []CounterRecord
 }
 ```
-- `InterfaceCounterSource` — extracted from `IfCounterCycler`. `if_counters.go` keeps its SNMP wiring but delegates the counter math to this source.
-- `CPUCounterSource` — new, per-device. Produces CPU utilization (idle / user / system / wait as percentages × 100).
-- `MemoryCounterSource` — new, per-device. Produces total / used / free / cached (bytes).
+- `InterfaceCounterSource` — extracted from `IfCounterCycler`. `if_counters.go` keeps its SNMP wiring but delegates the counter math to this source. Tags each record with `SourceID = ifIndex`.
+- `CPUCounterSource` — new, per-device. Produces a single `processor_information` record (format 1001) carrying CPU utilization plus total/free memory. Tagged with `SourceID = 0`. Memory is folded into this standard record rather than emitted under a non-standard format ID.
 
-`FlowExporter.Tick` in sFlow mode calls `Snapshot` on all registered sources once per tick and emits `COUNTERS_SAMPLE` records alongside `FLOW_SAMPLE`.
+`FlowExporter.Tick` in sFlow mode calls `Snapshot` on all registered sources once per tick. `SFlowEncoder.EncodeCounterDatagram` groups the returned records by `SourceID` and emits one `counters_sample` per group (per-interface records keyed by ifIndex, device-wide records under source_id 0). This matches how collectors such as OpenNMS Telemetryd key `if_counters` by ds_index.
 
-**Rationale:** A single interface keeps the sFlow encoder from knowing about counter internals, and sets up `if_counters.go` for the separately-tracked ifHC cycling gap (see memory `project_ifhc_counter_gap.md`). The gap fix can land on top of this abstraction cleanly.
+**Rationale:** A single interface keeps the sFlow encoder from knowing about counter internals, and sets up `if_counters.go` for the separately-tracked ifHC cycling gap (see memory `project_ifhc_counter_gap.md`). The gap fix can land on top of this abstraction cleanly. Per-SourceID grouping is required for correct collector attribution — a single `counters_sample` with `source_id = 0` and N `if_counters` records is valid XDR but misattributes per-interface metrics.
 
-**Alternative:** Hard-code the three counter types in `sflow.go`. Rejected: blocks the ifHC fix and forces future counter additions into a protocol-specific file.
+**Alternative:** Hard-code the three counter types in `sflow.go`. Rejected: blocks the ifHC fix and forces future counter additions into a protocol-specific file. Keeping a dedicated `MemoryCounterSource` was also rejected — `processor_information` already carries the fields, and a simulator-local format ID would be silently dropped by strict collectors.
 
 ### D7. Protocol string canonicalization: `sflow`
 
