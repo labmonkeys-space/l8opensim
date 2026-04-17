@@ -92,10 +92,11 @@ Options:
   -if-failure-pct int         Percentage of interfaces with oper-down (used with -if-scenario 4, 0–100, default: 10)
   -flow-collector string      Enable flow export to this UDP collector (e.g., 192.168.1.10:2055)
   -flow-protocol string       Flow export protocol: netflow9 (default) | ipfix
-  -flow-tick duration         How often to emit flows (default: 10s)
-  -flow-active-timeout dur    Active flow expiry timeout (default: 5m)
-  -flow-inactive-timeout dur  Inactive flow expiry timeout (default: 1m)
-  -flow-template-interval dur Re-send template every N seconds (default: 10m)
+  -flow-tick-interval int     Flow ticker interval in seconds (default: 5)
+  -flow-active-timeout int    Active flow timeout in seconds (default: 30)
+  -flow-inactive-timeout int  Inactive flow timeout in seconds (default: 15)
+  -flow-template-interval int Template retransmission interval in seconds (default: 60)
+  -flow-source-per-device     Use each device's IP as the UDP source address (default: true)
   -help                       Show help message
 ```
 
@@ -155,7 +156,9 @@ snmpwalk -v2c -c public 192.168.100.1 1.3.6.1.2.1.2.2.1.7   # ifAdminStatus
 
 ## Flow Export (NetFlow v9 / IPFIX)
 
-OpenSim can emit synthetic flow telemetry to any NetFlow v9 (RFC 3954) or IPFIX (RFC 7011) collector. Each simulated device generates realistic flows that reflect its role (edge router, data-center switch, firewall, etc.) and exports them over a single shared UDP socket.
+OpenSim can emit synthetic flow telemetry to any NetFlow v9 (RFC 3954) or IPFIX (RFC 7011) collector. Each simulated device generates realistic flows that reflect its role (edge router, data-center switch, firewall, etc.).
+
+By default (`-flow-source-per-device=true`), each device binds its own UDP socket inside the `opensim` namespace so the collector observes flow packets with the **device's IP as the source address**, not the simulator host's. This makes per-device attribution work out of the box on collectors that key on the exporter source IP (e.g. OpenNMS, Elastiflow, nfcapd). Set the flag to `false` to fall back to a single shared socket bound in the host namespace.
 
 ### Starting flow export
 
@@ -168,10 +171,37 @@ sudo ./simulator -auto-start-ip 10.0.0.1 -auto-count 100 \
 sudo ./simulator -auto-start-ip 10.0.0.1 -auto-count 100 \
   -flow-collector 192.168.1.10:4739 -flow-protocol ipfix
 
-# Faster ticks for high-fidelity testing
+# Faster ticks for high-fidelity testing (integer seconds)
 sudo ./simulator -auto-start-ip 10.0.0.1 -auto-count 10 \
-  -flow-collector 127.0.0.1:9999 -flow-tick 1s
+  -flow-collector 127.0.0.1:9999 -flow-tick-interval 1
+
+# Disable per-device source IP (export from host IP instead)
+sudo ./simulator -auto-start-ip 10.0.0.1 -auto-count 100 \
+  -flow-collector 192.168.1.10:2055 -flow-source-per-device=false
 ```
+
+### Prerequisites for per-device source IP
+
+When `-flow-source-per-device` is enabled (default), flow packets originate from inside the `opensim` namespace and must traverse the `veth-sim-host` ↔ `veth-sim-ns` pair to reach the collector. A few things have to be in place:
+
+- **`iptables` must be installed on the simulator host.** At startup, OpenSim inserts `iptables -I FORWARD 1 -i veth-sim-host -j ACCEPT` so that hosts with a default-DROP `FORWARD` policy (common when Docker is installed) let per-device egress through. The rule is removed on clean shutdown. Without `iptables` the warning is logged and flows will be silently dropped on such hosts.
+- **Route to the collector from the namespace.** The namespace has a default route via `veth-sim-host` (`10.254.0.1`), so any collector reachable from the host via its normal routing table is reachable from the namespace. If you've customised host routing, verify with `ip netns exec opensim ip route get <collector-ip>`.
+- **Collector-side `rp_filter`.** Reverse-path filtering on the collector machine may drop flow packets whose source IP (e.g. `10.0.0.x`) isn't reachable back through the receiving interface. Relax it per-interface if needed:
+  ```bash
+  sudo sysctl -w net.ipv4.conf.all.rp_filter=2
+  sudo sysctl -w net.ipv4.conf.<iface>.rp_filter=2
+  ```
+  (`2` = loose mode; `0` disables filtering entirely.) The simulator side auto-configures its own `rp_filter` and `forwarding` sysctls — no user action needed there.
+
+### Troubleshooting
+
+If the collector doesn't see flows:
+
+1. `curl http://localhost:8080/api/v1/flows/status` — confirm `enabled: true`, `devices_exporting > 0`, and `total_packets_sent` increasing.
+2. `sudo tcpdump -ni any udp port <collector-port>` on the simulator host — packets should be visible with device IPs as sources.
+3. `sudo iptables -L FORWARD -v -n` — verify the `ACCEPT … veth-sim-host` rule is present (packet counter should be non-zero).
+4. Same `tcpdump` on the collector host — if packets arrive but the collector doesn't count them, check `rp_filter` (above) and any firewall rules.
+5. As a diagnostic, restart with `-flow-source-per-device=false` to rule out namespace/forwarding issues; flows will then use the host IP as the source.
 
 ### Protocol details
 
