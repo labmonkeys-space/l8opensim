@@ -30,19 +30,43 @@ const (
 	netFlow5MaxRecords = 30 // Cisco datagram cap; larger counts are rejected by strict collectors.
 	netFlow5HeaderLen  = 24
 	netFlow5RecordLen  = 48
+	// netFlow5ASTrans is the "AS_TRANS" reserved ASN per RFC 6793 §2 (also
+	// RFC 4893), used on the wire whenever a 32-bit ASN cannot be represented
+	// in v5's 16-bit src_as/dst_as fields.
+	netFlow5ASTrans = 23456 // 0x5BA0
 )
 
 // NetFlow5Encoder encodes FlowRecords into Cisco NetFlow v5 UDP payloads.
 //
+// Pointer-receiver deviation: unlike NetFlow9Encoder and IPFIXEncoder, which
+// are value-typed and use value receivers, NetFlow5Encoder uses a pointer
+// receiver because its atomic.Bool fields require it — copying the struct by
+// value (e.g. via a `NetFlow5Encoder{}` literal in InitFlowExport) would
+// silently produce a non-functional encoder whose one-shot state never persists.
+// Always construct with `&NetFlow5Encoder{}`.
+//
 // The encoder is effectively stateless on the wire side — all variable state
 // (sequence number, uptime, domain ID) flows in through EncodePacket so a
-// single instance can be shared across every device. The two atomic.Bool
-// fields exist only to make the first-skip / first-clamp warnings one-shot per
-// encoder lifetime, and can race harmlessly across goroutines: losing the race
-// merely means no warning is emitted this time.
+// single instance is shared across every device. The two atomic.Bool fields
+// exist only to gate the first-skip / first-clamp warnings; because the
+// encoder is fleet-wide rather than per-device, these warnings fire at most
+// once per simulator lifetime — not per device. Losing the CAS race merely
+// means no warning is emitted this time.
 type NetFlow5Encoder struct {
 	ipv6WarnOnce atomic.Bool
 	asnWarnOnce  atomic.Bool
+}
+
+// SeqIncrement returns how much to advance flow_sequence after a packet that
+// carried packetRecordCount data records.
+//
+// Cisco's v5 spec defines flow_sequence as "sequence counter of total flows
+// seen" — i.e. the counter advances by the number of records in each packet,
+// not once per packet. NetFlow9Encoder and IPFIXEncoder, by contrast, advance
+// by 1 per packet (RFC 3954's "sequence number of all export packets" and
+// RFC 7011's "per-SCTP-stream message count").
+func (*NetFlow5Encoder) SeqIncrement(packetRecordCount int) int {
+	return packetRecordCount
 }
 
 // PacketSizes returns the v5 per-packet overhead, template size (always 0 —
@@ -57,10 +81,13 @@ func (*NetFlow5Encoder) PacketSizes() (int, int, int) {
 //
 // Parameters:
 //
-//	domainID        — device identity (exported via the header's engine fields
-//	                  only loosely; v5 has no ObservationDomainID). Used in
-//	                  one-shot warning logs to attribute skips/clamps.
-//	seqNo           — per-domain flow_sequence (monotonically increasing).
+//	domainID        — accepted for interface compatibility with other encoders,
+//	                  but unused on the v5 wire: there is no ObservationDomainID
+//	                  field in v5, and the encoder's one-shot warnings are
+//	                  fleet-wide (see struct doc) so they do not name a device.
+//	seqNo           — flow_sequence (per Cisco v5 semantics: cumulative count
+//	                  of records exported, advanced by the caller using
+//	                  SeqIncrement).
 //	uptimeMs        — device system uptime in milliseconds at export time.
 //	records         — flow records to include. Non-IPv4 src/dst records are
 //	                  silently filtered; a one-shot warning logs the first skip.
@@ -70,7 +97,7 @@ func (*NetFlow5Encoder) PacketSizes() (int, int, int) {
 // Records beyond the 30th are truncated — the ticker re-queues the remainder
 // on the next call. Returns (0, nil) when no records would be written.
 func (e *NetFlow5Encoder) EncodePacket(
-	domainID uint32,
+	_ uint32,
 	seqNo uint32,
 	uptimeMs uint32,
 	records []FlowRecord,
@@ -81,7 +108,12 @@ func (e *NetFlow5Encoder) EncodePacket(
 	for _, r := range records {
 		if r.SrcIP.To4() == nil || r.DstIP.To4() == nil {
 			if e.ipv6WarnOnce.CompareAndSwap(false, true) {
-				log.Printf("netflow5: device %s skipping non-IPv4 flow record (v5 is IPv4-only); subsequent skips will not be logged", domainIDtoIP(domainID))
+				// Fleet-wide one-shot: the NetFlow5Encoder instance is shared
+				// across all devices, so this warning fires at most once per
+				// simulator lifetime. The device identity is deliberately not
+				// included — it would just name whichever device lost the CAS
+				// race on the first IPv6 record, not a unique offender.
+				log.Printf("netflow5: skipping non-IPv4 flow record (v5 is IPv4-only); this warning fires once per simulator lifetime across all devices")
 			}
 			continue
 		}
@@ -128,7 +160,7 @@ func (e *NetFlow5Encoder) EncodePacket(
 	pos += 2
 
 	for _, r := range filtered {
-		pos = e.encodeRecord(buf, pos, r, domainID)
+		pos = e.encodeRecord(buf, pos, r)
 	}
 
 	return pos, nil
@@ -136,7 +168,7 @@ func (e *NetFlow5Encoder) EncodePacket(
 
 // encodeRecord writes one 48-byte v5 record in canonical field order.
 // Returns the new position.
-func (e *NetFlow5Encoder) encodeRecord(buf []byte, pos int, r FlowRecord, domainID uint32) int {
+func (e *NetFlow5Encoder) encodeRecord(buf []byte, pos int, r FlowRecord) int {
 	// srcaddr (4) — filter above guarantees To4() is non-nil.
 	copy(buf[pos:], r.SrcIP.To4())
 	pos += 4
@@ -190,14 +222,14 @@ func (e *NetFlow5Encoder) encodeRecord(buf []byte, pos int, r FlowRecord, domain
 	// tos (1)
 	buf[pos] = r.ToS
 	pos++
-	// src_as (2) — clamp to AS_TRANS (0xFFFF, RFC 6793 §2) if a future schema
+	// src_as (2) — clamp to AS_TRANS (23456, RFC 6793 §2) if a future schema
 	// widening lets > 16-bit ASNs reach this encoder. Today FlowRecord.SrcAS is
 	// uint16 so this is defence-in-depth; the branch is unreachable under the
 	// current schema.
-	binary.BigEndian.PutUint16(buf[pos:], e.clampASN(uint32(r.SrcAS), domainID))
+	binary.BigEndian.PutUint16(buf[pos:], e.clampASN(uint32(r.SrcAS)))
 	pos += 2
 	// dst_as (2)
-	binary.BigEndian.PutUint16(buf[pos:], e.clampASN(uint32(r.DstAS), domainID))
+	binary.BigEndian.PutUint16(buf[pos:], e.clampASN(uint32(r.DstAS)))
 	pos += 2
 	// src_mask (1)
 	buf[pos] = r.SrcMask
@@ -212,14 +244,16 @@ func (e *NetFlow5Encoder) encodeRecord(buf []byte, pos int, r FlowRecord, domain
 }
 
 // clampASN returns the 16-bit wire value for an ASN, substituting AS_TRANS
-// (0xFFFF) when the input exceeds 16 bits and emitting a one-shot log per
-// encoder lifetime on the first clamp.
-func (e *NetFlow5Encoder) clampASN(asn uint32, domainID uint32) uint16 {
+// (23456, per RFC 6793 §2) when the input exceeds 16 bits and emitting a
+// one-shot log per simulator lifetime on the first clamp. The encoder
+// instance is fleet-wide, so the warning does not identify a specific
+// device — see the NetFlow5Encoder struct doc.
+func (e *NetFlow5Encoder) clampASN(asn uint32) uint16 {
 	if asn > 0xFFFF {
 		if e.asnWarnOnce.CompareAndSwap(false, true) {
-			log.Printf("netflow5: device %s clamping 32-bit ASN %d to AS_TRANS (0xFFFF); subsequent clamps will not be logged", domainIDtoIP(domainID), asn)
+			log.Printf("netflow5: clamping 32-bit ASN %d to AS_TRANS (%d); this warning fires once per simulator lifetime across all devices", asn, netFlow5ASTrans)
 		}
-		return 0xFFFF
+		return netFlow5ASTrans
 	}
 	return uint16(asn)
 }

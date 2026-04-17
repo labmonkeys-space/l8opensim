@@ -59,3 +59,12 @@
 - [x] 7.1 Run `openspec validate add-netflow-v5-export --strict` and resolve any findings.
 - [ ] 7.2 Open PR against `labmonkeys-space/l8opensim:main` (per CLAUDE.md PR convention). Title: `feat(flow): add NetFlow v5 export support`. Reference issue #43 in the body. (Deferred per instructions — user will commit/PR.)
 - [ ] 7.3 After merge, archive the change via `openspec archive add-netflow-v5-export`.
+
+## 8. PR #46 review follow-ups
+
+- [x] 8.1 Fix AS_TRANS value — replace `0xFFFF` with `23456` (`0x5BA0`, RFC 6793 §2) in `go/simulator/netflow5.go` (add a named `netFlow5ASTrans` constant), the ASN-clamping scenario in `specs/flow-export/spec.md`, and decision D6 in `design.md`. Update `TestNetFlow5ASNClamp` to assert `23456`.
+- [x] 8.2 Fix `flow_sequence` semantics for v5 — add `SeqIncrement(packetRecordCount int) int` to the `FlowEncoder` interface (returning `1` for NF9/IPFIX and `packetRecordCount` for NF5). Change `FlowExporter.Tick` to call `encoder.SeqIncrement(len(batch))` instead of `fe.seqNo++`. Document as decision D9.
+- [x] 8.3 Add `TestNetFlow5Tick_FlowSequenceCumulative` in `go/simulator/netflow5_test.go` — drives the real `Tick → EncodePacket` path with 80 pre-expired records and asserts each emitted packet's `flow_sequence` equals the cumulative record count of preceding packets. Add `TestNetFlow5SeqIncrement` locking in the per-encoder return values.
+- [x] 8.4 Document fleet-wide warn-once semantics — update the `NetFlow5Encoder` struct doc, the `EncodePacket` / `clampASN` doc comments, and both warning log messages to state explicitly that the one-shot is per simulator lifetime (not per device). Drop `domainIDtoIP(domainID)` from the logs. Update D4 in `design.md` and the IPv4-filtering scenarios in `spec.md`. Update `TestNetFlow5IPv4OnlyFiltering` to assert the warning does NOT include a device identity.
+- [x] 8.5 Add a struct-level comment on `NetFlow5Encoder` explaining the pointer-receiver deviation from NF9/IPFIX (atomic.Bool fields require it; value literal would silently break atomic state).
+- [x] 8.6 Add `TestNetFlow5GoldenBytes` — construct one fully-specified `FlowRecord`, encode it, and assert `bytes.Equal(got, expected)` against a hand-constructed 72-byte payload (timestamp fields masked). Independent oracle that catches bugs a mirrored decoder would round-trip.

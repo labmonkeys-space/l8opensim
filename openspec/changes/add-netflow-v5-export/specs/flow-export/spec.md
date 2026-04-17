@@ -110,7 +110,7 @@ The simulator SHALL select the wire protocol based on the `-flow-protocol` CLI f
 
 ### Requirement: NetFlow v5 IPv4-only filtering
 
-`NetFlow5Encoder` SHALL skip any `FlowRecord` whose `SrcIP` or `DstIP` is not an IPv4 address. Non-IPv4 `NextHop` SHALL be coerced to `0.0.0.0` rather than skipping the record. The encoder SHALL emit exactly one warning log per encoder lifetime on the first skip, naming the device by `domainID`.
+`NetFlow5Encoder` SHALL skip any `FlowRecord` whose `SrcIP` or `DstIP` is not an IPv4 address. Non-IPv4 `NextHop` SHALL be coerced to `0.0.0.0` rather than skipping the record. The encoder SHALL emit exactly one warning log per encoder lifetime on the first skip. Because the `NetFlow5Encoder` instance is shared across all devices, the warning is fleet-wide (once per simulator lifetime) and SHALL NOT name a specific device.
 
 #### Scenario: IPv6-bearing record is skipped
 
@@ -126,9 +126,10 @@ The simulator SHALL select the wire protocol based on the `-flow-protocol` CLI f
 
 #### Scenario: First skip emits a one-shot warning
 
-- **WHEN** a `NetFlow5Encoder` skips an IPv6 record for the first time on a given device
-- **THEN** exactly one warning log SHALL be emitted identifying the device by its `domainID`
-- **AND** subsequent skips on the same encoder SHALL NOT emit additional warnings
+- **WHEN** a `NetFlow5Encoder` skips an IPv6 record for the first time in the simulator's lifetime
+- **THEN** exactly one warning log SHALL be emitted
+- **AND** the warning SHALL NOT include a device identity (the encoder is shared fleet-wide)
+- **AND** subsequent skips SHALL NOT emit additional warnings, regardless of which device generates the skipped record
 
 ### Requirement: NetFlow v5 30-record cap per datagram
 
@@ -146,7 +147,7 @@ The simulator SHALL select the wire protocol based on the `-flow-protocol` CLI f
 - **WHEN** the ticker batches 45 records for a device over the course of one cycle
 - **THEN** the first datagram SHALL carry the first 30 records
 - **AND** the second datagram SHALL carry the remaining 15 records
-- **AND** both datagrams SHALL share the same flow sequence counter incrementing by the record count of each packet
+- **AND** the `flow_sequence` field SHALL advance by the record count of the preceding packet — the first packet carries the pre-tick `flow_sequence`, the second carries that value plus `30` (per Cisco v5 "sequence counter of total flows seen" semantics).
 
 ### Requirement: NetFlow v5 template-interval flag is a no-op
 
@@ -161,12 +162,12 @@ When the active protocol is `netflow5`, the `-flow-template-interval` CLI flag S
 
 ### Requirement: NetFlow v5 ASN clamping
 
-`NetFlow5Encoder` SHALL write ASN values greater than `0xFFFF` as the 16-bit value `0xFFFF` on the wire. It SHALL emit exactly one warning log per encoder lifetime on the first such clamp, identifying the device by `domainID`.
+`NetFlow5Encoder` SHALL write ASN values greater than `0xFFFF` as the reserved `AS_TRANS` value `23456` (`0x5BA0`, per RFC 6793 §2) on the wire. It SHALL emit exactly one warning log per encoder lifetime on the first such clamp.
 
 #### Scenario: 32-bit ASN is clamped to AS_TRANS
 
 - **WHEN** a `FlowRecord` with `SrcAS = 0x00100000` is encoded
-- **THEN** the on-wire `src_as` field SHALL be `0xFFFF`
+- **THEN** the on-wire `src_as` field SHALL be `23456` (`0x5BA0`, AS_TRANS)
 - **AND** exactly one warning log SHALL be emitted for the first clamp on that encoder
 
 ### Requirement: Flow export status endpoint reports active protocol

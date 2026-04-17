@@ -137,6 +137,13 @@ func (IPFIXEncoder) PacketSizes() (int, int, int) {
 	return ipfixHeaderSize + 4, ipfixTemplSetSize, ipfixRecordSize
 }
 
+// SeqIncrement returns 1 because IPFIX's header sequence number is defined
+// (RFC 7011 §3.1) as the incremental count of IPFIX Messages sent on this
+// SCTP stream / UDP flow, not of data records — it advances once per message.
+func (IPFIXEncoder) SeqIncrement(_ int) int {
+	return 1
+}
+
 // EncodePacket serialises a complete IPFIX UDP payload into buf and returns
 // the number of bytes written.
 //

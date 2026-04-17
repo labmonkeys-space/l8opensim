@@ -69,9 +69,9 @@
 
 ### D4. IPv4-only filtering happens inside `EncodePacket`
 
-**Decision:** Before writing any record, skip any `FlowRecord` whose `SrcIP.To4() == nil` or `DstIP.To4() == nil`. `NextHop` that is non-IPv4 is coerced to `0.0.0.0`. A per-encoder `atomic.Bool` emits a one-shot warning log the first time a skip occurs, including the device domain ID.
+**Decision:** Before writing any record, skip any `FlowRecord` whose `SrcIP.To4() == nil` or `DstIP.To4() == nil`. `NextHop` that is non-IPv4 is coerced to `0.0.0.0`. A per-encoder `atomic.Bool` emits a one-shot warning log the first time a skip occurs. Because the `NetFlow5Encoder` instance is shared across all devices, this is a fleet-wide one-shot (once per simulator lifetime), not per-device — the warning does not name a specific device.
 
-**Rationale:** Synthetic flows today are IPv4-only (`syntheticFlow()` generates IPv4), but future work may add IPv6 profiles. Putting the filter in the encoder rather than upstream keeps the concern local to the protocol that can't represent IPv6. One-shot logging is loud enough to surface the misconfiguration once without spamming steady-state logs.
+**Rationale:** Synthetic flows today are IPv4-only (`syntheticFlow()` generates IPv4), but future work may add IPv6 profiles. Putting the filter in the encoder rather than upstream keeps the concern local to the protocol that can't represent IPv6. One-shot logging is loud enough to surface the misconfiguration once without spamming steady-state logs. Moving the gate into `FlowExporter` to make it per-device was considered; rejected as disproportionate to the amount of signal the log provides (the first IPv6 record anywhere is enough to tell the operator the protocol is mismatched for the workload).
 
 **Alternative considered:** Reject IPv6-bearing cache entries at the device-profile level. Rejected — that would couple profile validation to the currently-selected protocol, which may change at runtime on operator command.
 
@@ -85,9 +85,9 @@
 
 ### D6. 16-bit ASN clamping with one-shot log
 
-**Decision:** When a `FlowRecord` carries `SrcAS > 0xFFFF` or `DstAS > 0xFFFF`, the encoder writes `0xFFFF` into the 16-bit wire field and logs one warning per encoder lifetime identifying the device.
+**Decision:** When a `FlowRecord` carries `SrcAS > 0xFFFF` or `DstAS > 0xFFFF`, the encoder writes `AS_TRANS` (`23456` / `0x5BA0`, per RFC 6793 §2) into the 16-bit wire field and logs one warning per encoder lifetime. Because the encoder is shared fleet-wide (see D1), the log does not name a device — it would just be whichever device lost the CAS race on the first clamp.
 
-**Rationale:** Today `FlowRecord.SrcAS` / `DstAS` are already `uint16`, so this is a defense-in-depth measure against a future schema widening. Clamping to `0xFFFF` is conventional (RFC 6793 §2 "AS_TRANS"). One-shot logging keeps the simulator usable if a profile ever generates 32-bit ASNs.
+**Rationale:** Today `FlowRecord.SrcAS` / `DstAS` are already `uint16`, so this is a defense-in-depth measure against a future schema widening. Clamping to `AS_TRANS` is the specified behaviour (RFC 6793 §2; NOT `0xFFFF`, which is a separate reserved ASN and interpreted differently by compliant collectors). One-shot logging keeps the simulator usable if a profile ever generates 32-bit ASNs.
 
 ### D7. Protocol aliases `netflow5` and `nf5`
 
@@ -108,17 +108,27 @@
 4. Explicit 30-record cap — 31 records in, first 30 encoded, 31st unchanged on next call.
 5. IPv4-only filtering — mixed v4/v6 input, only v4 encoded, warning-log path exercised.
 6. `includeTemplate = true` is a no-op (no template bytes emitted, `count` unchanged).
-7. ASN clamping — `SrcAS = 0x100000` produces `0xFFFF` on wire.
+7. ASN clamping — `SrcAS = 0x100000` produces `23456` (`AS_TRANS`) on wire.
+8. Golden-bytes — one fully specified `FlowRecord` encodes to a hand-built 72-byte expected payload (with timestamp fields masked). Independent oracle that catches offset / padding bugs the mirrored decoder would silently round-trip.
+9. `Tick` + v5 — 80 pre-expired records drive three datagrams; each packet's `flow_sequence` equals the cumulative record count of preceding packets. Anchors the `SeqIncrement` contract end-to-end.
+
+### D9. `FlowEncoder.SeqIncrement` advances `flow_sequence` per protocol
+
+**Decision:** Add a `SeqIncrement(packetRecordCount int) int` method to the `FlowEncoder` interface. `NetFlow9Encoder` and `IPFIXEncoder` return `1` (per-packet / per-message semantics per RFC 3954 and RFC 7011). `NetFlow5Encoder` returns `packetRecordCount` (Cisco v5 "sequence counter of total flows seen"). `FlowExporter.Tick` calls `encoder.SeqIncrement(len(batch))` instead of `fe.seqNo++`.
+
+**Rationale:** The three protocols have incompatible `flow_sequence` semantics and the shared ticker must respect them. Putting the increment responsibility on the encoder keeps each protocol's definition local and makes future protocols (sFlow, IPFIX SCTP multi-stream, …) trivial to add. A branch on `sm.flowProtocol` inside `Tick` was considered; rejected — it couples `Tick` to the set of known protocols and scales poorly.
+
+**Alternative considered:** Keep `Tick` protocol-agnostic with `fe.seqNo++` and rewrite `flow_sequence` inside each encoder. Rejected — the header is already written before the record count is known (the count IS the header's `count` field, so ordering is fine there, but rewriting `seqNo` would double-write and muddy the encoder's otherwise-linear code).
 
 ## Risks / Trade-offs
 
 | Risk | Mitigation |
 |---|---|
-| Silent IPv6 skip hides misconfiguration from operators | One-shot warning log at first skip per encoder, including device domain ID. Documented in `CLAUDE.md`. |
+| Silent IPv6 skip hides misconfiguration from operators | Fleet-wide one-shot warning log at first skip (encoder is shared across devices). Documented in `CLAUDE.md`. |
 | Unit tests pass but real collectors reject the datagram | Recommend (not gate) round-trip validation with `nfcapd`/`nfdump` and OpenNMS Telemetryd v5 before closing issue #43. Structural tests catch most wire-format errors; interop catches the rest. |
 | Silent acceptance of `-flow-template-interval` under v5 confuses operators | Document in `CLAUDE.md` flow-export section. If questions arise, promote to a one-line startup info log. |
 | 30-record cap enforced at two layers (capacity math + explicit check) is redundant | Accept the redundancy — cheaper than a future regression where someone tunes MTU / overhead and silently emits `count = 31` datagrams. |
-| Future schema widening to 32-bit ASNs would truncate silently under v5 | Clamp-to-`0xFFFF` with one-shot warning log. Tracked in test matrix (case 7). |
+| Future schema widening to 32-bit ASNs would truncate silently under v5 | Clamp to `AS_TRANS` (`23456`, RFC 6793 §2) with fleet-wide one-shot warning log. Tracked in test matrix (case 7). |
 | SysUptime 49.7-day wrap emits monotonically decreasing timestamps | Not v5-specific (v9 has the same bug). Out of scope for this change. |
 | Synthetic flows from a single device can burst past 30 records per tick, inflating tick latency | The ticker already batches across multiple packets per device; no change in total tick cost, just more packets per tick. |
 

@@ -125,6 +125,13 @@ func (NetFlow9Encoder) PacketSizes() (int, int, int) {
 	return nf9HeaderSize + 4, nf9TemplFlowSetSize, nf9RecordSize
 }
 
+// SeqIncrement returns 1 because NetFlow v9's header sequence number is the
+// "incremental sequence counter of all export packets" (RFC 3954 §5.1) — it
+// advances by one per packet regardless of how many records the packet carries.
+func (NetFlow9Encoder) SeqIncrement(_ int) int {
+	return 1
+}
+
 // EncodePacket serialises a complete NetFlow v9 UDP payload into buf and
 // returns the number of bytes written.
 //
