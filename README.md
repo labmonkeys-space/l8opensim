@@ -1,7 +1,14 @@
-# OpenSim - Layer 8 Data Center Simulator
+# l8opensim (OpenSim) — Layer 8 Data Center Simulator
+
+> Fork of [saichler/l8opensim](https://github.com/saichler/l8opensim); PRs target this fork — use `gh pr create --repo labmonkeys-space/l8opensim`.
+
+[![CI](https://github.com/labmonkeys-space/l8opensim/actions/workflows/ci.yml/badge.svg)](https://github.com/labmonkeys-space/l8opensim/actions/workflows/ci.yml)
+[![Go Version](https://img.shields.io/github/go-mod/go-version/labmonkeys-space/l8opensim?filename=go%2Fgo.mod)](https://github.com/labmonkeys-space/l8opensim/blob/main/go/go.mod)
+[![License](https://img.shields.io/github/license/labmonkeys-space/l8opensim)](https://github.com/labmonkeys-space/l8opensim/blob/main/LICENSE)
+[![Container Image](https://img.shields.io/badge/ghcr.io-l8opensim-blue?logo=docker)](https://github.com/labmonkeys-space/l8opensim/pkgs/container/l8opensim)
+[![Latest Release](https://img.shields.io/github/v/release/labmonkeys-space/l8opensim?include_prereleases&sort=semver)](https://github.com/labmonkeys-space/l8opensim/releases)
 
 ![OpenSim Logo](opensim.png)
-![OpenSim Logo1](opensim1.png)
 
 A powerful, scalable network and infrastructure simulator that provides realistic SNMP v2c/v3, SSH, and HTTPS REST API interfaces for testing network management applications, monitoring systems, and automation tools. OpenSim can simulate thousands of network devices, GPU servers, storage systems, and Linux servers with dedicated IP addresses using TUN interfaces and Linux network namespaces.
 
@@ -9,7 +16,7 @@ A powerful, scalable network and infrastructure simulator that provides realisti
 
 - **Multi-Protocol Support**: SNMP v2c/v3 (MD5/SHA1 auth, DES/AES128 privacy), SSH with VT100 terminal emulation, and HTTPS REST API simulation
 - **Scalable Architecture**: Support for 30,000+ concurrent simulated devices with parallel TUN pre-allocation
-- **28 Device Types**: Routers, switches, firewalls, servers, GPU servers (NVIDIA DGX/HGX), storage systems, and Linux servers across 8 categories
+- **28 device types across 8 categories** — see [Device Types](#device-types) below for the full list
 - **GPU Server Simulation**: NVIDIA DGX-A100, DGX-H100, and HGX-H200 with per-GPU metrics (utilization, VRAM, temperature, power, fan speed, clock speeds) via NVIDIA DCGM OIDs
 - **Dynamic Metrics**: Realistic CPU, memory, temperature, and GPU metrics with 100-point sine-wave cycling patterns and correlated metric generation
 - **Dynamic HC Interface Counters**: `ifHCInOctets`/`ifHCOutOctets` (ifXTable) are monotonically increasing Counter64 values computed analytically on-demand — no polling loop or goroutine. Byte-rate follows a sine wave between 60 % and 100 % of interface speed on a 1-hour period; counters are pre-seeded with ~24 h of traffic for realism from the first poll
@@ -28,6 +35,26 @@ A powerful, scalable network and infrastructure simulator that provides realisti
 - **Flow Export**: Per-device NetFlow v5 (Cisco), NetFlow v9 (RFC 3954), IPFIX (RFC 7011), and sFlow v5 (sflow_version_5.txt) export to any UDP collector; protocol-aware batch pagination, template refresh (v9/IPFIX), and a `/api/v1/flows/status` endpoint with cumulative counters. sFlow output is synthesised from `FlowCache` records — the simulator does not observe real packet streams
 - **Layer 8 Integration**: Optional L8 vnet overlay with HTTPS web proxy for distributed deployment
 
+## Status & Scale
+
+**Stable features** — suitable for day-to-day use in test harnesses, monitoring validation, and load rigs:
+
+- SNMP v2c and SNMPv3 (MD5/SHA1 auth, DES/AES128 privacy) with dynamic HC interface counters
+- SSH with VT100 terminal emulation across all 28 device types
+- HTTPS REST APIs for storage device simulation (Pure Storage, NetApp ONTAP, Dell EMC Unity, AWS S3)
+- NetFlow v5 (Cisco), NetFlow v9 (RFC 3954), and IPFIX (RFC 7011) flow export
+- TUN-interface-per-device scaling with parallel pre-allocation and `opensim` network-namespace isolation
+- Web UI and REST API for device CRUD
+
+**Experimental features** — usable but less battle-tested; expect rough edges:
+
+- sFlow v5 export — output is synthesised from the same `FlowCache` records the other flow protocols use, with a fixed synthetic `sampling_rate`. Suitable for collector-plumbing validation, not for link-utilisation benchmarking. See the [sFlow caveat](#flow-export-netflow-v5--v9--ipfix--sflow-v5) for details.
+- Layer 8 (`go/l8/`) vnet overlay and HTTPS web proxy for distributed deployment
+
+**Tested scale:** up to 30,000 concurrent simulated devices on a single host (each with its own IP, SNMP listener, SSH server, and flow exporter).
+
+**Toolchain:** Go 1.26 or later. The repository's canonical Go version is pinned in [`go/go.mod`](go/go.mod).
+
 ## Quick Start
 
 ### Prerequisites
@@ -40,8 +67,8 @@ A powerful, scalable network and infrastructure simulator that provides realisti
 
 1. **Clone the repository:**
    ```bash
-   git clone https://github.com/saichler/opensim.git
-   cd opensim
+   git clone https://github.com/labmonkeys-space/l8opensim.git
+   cd l8opensim
    ```
 
 2. **Install dependencies:**
@@ -199,7 +226,7 @@ When `-flow-source-per-device` is enabled (default), flow packets originate from
   ```
   (`2` = loose mode; `0` disables filtering entirely.) The simulator side auto-configures its own `rp_filter` and `forwarding` sysctls — no user action needed there.
 
-### Troubleshooting
+### Flow Troubleshooting
 
 If the collector doesn't see flows:
 
@@ -208,6 +235,8 @@ If the collector doesn't see flows:
 3. `sudo iptables -L FORWARD -v -n` — verify the `ACCEPT … veth-sim-host` rule is present (packet counter should be non-zero).
 4. Same `tcpdump` on the collector host — if packets arrive but the collector doesn't count them, check `rp_filter` (above) and any firewall rules.
 5. As a diagnostic, restart with `-flow-source-per-device=false` to rule out namespace/forwarding issues; flows will then use the host IP as the source.
+
+*See also: [General Troubleshooting](#troubleshooting) for TUN, network-namespace, and permission issues that apply to basic bring-up.*
 
 ### Protocol details
 
@@ -440,16 +469,7 @@ show lldp neighbors          # LLDP neighbor discovery
 
 ## Storage System Simulation
 
-OpenSim supports enterprise storage system simulation with HTTPS REST API endpoints on port 8443 using shared TLS certificates.
-
-### Supported Storage Systems
-
-| System | Protocols | Key Features |
-|--------|-----------|--------------|
-| AWS S3 | SNMP, SSH, REST | Bucket operations, object management, versioning |
-| Pure Storage FlashArray | SNMP, SSH, REST | Volumes, hosts, pods, data reduction metrics |
-| NetApp ONTAP | SNMP, SSH, REST | Aggregates, volumes, NFS/CIFS/iSCSI protocols |
-| Dell EMC Unity | SNMP, SSH, REST | Pools, LUNs, filesystems, health monitoring |
+OpenSim supports enterprise storage system simulation with HTTPS REST API endpoints on port 8443 using shared TLS certificates. The supported storage systems (AWS S3, Pure Storage FlashArray, NetApp ONTAP, Dell EMC Unity) are listed in the canonical [Device Types → Storage Systems](#storage-systems) table; the sections below cover the REST API shape and common operations.
 
 ### Storage API Examples
 
@@ -511,15 +531,7 @@ curl -X POST http://localhost:8080/api/v1/devices \
 
 ## GPU Server Simulation
 
-OpenSim provides first-class GPU server simulation with NVIDIA DCGM (Data Center GPU Manager) OID support for AI/HPC infrastructure monitoring.
-
-### Supported GPU Servers
-
-| Device | GPUs | VRAM/GPU | Description |
-|--------|------|----------|-------------|
-| NVIDIA DGX-A100 | 8 | 80 GB | A100 GPU training system |
-| NVIDIA DGX-H100 | 8 | 80 GB | H100 GPU training system |
-| NVIDIA HGX-H200 | 8 | 141 GB | H200 GPU inference system |
+OpenSim provides first-class GPU server simulation with NVIDIA DCGM (Data Center GPU Manager) OID support for AI/HPC infrastructure monitoring. The supported GPU servers (NVIDIA DGX-A100, DGX-H100, HGX-H200) are listed in the canonical [Device Types → GPU Servers](#gpu-servers) table.
 
 ### GPU Metrics
 
@@ -616,7 +628,7 @@ Metrics are exposed via NVIDIA DCGM SNMP OIDs and cycle through 100 pre-generate
 
 ### Resource Configuration
 
-Each device type has its own directory under `go/simulator/resources/` with JSON files split for maintainability. The loader automatically merges all JSON files in a device directory. There are currently 341 JSON resource files across 28 device types.
+Each device type has its own directory under [`go/simulator/resources/`](go/simulator/resources/) with JSON files split for maintainability. The loader automatically merges all JSON files in a device directory. There are currently 379 JSON resource files across 28 device-type directories.
 
 OIDs in resource files may be written with or without a leading dot — the loader normalises them to the net-snmp convention (`.1.3.6.1…`) at startup.
 
@@ -647,93 +659,18 @@ OIDs in resource files may be written with or without a leading dot — the load
 
 *Note: The `api` section is optional and used primarily for storage device simulation.*
 
-## Project Structure
+## Package layout
 
-```
-opensim/
-├── go/                              # Go source code
-│   ├── simulator/                   # Main simulator package (29 Go files)
-│   │   ├── simulator.go             # Entry point, CLI flags, signal handling
-│   │   ├── manager.go               # Device management, shared TLS/SSH keys
-│   │   ├── device.go                # Device lifecycle and creation
-│   │   ├── types.go                 # Data structures (TunInterface, DeviceSimulator, etc.)
-│   │   ├── constants.go             # ASN.1 constants, SNMP tags
-│   │   ├── names.go                 # Device name generation (prefixes, suffixes)
-│   │   ├── cities.go                # World city data loading for sysLocation
-│   │   ├── snmp.go                  # SNMP v2c/v3 request handling
-│   │   ├── snmp_server.go           # SNMP server with buffer pool optimization
-│   │   ├── snmp_handlers.go         # OID lookup (sync.Map), precomputed next-OID mappings
-│   │   ├── snmp_response.go         # SNMPv3 response building
-│   │   ├── snmp_encoding.go         # ASN.1 BER/DER encoding/decoding
-│   │   ├── snmpv3.go                # SNMPv3 message parsing
-│   │   ├── snmpv3_crypto.go         # SNMPv3 auth/priv encryption (MD5, SHA1, DES, AES128)
-│   │   ├── ssh.go                   # SSH server with VT100 terminal emulation
-│   │   ├── api.go                   # REST API handlers for storage devices
-│   │   ├── device_profiles.go       # Per-category device metric profiles
-│   │   ├── gpu_metrics.go           # Per-GPU metric generation with correlated cycling
-│   │   ├── metrics_cycler.go        # 100-point pre-generated CPU/memory/temp cycling
-│   │   ├── metrics_oids.go          # SNMP handlers for dynamic metrics OIDs
-│   │   ├── system_stats.go          # System stats (process memory/CPU)
-│   │   ├── netns.go                 # Network namespace management (opensim namespace)
-│   │   ├── tun.go                   # TUN interface creation/management
-│   │   ├── prealloc.go              # Parallel TUN interface pre-allocation for fast scaling
-│   │   ├── resources.go             # Resource file loading and merging
-│   │   ├── web.go                   # HTTP handlers (device CRUD, stats, exports)
-│   │   ├── web_routes.go            # Route script generation (generic)
-│   │   ├── web_routes_linux.go      # Linux-specific route config (Debian/Ubuntu)
-│   │   ├── web_routes_utils.go      # Route script utilities
-│   │   ├── web/                     # Web UI static files
-│   │   │   ├── index.html           # Main UI page
-│   │   │   ├── styles.css           # UI stylesheet
-│   │   │   ├── app_ui.js            # UI JavaScript
-│   │   │   ├── app_api.js           # API JavaScript
-│   │   │   └── logo.png             # Branding
-│   │   ├── resources/               # Device resource definitions (28 directories, 341 JSON files)
-│   │   │   ├── asr9k/               # Cisco ASR9K (48 ports)
-│   │   │   ├── nvidia_dgx_a100/     # NVIDIA DGX-A100 (8 GPUs)
-│   │   │   ├── nvidia_dgx_h100/     # NVIDIA DGX-H100 (8 GPUs)
-│   │   │   ├── nvidia_hgx_h200/     # NVIDIA HGX-H200 (8 GPUs)
-│   │   │   ├── pure_storage_flasharray/
-│   │   │   ├── linux_server/
-│   │   │   └── ...                  # 28 device type directories total
-│   │   └── worldcities/             # 98 CSV files with world city data
-│   ├── l8/                          # Layer 8 integration service
-│   │   ├── main.go                  # vnet overlay + HTTPS web proxy (port 9095)
-│   │   ├── build.sh                 # Docker build script
-│   │   ├── Dockerfile               # Multi-stage Docker build
-│   │   ├── opensim.yaml             # K8s StatefulSet manifest
-│   │   └── web/                     # Landing page (login, register)
-│   ├── proxy/                       # HTTP proxy to simulator backend
-│   │   └── Proxy.go                 # Reverse proxy implementation
-│   ├── tests/                       # Device and polling tests
-│   │   ├── TestDevices_test.go      # Integration tests
-│   │   ├── Devices.go               # Test device utilities
-│   │   └── Polling.go               # Polling test helpers
-│   ├── go.mod                       # Go module (Go 1.26.1)
-│   └── go.sum                       # Go module checksums
-├── diagnose_system.sh               # System diagnostics script
-├── ubuntu_setup.sh                  # Ubuntu automated setup
-├── increase_file_limits.sh          # File descriptor limit configuration
-├── opensim.png                      # Project logo
-├── LICENSE                          # Apache License 2.0
-└── README.md                        # This file
-```
+The repository has three top-level directories worth knowing about; GitHub's file browser renders the full live tree on the [repository homepage](https://github.com/labmonkeys-space/l8opensim) and is always authoritative.
+
+- [`go/`](go/) — all Go source. [`go/simulator/`](go/simulator/) is the main simulator package (SNMP/SSH/HTTPS servers, metrics cycler, flow exporter, TUN/netns management, web API). [`go/l8/`](go/l8/) is the optional Layer 8 vnet overlay + HTTPS web proxy. [`go/proxy/`](go/proxy/) is the reverse proxy from the L8 frontend to the simulator backend. [`go/tests/`](go/tests/) holds integration tests.
+- [`go/simulator/resources/`](go/simulator/resources/) — per-device-type JSON resource files (SNMP/SSH/REST responses) across 28 device-type directories, plus a `worldcities/` directory with the city datasets used for `sysLocation`.
+
+Top-level helper scripts: [`diagnose_system.sh`](diagnose_system.sh), [`ubuntu_setup.sh`](ubuntu_setup.sh), [`increase_file_limits.sh`](increase_file_limits.sh). The [`Makefile`](Makefile) is the canonical build entry point; see [Container images](#container-images) below for image-publication targets.
 
 ### Resource Directory Structure
 
-Each device type has its own directory with JSON files split into manageable chunks:
-
-```
-resources/
-├── asr9k/
-│   ├── asr9k_snmp_1.json      # System MIB, ifNumber
-│   ├── asr9k_snmp_2.json      # ifTable entries
-│   ├── asr9k_snmp_3_1.json    # ifXTable entries (part 1)
-│   ├── asr9k_snmp_3_2.json    # ifXTable entries (part 2)
-│   ├── asr9k_snmp_4.json      # Entity MIB
-│   └── asr9k_snmp_5.json      # entAliasMappingTable
-└── ...
-```
+Each device type directory under [`go/simulator/resources/`](go/simulator/resources/) holds a set of JSON files split into manageable chunks — SNMP responses (typically grouped by MIB section), SSH command responses, and optional REST API responses for storage devices. The loader merges every `*.json` file in the directory at startup. File naming follows a `<device>_snmp_<section>[_<part>].json` convention; browse [`go/simulator/resources/asr9k/`](go/simulator/resources/asr9k/) for a representative example.
 
 ## Layer 8 Integration
 
@@ -762,6 +699,8 @@ The simulator is optimized for high-scale deployments:
 - Use `./ubuntu_setup.sh` for automated Ubuntu system configuration
 
 ## Troubleshooting
+
+*For flow-export-specific issues (collector not seeing flows, `rp_filter`, per-device source IP plumbing), see [Flow Troubleshooting](#flow-troubleshooting) under the Flow Export section.*
 
 ### Common Issues
 
@@ -811,6 +750,17 @@ cd go/l8
 docker build --no-cache --platform=linux/amd64 -t saichler/opensim-web:latest .
 ```
 
+### Container images
+
+Two distinct images live in this repository — they represent different components and are published through different pipelines:
+
+| Image | Component | Built by | Published to |
+|-------|-----------|----------|--------------|
+| `ghcr.io/labmonkeys-space/l8opensim:latest` | Simulator (main Go binary, SNMP/SSH/HTTPS/flow-export server) | Root [`Dockerfile`](Dockerfile) via `make docker-push` | GitHub Container Registry (on push to `main` and on release tags; see [`.github/workflows/ci.yml`](.github/workflows/ci.yml) and [`release.yml`](.github/workflows/release.yml)) |
+| `saichler/opensim-web:latest` | L8 web frontend (vnet overlay + HTTPS web proxy on port 9095) | [`go/l8/Dockerfile`](go/l8/Dockerfile) via `make docker` | Built locally; not auto-published |
+
+If you're looking for the simulator itself, pull `ghcr.io/labmonkeys-space/l8opensim`. The `saichler/opensim-web` image is only relevant for the optional Layer 8 integration described in [Layer 8 Integration](#layer-8-integration).
+
 ### Kubernetes Deployment
 
 ```bash
@@ -826,13 +776,32 @@ cd go
 go test ./...
 ```
 
-### Contributing
+## Contributing
 
-1. Fork the repository
-2. Create a feature branch
-3. Make your changes
-4. Test thoroughly
-5. Submit a pull request
+Contributions are welcome. Two project policies apply to every patch — please follow both.
+
+**1. Sign off every commit (Developer Certificate of Origin).** All commits must carry a `Signed-off-by:` trailer certifying the [DCO](https://developercertificate.org/). Use `-s` on every commit:
+
+```bash
+git commit -s -m "your commit message"
+```
+
+A DCO-check gate will fail any PR whose commits are missing the sign-off trailer.
+
+**2. Open PRs against this fork, not upstream.** This repository is a fork of [`saichler/l8opensim`](https://github.com/saichler/l8opensim). PRs must target `labmonkeys-space/l8opensim` — not the upstream. Use the `--repo` flag explicitly so `gh` doesn't default to upstream:
+
+```bash
+gh pr create --repo labmonkeys-space/l8opensim --base main
+```
+
+**Suggested workflow:**
+
+1. Fork `labmonkeys-space/l8opensim`.
+2. Create a feature branch.
+3. Make your changes and add/update tests.
+4. Run `make check-tidy && make build && make test` locally.
+5. `git commit -s` each commit.
+6. `gh pr create --repo labmonkeys-space/l8opensim --base main`.
 
 ## Use Cases
 
