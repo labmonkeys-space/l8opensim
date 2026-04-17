@@ -27,18 +27,22 @@ import (
 	"time"
 )
 
-// FlowEncoder is the protocol-agnostic interface satisfied by all flow
-// encoders in this package (NetFlow v5, v9, IPFIX). uptimeMs is the device
-// uptime in milliseconds at export time; IPFIX encoders may use it to compute
-// absolute timestamps.
+// FlowEncoder is the protocol-agnostic interface satisfied by the NetFlow v5,
+// NetFlow v9, IPFIX, and sFlow encoders. uptimeMs is the device uptime in
+// milliseconds at export time; IPFIX encoders may use it to compute absolute
+// timestamps.
 type FlowEncoder interface {
 	EncodePacket(domainID uint32, seqNo uint32, uptimeMs uint32,
 		records []FlowRecord, includeTemplate bool, buf []byte) (int, error)
 	// PacketSizes returns the three per-packet size constants that Tick() needs
-	// to compute batch capacity correctly for each protocol:
+	// to compute batch capacity correctly for fixed-size record protocols:
 	//   baseOverhead — message/packet header + data-set/flowset header (bytes)
 	//   templateSize — template set/flowset byte length
 	//   recordSize   — bytes per flow record on the wire
+	//
+	// For encoders that produce variable-length records (e.g. sFlow), recordSize
+	// is advisory — Tick() consults MaxRecordSize() to pick a safe worst-case
+	// paginator bound instead of dividing buffer space by recordSize.
 	PacketSizes() (baseOverhead int, templateSize int, recordSize int)
 	// SeqIncrement returns how much to advance the flow-sequence counter after
 	// a packet carrying packetRecordCount data records. NetFlow v9 and IPFIX
@@ -47,6 +51,11 @@ type FlowEncoder interface {
 	// because Cisco v5 defines flow_sequence as the cumulative count of
 	// records, not packets.
 	SeqIncrement(packetRecordCount int) int
+	// MaxRecordSize returns the worst-case on-wire byte size of a single record
+	// for variable-length protocols. Fixed-size encoders (NetFlow v5 / v9,
+	// IPFIX) return 0 and keep the existing PacketSizes()-driven pagination.
+	// A non-zero return opts into variable-length pagination in Tick().
+	MaxRecordSize() int
 }
 
 // FlowTickStats holds per-tick export counters returned by Tick.
@@ -82,6 +91,11 @@ type FlowExporter struct {
 	// clear it without racing. Callers must use Load/Store/Swap — never touch
 	// the field by address.
 	conn atomic.Pointer[net.UDPConn]
+	// counterSources is consulted on each sFlow tick to emit COUNTERS_SAMPLE
+	// records alongside FLOW_SAMPLEs. Written once at device init and read-only
+	// thereafter, so no locking is required for the read path in Tick.
+	// Under NetFlow/IPFIX exporters the slice is non-nil but ignored.
+	counterSources []CounterSource
 }
 
 // NewFlowExporter creates a FlowExporter for device, using profile to drive
@@ -165,15 +179,25 @@ func (fe *FlowExporter) Tick(now time.Time, encoder FlowEncoder, conn *net.UDPCo
 	// Capacity depends on the active encoder's protocol (NF9: 45B/record,
 	// IPFIX: 53B/record), so we ask the encoder for its sizes rather than
 	// hard-coding NF9 constants here.
+	//
+	// Variable-length encoders (sFlow) return a non-zero MaxRecordSize and we
+	// bound batches by that worst-case; fixed-size encoders return 0 and keep
+	// the original (len(buf) - overhead) / recSize division unchanged so
+	// existing NetFlow/IPFIX datagram framing is preserved byte-for-byte.
 	baseOverhead, templSize, recSize := encoder.PacketSizes()
+	maxRecSize := encoder.MaxRecordSize()
 	for {
 		overhead := baseOverhead
 		if sendTemplate {
 			overhead += templSize
 		}
 		var batch []FlowRecord
-		if len(buf) >= overhead+recSize {
-			cap := (len(buf) - overhead) / recSize
+		perRec := recSize
+		if maxRecSize > 0 {
+			perRec = maxRecSize
+		}
+		if len(buf) >= overhead+perRec {
+			cap := (len(buf) - overhead) / perRec
 			if cap >= len(expired) {
 				batch = expired
 				expired = nil
@@ -187,7 +211,20 @@ func (fe *FlowExporter) Tick(now time.Time, encoder FlowEncoder, conn *net.UDPCo
 			break
 		}
 
-		n, err := encoder.EncodePacket(fe.domainID, fe.seqNo, uptimeMs, batch, sendTemplate, buf)
+		var n int
+		var err error
+		if sfe, ok := encoder.(SFlowEncoder); ok {
+			// sFlow routes through EncodeFlowDatagram so sampling_rate can be
+			// derived from the device's FlowProfile — the FlowEncoder interface
+			// doesn't carry the profile, and a shared encoder can't hold state.
+			rate := uint32(fe.profile.ConcurrentFlows * SyntheticSamplingRateMultiplier)
+			if rate == 0 {
+				rate = 1
+			}
+			n, err = sfe.EncodeFlowDatagram(fe.domainID, fe.seqNo, uptimeMs, batch, rate, buf)
+		} else {
+			n, err = encoder.EncodePacket(fe.domainID, fe.seqNo, uptimeMs, batch, sendTemplate, buf)
+		}
 		if err != nil || n == 0 {
 			break
 		}
@@ -209,6 +246,43 @@ func (fe *FlowExporter) Tick(now time.Time, encoder FlowEncoder, conn *net.UDPCo
 			break
 		}
 	}
+
+	// Phase 2: after the flow-sample loop, sFlow emits one COUNTERS_SAMPLE
+	// datagram per tick aggregating all registered CounterSources. Each source's
+	// Snapshot is called once; records are concatenated into a single datagram
+	// bounded by sflowMaxCountersSampleSize * recordCount. Datagrams that would
+	// exceed the buffer are split — EncodeCounterDatagram is called repeatedly
+	// with remaining records until the batch is drained.
+	if sfe, ok := encoder.(SFlowEncoder); ok && len(fe.counterSources) > 0 {
+		var allRecords []CounterRecord
+		for _, src := range fe.counterSources {
+			allRecords = append(allRecords, src.Snapshot(now)...)
+		}
+		for len(allRecords) > 0 {
+			batch := allRecords
+			// Pick the largest batch that fits in a 1500-byte buf. Each record
+			// occupies at most sflowMaxCountersSampleSize bytes once wrapped.
+			maxBatch := (len(buf) - sflowDatagramHeaderSize - 16 /* sample hdr */) / sflowMaxCountersSampleSize
+			if maxBatch < 1 {
+				break
+			}
+			if len(batch) > maxBatch {
+				batch = batch[:maxBatch]
+				allRecords = allRecords[maxBatch:]
+			} else {
+				allRecords = nil
+			}
+			n, err := sfe.EncodeCounterDatagram(fe.domainID, fe.seqNo, uptimeMs, batch, buf)
+			if err != nil || n == 0 {
+				break
+			}
+			writeConn.WriteTo(buf[:n], collectorAddr) //nolint:errcheck
+			stats.PacketsSent++
+			stats.BytesSent += uint64(n)
+			fe.seqNo++
+		}
+	}
+
 	return stats
 }
 
@@ -218,6 +292,26 @@ func (fe *FlowExporter) Tick(now time.Time, encoder FlowEncoder, conn *net.UDPCo
 // container host IP. Must be called before InitFlowExport.
 func (sm *SimulatorManager) SetFlowSourcePerDevice(enabled bool) {
 	sm.flowSourcePerDevice = enabled
+}
+
+// registerSFlowCounterSources wires per-device CounterSource instances onto
+// the FlowExporter, but only when the active protocol is sFlow. Under
+// NetFlow/IPFIX/NF5 the sources are never consulted, so skipping registration
+// avoids per-device allocations for the 30,000+ device workloads this
+// simulator is built for.
+func (sm *SimulatorManager) registerSFlowCounterSources(device *DeviceSimulator) {
+	if sm.flowProtocol != "sflow" || device.flowExporter == nil {
+		return
+	}
+	var sources []CounterSource
+	if device.metricsCycler != nil && device.metricsCycler.ifCounters != nil {
+		if s := NewInterfaceCounterSource(device.metricsCycler.ifCounters); s != nil {
+			sources = append(sources, s)
+		}
+	}
+	sources = append(sources, NewCPUCounterSource(device))
+	sources = append(sources, NewMemoryCounterSource(device))
+	device.flowExporter.counterSources = sources
 }
 
 // openFlowConnForDevice opens a per-device UDP socket bound to the device's
@@ -240,7 +334,11 @@ func (sm *SimulatorManager) openFlowConnForDevice(device *DeviceSimulator) {
 	addr := &net.UDPAddr{IP: device.IP, Port: 0}
 	conn, err := device.netNamespace.ListenUDPInNamespace(addr)
 	if err != nil {
-		log.Printf("flow export: device %s per-device bind failed, falling back to shared socket: %v", device.IP, err)
+		if sm.flowProtocol == "sflow" {
+			log.Printf("flow export: device %s per-device bind failed, falling back to shared socket: %v (sFlow agent_address may not match UDP source IP observed by collector)", device.IP, err)
+		} else {
+			log.Printf("flow export: device %s per-device bind failed, falling back to shared socket: %v", device.IP, err)
+		}
 		return
 	}
 	conn.SetWriteBuffer(65536)
@@ -289,9 +387,12 @@ func (sm *SimulatorManager) InitFlowExport(collectorAddr, protocol string, activ
 	case "netflow5", "nf5":
 		enc = &NetFlow5Encoder{}
 		canonicalProtocol = "netflow5"
+	case "sflow", "sflow5":
+		enc = SFlowEncoder{}
+		canonicalProtocol = "sflow"
 	default:
 		conn.Close()
-		return fmt.Errorf("flow export: unknown protocol %q (supported: netflow9, ipfix, netflow5)", protocol)
+		return fmt.Errorf("flow export: unknown protocol %q (supported: netflow9, ipfix, netflow5, sflow)", protocol)
 	}
 
 	sm.flowConn = conn

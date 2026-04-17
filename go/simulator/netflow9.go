@@ -132,6 +132,10 @@ func (NetFlow9Encoder) SeqIncrement(_ int) int {
 	return 1
 }
 
+// MaxRecordSize returns 0 because NetFlow v9 records are fixed-size; Tick
+// paginates by PacketSizes()'s recordSize in that case.
+func (NetFlow9Encoder) MaxRecordSize() int { return 0 }
+
 // EncodePacket serialises a complete NetFlow v9 UDP payload into buf and
 // returns the number of bytes written.
 //

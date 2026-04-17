@@ -238,6 +238,94 @@ func TestIfCounterCycler_NoHCOIDs(t *testing.T) {
 	}
 }
 
+// TestInterfaceCounterSource_MatchesSNMPSurface is the regression gate for the
+// sFlow Phase 2 CounterSource abstraction (openspec capability flow-export-sflow,
+// "InterfaceCounterSource reuses IfCounterCycler state" scenario).
+//
+// The adapter exposes the same octet counters that ifHCInOctets / ifHCOutOctets
+// return over SNMP, so a collector reading both surfaces for the same device
+// at the same time sees identical values. Because GetHCOctets is time-driven,
+// we compare the adapter body's octets against a snapshot taken within the
+// same goroutine tick.
+func TestInterfaceCounterSource_MatchesSNMPSurface(t *testing.T) {
+	const gbps = 1_000_000_000
+	res := buildTestResources(t, []uint64{gbps, gbps, gbps})
+
+	c := &MetricsCycler{}
+	c.InitIfCounters(res, 4242)
+	if c.ifCounters == nil {
+		t.Fatal("InitIfCounters did not create ifCounters")
+	}
+
+	adapter := NewInterfaceCounterSource(c.ifCounters)
+	if adapter == nil {
+		t.Fatal("NewInterfaceCounterSource returned nil")
+	}
+	recs := adapter.Snapshot(time.Now())
+	if len(recs) != 3 {
+		t.Fatalf("Snapshot returned %d records, want 3", len(recs))
+	}
+	// Build a map of ifIndex -> decoded (in, out) octets for each adapter record.
+	decoded := make(map[uint32][2]uint64)
+	for _, r := range recs {
+		if len(r.Body) != 88 {
+			t.Fatalf("if_counters body length = %d, want 88", len(r.Body))
+		}
+		ifIdx := uint32ByBigEndian(r.Body[0:])
+		in := uint64ByBigEndian(r.Body[24:])
+		out := uint64ByBigEndian(r.Body[56:])
+		decoded[ifIdx] = [2]uint64{in, out}
+	}
+	// Read the SNMP-surface values as closely as possible to the adapter call
+	// and assert the absolute difference is within a small tolerance (the
+	// floating-point integral drifts with the time delta between the two
+	// Snapshot / GetHCOctets calls).
+	for ifIdx := uint32(1); ifIdx <= 3; ifIdx++ {
+		pair, ok := decoded[ifIdx]
+		if !ok {
+			t.Errorf("adapter missing ifIndex %d", ifIdx)
+			continue
+		}
+		inStr := c.ifCounters.GetHCOctets(fmt.Sprintf(".1.3.6.1.2.1.31.1.1.1.6.%d", ifIdx))
+		outStr := c.ifCounters.GetHCOctets(fmt.Sprintf(".1.3.6.1.2.1.31.1.1.1.10.%d", ifIdx))
+		snmpIn, _ := strconv.ParseUint(inStr, 10, 64)
+		snmpOut, _ := strconv.ParseUint(outStr, 10, 64)
+
+		// At 1 Gbps ≈ 125 MB/s, one millisecond of drift moves the counter by
+		// up to 125 KB. Allow 2 MB slack for slow CI machines.
+		const slack = uint64(2 << 20)
+		adapterIn, adapterOut := pair[0], pair[1]
+		if absDiff(adapterIn, snmpIn) > slack {
+			t.Errorf("ifIndex %d in-octets adapter=%d vs SNMP=%d differ by more than slack %d",
+				ifIdx, adapterIn, snmpIn, slack)
+		}
+		if absDiff(adapterOut, snmpOut) > slack {
+			t.Errorf("ifIndex %d out-octets adapter=%d vs SNMP=%d differ by more than slack %d",
+				ifIdx, adapterOut, snmpOut, slack)
+		}
+	}
+}
+
+// absDiff returns |a - b|.
+func absDiff(a, b uint64) uint64 {
+	if a > b {
+		return a - b
+	}
+	return b - a
+}
+
+// uint32ByBigEndian and uint64ByBigEndian avoid pulling encoding/binary into
+// this test file just to parse 4- and 8-byte big-endian integers. Identical to
+// binary.BigEndian.Uint32 / Uint64 at the byte level.
+func uint32ByBigEndian(b []byte) uint32 {
+	return uint32(b[0])<<24 | uint32(b[1])<<16 | uint32(b[2])<<8 | uint32(b[3])
+}
+
+func uint64ByBigEndian(b []byte) uint64 {
+	return uint64(b[0])<<56 | uint64(b[1])<<48 | uint64(b[2])<<40 | uint64(b[3])<<32 |
+		uint64(b[4])<<24 | uint64(b[5])<<16 | uint64(b[6])<<8 | uint64(b[7])
+}
+
 func TestIfCounterCycler_BaseIsPositive(t *testing.T) {
 	// At t≈0, counter must equal approximately base (large positive number).
 	res := buildTestResources(t, []uint64{1_000_000_000})

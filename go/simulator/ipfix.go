@@ -144,6 +144,11 @@ func (IPFIXEncoder) SeqIncrement(_ int) int {
 	return 1
 }
 
+// MaxRecordSize returns 0 because IPFIX records are fixed-size under this
+// simulator's single 18-field template; Tick paginates by PacketSizes()'s
+// recordSize in that case.
+func (IPFIXEncoder) MaxRecordSize() int { return 0 }
+
 // EncodePacket serialises a complete IPFIX UDP payload into buf and returns
 // the number of bytes written.
 //

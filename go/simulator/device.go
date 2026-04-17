@@ -269,6 +269,7 @@ func (sm *SimulatorManager) CreateDevicesWithOptions(startIP string, count int, 
 				device.flowExporter = NewFlowExporter(device, flowProfile,
 					sm.flowActiveTimeout, sm.flowInactiveTimeout, sm.flowTemplateInterval)
 				sm.openFlowConnForDevice(device)
+				sm.registerSFlowCounterSources(device)
 			}
 
 			// Cache the dynamic values using atomic for lock-free access
@@ -500,6 +501,7 @@ func (sm *SimulatorManager) createSingleDevice(deviceIndex int, deviceIP net.IP,
 		device.flowExporter = NewFlowExporter(device, flowProfile,
 			sm.flowActiveTimeout, sm.flowInactiveTimeout, sm.flowTemplateInterval)
 		sm.openFlowConnForDevice(device)
+		sm.registerSFlowCounterSources(device)
 	}
 
 	// Cache the dynamic values using atomic for lock-free access

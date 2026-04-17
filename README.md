@@ -25,7 +25,7 @@ A powerful, scalable network and infrastructure simulator that provides realisti
 - **Linux Server Simulation**: Comprehensive Ubuntu server with 36+ SSH commands
 - **CDP & LLDP Support**: Cisco Discovery Protocol and LLDP for network topology discovery
 - **World Cities**: Device sysLocation populated from 98 world cities datasets for realistic geographic distribution
-- **Flow Export**: Per-device NetFlow v9 (RFC 3954) and IPFIX (RFC 7011) export to any UDP collector; protocol-aware batch pagination, template refresh, and a `/api/v1/flows/status` endpoint with cumulative counters
+- **Flow Export**: Per-device NetFlow v5 (Cisco), NetFlow v9 (RFC 3954), IPFIX (RFC 7011), and sFlow v5 (sflow_version_5.txt) export to any UDP collector; protocol-aware batch pagination, template refresh (v9/IPFIX), and a `/api/v1/flows/status` endpoint with cumulative counters. sFlow output is synthesised from `FlowCache` records — the simulator does not observe real packet streams
 - **Layer 8 Integration**: Optional L8 vnet overlay with HTTPS web proxy for distributed deployment
 
 ## Quick Start
@@ -91,7 +91,7 @@ Options:
   -if-scenario int            Interface state scenario: 1=all-shutdown, 2=all-normal (default), 3=all-failure, 4=pct-failure
   -if-failure-pct int         Percentage of interfaces with oper-down (used with -if-scenario 4, 0–100, default: 10)
   -flow-collector string      Enable flow export to this UDP collector (e.g., 192.168.1.10:2055)
-  -flow-protocol string       Flow export protocol: netflow9 (default) | ipfix
+  -flow-protocol string       Flow export protocol: netflow9 (default) | ipfix | netflow5 | sflow (alias: sflow5)
   -flow-tick-interval int     Flow ticker interval in seconds (default: 5)
   -flow-active-timeout int    Active flow timeout in seconds (default: 30)
   -flow-inactive-timeout int  Inactive flow timeout in seconds (default: 15)
@@ -154,9 +154,11 @@ snmpwalk -v2c -c public 192.168.100.1 1.3.6.1.2.1.2.2.1.8   # ifOperStatus
 snmpwalk -v2c -c public 192.168.100.1 1.3.6.1.2.1.2.2.1.7   # ifAdminStatus
 ```
 
-## Flow Export (NetFlow v9 / IPFIX)
+## Flow Export (NetFlow v5 / v9 / IPFIX / sFlow v5)
 
-OpenSim can emit synthetic flow telemetry to any NetFlow v9 (RFC 3954) or IPFIX (RFC 7011) collector. Each simulated device generates realistic flows that reflect its role (edge router, data-center switch, firewall, etc.).
+OpenSim can emit synthetic flow telemetry to any NetFlow v5 (Cisco), NetFlow v9 (RFC 3954), IPFIX (RFC 7011), or sFlow v5 (sflow_version_5.txt) collector. Each simulated device generates realistic flows that reflect its role (edge router, data-center switch, firewall, etc.).
+
+**sFlow caveat:** sFlow is a packet-sampling protocol built for real devices that observe real traffic. OpenSim has no packet stream to sample — sFlow output is synthesised from the same `FlowCache` records the other protocols consume, re-wrapped as `FLOW_SAMPLE` records with a fixed, synthetic `sampling_rate` of `10 × FlowProfile.ConcurrentFlows`. Collectors that multiply sample rate by captured packet count to estimate link utilisation will produce plausibly-shaped numbers that do not reflect any real traffic. Use sFlow mode for collector-plumbing validation, not for link-volume benchmarks.
 
 By default (`-flow-source-per-device=true`), each device binds its own UDP socket inside the `opensim` namespace so the collector observes flow packets with the **device's IP as the source address**, not the simulator host's. This makes per-device attribution work out of the box on collectors that key on the exporter source IP (e.g. OpenNMS, Elastiflow, nfcapd). Set the flag to `false` to fall back to a single shared socket bound in the host namespace.
 
@@ -170,6 +172,10 @@ sudo ./simulator -auto-start-ip 10.0.0.1 -auto-count 100 \
 # Use IPFIX instead
 sudo ./simulator -auto-start-ip 10.0.0.1 -auto-count 100 \
   -flow-collector 192.168.1.10:4739 -flow-protocol ipfix
+
+# Use sFlow v5 (default UDP port 6343)
+sudo ./simulator -auto-start-ip 10.0.0.1 -auto-count 100 \
+  -flow-collector 192.168.1.10:6343 -flow-protocol sflow
 
 # Faster ticks for high-fidelity testing (integer seconds)
 sudo ./simulator -auto-start-ip 10.0.0.1 -auto-count 10 \
@@ -205,12 +211,16 @@ If the collector doesn't see flows:
 
 ### Protocol details
 
-| Protocol | Version field | Template ID | Record size | Timestamps |
-|----------|--------------|-------------|-------------|------------|
-| NetFlow v9 | `9` | FlowSet ID 0 | 45 B/record | SysUptime-relative ms (FIRST/LAST_SWITCHED) |
-| IPFIX | `10` | Set ID 2 | 53 B/record | Absolute epoch ms (IE 152/153) |
+| Protocol   | Version field | Template ID       | Record size             | Timestamps                           |
+|------------|---------------|-------------------|-------------------------|--------------------------------------|
+| NetFlow v5 | `5`           | n/a (no template) | 48 B/record (30 max)    | SysUptime-relative ms (First/Last)   |
+| NetFlow v9 | `9`           | FlowSet ID 0      | 45 B/record             | SysUptime-relative ms (FIRST/LAST_SWITCHED) |
+| IPFIX      | `10`          | Set ID 2          | 53 B/record             | Absolute epoch ms (IE 152/153)       |
+| sFlow v5   | `5` (XDR)     | n/a (self-describing) | ~100 B/record typical (variable) | uptime (ms) + `sampling_rate` per sample |
 
-Both protocols use the same 18-field template (bytes, packets, protocol, ToS, TCP flags, src/dst ports, src/dst IPv4, src/dst mask, ingress/egress interface, next-hop, src/dst AS, timestamps).
+NetFlow v5/v9 and IPFIX all use the same 18-field template (bytes, packets, protocol, ToS, TCP flags, src/dst ports, src/dst IPv4, src/dst mask, ingress/egress interface, next-hop, src/dst AS, timestamps) — v5 bakes this into a fixed 48-byte on-wire record and has no template mechanism at all, so `-flow-template-interval` is a silent no-op under both v5 and sFlow.
+
+sFlow v5 emits one `FLOW_SAMPLE` per `FlowRecord` with a `sampled_header` flow-record carrying a synthesised IPv4+UDP/TCP header derived from the 5-tuple. On every tick it also emits `COUNTERS_SAMPLE` records (Phase 2) for each interface's `if_counters`, a processor sample, and a memory sample. `sampling_rate` is fixed at `10 × FlowProfile.ConcurrentFlows` — see the caveat above.
 
 ### Flow status API
 
