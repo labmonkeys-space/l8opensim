@@ -23,6 +23,7 @@ import (
 	"net"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -68,7 +69,11 @@ type FlowExporter struct {
 	startTime        time.Time     // reference point for SysUptime
 	lastTempl        time.Time     // last template transmission time
 	templateInterval time.Duration
-	conn             *net.UDPConn  // per-device UDP socket; nil = use shared conn
+	// conn is the per-device UDP socket (nil = use shared conn). atomic.Pointer
+	// so Tick (ticker goroutine) and Close (device-shutdown paths) can read and
+	// clear it without racing. Callers must use Load/Store/Swap — never touch
+	// the field by address.
+	conn atomic.Pointer[net.UDPConn]
 }
 
 // NewFlowExporter creates a FlowExporter for device, using profile to drive
@@ -90,14 +95,18 @@ func NewFlowExporter(device *DeviceSimulator, profile *FlowProfile, activeTimeou
 }
 
 // Close releases the per-device UDP socket, if one was opened. Safe to call
-// on a nil or already-closed FlowExporter; safe to call multiple times.
+// on a nil or already-closed FlowExporter; safe to call multiple times and
+// concurrently with Tick (Swap atomically claims the conn so only one caller
+// ever observes it non-nil).
 func (fe *FlowExporter) Close() error {
-	if fe == nil || fe.conn == nil {
+	if fe == nil {
 		return nil
 	}
-	err := fe.conn.Close()
-	fe.conn = nil
-	return err
+	conn := fe.conn.Swap(nil)
+	if conn == nil {
+		return nil
+	}
+	return conn.Close()
 }
 
 // Tick is called by the shared SimulatorManager ticker goroutine on every
@@ -119,7 +128,8 @@ func (fe *FlowExporter) Tick(now time.Time, encoder FlowEncoder, conn *net.UDPCo
 	// Prefer the per-device socket (source IP = device IP) when set; fall back
 	// to the shared SimulatorManager socket so callers that don't use
 	// per-device binding (tests, ns-disabled deployments) still work.
-	writeConn := fe.conn
+	// atomic Load pairs with Swap in Close — Tick never observes a torn pointer.
+	writeConn := fe.conn.Load()
 	if writeConn == nil {
 		writeConn = conn
 	}
@@ -224,7 +234,7 @@ func (sm *SimulatorManager) openFlowConnForDevice(device *DeviceSimulator) {
 		return
 	}
 	conn.SetWriteBuffer(65536)
-	device.flowExporter.conn = conn
+	device.flowExporter.conn.Store(conn)
 }
 
 // domainIDtoIP converts a uint32 ObservationDomainID back to a net.IP.
