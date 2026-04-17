@@ -56,7 +56,7 @@ docker build --no-cache --platform=linux/amd64 -t saichler/opensim-web:latest .
 | `go/l8/` | Layer 8 vnet overlay + HTTPS web proxy (port 9095) |
 | `go/proxy/` | Reverse proxy from L8 frontend to simulator backend |
 | `go/tests/` | Integration tests |
-| `resources/` | 341 JSON files (28 device types) with SNMP/SSH/REST response data |
+| `go/simulator/resources/` | 379 JSON files (28 device types) with SNMP/SSH/REST response data |
 
 ### Core simulator components (`go/simulator/`)
 
@@ -74,14 +74,14 @@ docker build --no-cache --platform=linux/amd64 -t saichler/opensim-web:latest .
 
 | Protocol   | Header | Record size    | Template? | Timestamps         | IPv6 records | Notes |
 |------------|--------|----------------|-----------|--------------------|--------------|-------|
-| `netflow5` | 24B    | 48B fixed      | none      | SysUptime-relative | filtered     | 30-record datagram cap; 32-bit ASNs clamp to `0xFFFF` (AS_TRANS); `-flow-template-interval` is a silent no-op |
+| `netflow5` | 24B    | 48B fixed      | none      | SysUptime-relative | filtered     | 30-record datagram cap; 32-bit ASNs clamp to `23456` (AS_TRANS, RFC 6793 §2); `-flow-template-interval` is a silent no-op |
 | `netflow9` | 20B    | 45B fixed      | yes       | SysUptime-relative | filtered     | Single 18-field template, ID 256 |
 | `ipfix`    | 16B    | 53B fixed      | yes       | absolute epoch ms  | filtered     | Template Set ID 2, IE-based fields |
 | `sflow`    | 28B    | variable (~100B typical) | none (self-describing) | uptime + flow_sample sampling_rate | filtered (IPv4 agent only) | Synthetic sampling_rate = `10 × FlowProfile.ConcurrentFlows` (see `SyntheticSamplingRateMultiplier`); emits flow_sample (type 1) + Phase-2 counters_sample (type 2) per tick. **sFlow output is synthetic — the simulator does not observe real packet streams.** Agent identity = device IPv4; `-flow-source-per-device` makes the UDP source IP match `agent_address`. |
 
 The `FlowEncoder` interface has a `MaxRecordSize() int` extension point: fixed-size encoders return 0 (NetFlow5/9, IPFIX), variable-length encoders (sFlow) return a worst-case per-record byte bound that `FlowExporter.Tick` uses for MTU-safe pagination.
 
-**Resource loading:** `resources.go` loads and caches the 341 JSON files at startup. Each device type directory has split JSON files for SNMP, SSH, and REST responses that are merged at load time.
+**Resource loading:** `resources.go` loads and caches the 379 JSON files at startup. Each device type directory has split JSON files for SNMP, SSH, and REST responses that are merged at load time.
 
 ### Key design decisions
 

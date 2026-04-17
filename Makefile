@@ -11,10 +11,19 @@ DOCKER_TAGS  ?= $(SIM_IMAGE)
 GOOS   ?= linux
 GOARCH ?= amd64
 
+# Docs toolchain (MkDocs + Material). Contributors install into a local .venv
+# so their system Python stays untouched.
+VENV_DIR     := .venv
+PYTHON       ?= python3
+VENV_PY      := $(VENV_DIR)/bin/python
+VENV_PIP     := $(VENV_DIR)/bin/pip
+VENV_MKDOCS  := $(VENV_DIR)/bin/mkdocs
+
 UNAME_S := $(shell uname -s)
 
 .PHONY: all build run test tidy check-tidy dist clean docker docker-build docker-push docker-up docker-down help \
-        check-go check-docker check-buildx check-linux
+        check-go check-docker check-buildx check-linux check-python \
+        docs-install docs-serve docs-build docs-clean
 
 all: build
 
@@ -85,6 +94,36 @@ clean:
 	rm -f $(BUILD_DIR)/$(BINARY)
 	rm -rf dist/
 
+## docs-install: Create a local .venv and install the docs toolchain into it
+docs-install: check-python
+	@if [ ! -d "$(VENV_DIR)" ]; then \
+	  echo "Creating virtualenv at $(VENV_DIR)..."; \
+	  $(PYTHON) -m venv $(VENV_DIR); \
+	fi
+	$(VENV_PIP) install --upgrade pip
+	$(VENV_PIP) install -r docs/requirements.txt
+
+## docs-serve: Run mkdocs serve (live-reload) on http://localhost:8000
+docs-serve:
+	@[ -x "$(VENV_MKDOCS)" ] || { \
+	  echo "Error: $(VENV_MKDOCS) not found — run 'make docs-install' first."; \
+	  exit 1; \
+	}
+	$(VENV_MKDOCS) serve
+
+## docs-build: Build the docs site with --strict (fails on broken links / warnings)
+docs-build:
+	@[ -x "$(VENV_MKDOCS)" ] || { \
+	  echo "Error: $(VENV_MKDOCS) not found — run 'make docs-install' first."; \
+	  exit 1; \
+	}
+	$(VENV_MKDOCS) build --strict
+
+## docs-clean: Remove the built docs site and the local .venv
+docs-clean:
+	rm -rf site/
+	rm -rf $(VENV_DIR)
+
 ## help: Show this help
 help:
 	@sed -n 's/^## //p' $(MAKEFILE_LIST) | column -t -s ':' | sed -e 's/^/ /'
@@ -135,5 +174,13 @@ check-linux:
 	  echo "       The simulator uses TUN interfaces and network namespaces"; \
 	  echo "       that are not available on $(UNAME_S)."; \
 	  echo "       Run it inside a Linux container or VM instead."; \
+	  exit 1; \
+	}
+
+check-python:
+	@command -v $(PYTHON) >/dev/null 2>&1 || { \
+	  echo "Error: '$(PYTHON)' not found."; \
+	  echo "       Install Python 3.10+ and ensure it is on your PATH."; \
+	  echo "       Override the interpreter with 'make docs-install PYTHON=python3.12'."; \
 	  exit 1; \
 	}

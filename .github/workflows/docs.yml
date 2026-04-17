@@ -1,0 +1,60 @@
+name: Docs
+
+# NOTE: The site is currently published at
+# https://labmonkeys-space.github.io/l8opensim/. When the repo is renamed
+# (`detach-fork-rename-simwerk`), update `mkdocs.yml` — this workflow simply
+# runs `gh-deploy` against whichever repo it lives in, so no changes are
+# required here at rename time.
+#
+# First-deploy manual step (documented in issue #45): after this workflow
+# succeeds for the first time, a maintainer must go to Settings -> Pages
+# and set Source to `gh-pages` branch, `/` root.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'docs/**'
+      - 'mkdocs.yml'
+      - '.github/workflows/docs.yml'
+      - 'Makefile'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: docs-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build-and-deploy:
+    name: Build & deploy
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
+        with:
+          fetch-depth: 0  # gh-deploy needs history to push to gh-pages
+
+      - name: Set up Python
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405  # v6.2.0
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: docs/requirements.txt
+
+      - name: Install docs toolchain
+        run: make docs-install
+
+      - name: Verify strict build
+        run: make docs-build
+
+      - name: Configure git for gh-deploy
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+      - name: Deploy to gh-pages
+        run: .venv/bin/mkdocs gh-deploy --force --no-history
