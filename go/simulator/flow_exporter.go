@@ -53,6 +53,12 @@ type FlowTickStats struct {
 // FlowExporter is owned by one DeviceSimulator. It ties the FlowCache and
 // encoder together and is driven by the shared SimulatorManager ticker goroutine.
 // It has no goroutines of its own — see SimulatorManager.startFlowTicker.
+//
+// The optional per-device conn (set by the device lifecycle when
+// flowSourcePerDevice is enabled) lets each exporter send UDP packets with
+// a source IP matching the simulated device, so collectors like OpenNMS
+// Telemetryd can attribute flows to the correct node. When conn is nil,
+// Tick falls back to the shared SimulatorManager socket.
 type FlowExporter struct {
 	cache            *FlowCache
 	profile          *FlowProfile
@@ -62,6 +68,7 @@ type FlowExporter struct {
 	startTime        time.Time     // reference point for SysUptime
 	lastTempl        time.Time     // last template transmission time
 	templateInterval time.Duration
+	conn             *net.UDPConn  // per-device UDP socket; nil = use shared conn
 }
 
 // NewFlowExporter creates a FlowExporter for device, using profile to drive
@@ -82,9 +89,24 @@ func NewFlowExporter(device *DeviceSimulator, profile *FlowProfile, activeTimeou
 	}
 }
 
+// Close releases the per-device UDP socket, if one was opened. Safe to call
+// on a nil or already-closed FlowExporter; safe to call multiple times.
+func (fe *FlowExporter) Close() error {
+	if fe == nil || fe.conn == nil {
+		return nil
+	}
+	err := fe.conn.Close()
+	fe.conn = nil
+	return err
+}
+
 // Tick is called by the shared SimulatorManager ticker goroutine on every
 // flowTickInterval. It replenishes the flow cache to ConcurrentFlows, expires
 // aged records, and emits one or more UDP datagrams to collectorAddr.
+//
+// When fe.conn is non-nil (per-device mode) it is used for the WriteTo; the
+// passed-in conn is the shared fallback used when the per-device socket
+// could not be opened or per-device mode is disabled.
 //
 // bufPool must supply []byte slices of at least 1500 bytes.
 // Write errors are ignored (best-effort delivery; collector may be down).
@@ -93,6 +115,17 @@ func NewFlowExporter(device *DeviceSimulator, profile *FlowProfile, activeTimeou
 func (fe *FlowExporter) Tick(now time.Time, encoder FlowEncoder, conn *net.UDPConn, collectorAddr *net.UDPAddr, bufPool *sync.Pool) FlowTickStats {
 	uptimeMs := uint32(now.Sub(fe.startTime).Milliseconds())
 	deviceIP := domainIDtoIP(fe.domainID)
+
+	// Prefer the per-device socket (source IP = device IP) when set; fall back
+	// to the shared SimulatorManager socket so callers that don't use
+	// per-device binding (tests, ns-disabled deployments) still work.
+	writeConn := fe.conn
+	if writeConn == nil {
+		writeConn = conn
+	}
+	if writeConn == nil {
+		return FlowTickStats{}
+	}
 
 	// Replenish cache to the configured ConcurrentFlows level.
 	fe.cache.GenerateFlows(fe.profile, deviceIP, fe.rng, now, uptimeMs)
@@ -141,7 +174,7 @@ func (fe *FlowExporter) Tick(now time.Time, encoder FlowEncoder, conn *net.UDPCo
 			break
 		}
 
-		conn.WriteTo(buf[:n], collectorAddr) //nolint:errcheck
+		writeConn.WriteTo(buf[:n], collectorAddr) //nolint:errcheck
 		stats.PacketsSent++
 		stats.BytesSent += uint64(n)
 		stats.RecordsSent += uint64(len(batch))
@@ -159,6 +192,41 @@ func (fe *FlowExporter) Tick(now time.Time, encoder FlowEncoder, conn *net.UDPCo
 	return stats
 }
 
+// SetFlowSourcePerDevice toggles per-device UDP source IP binding. When true,
+// each device opens its own UDP socket inside the opensim namespace bound to
+// the device's IP, so collectors see per-device exporter IPs rather than the
+// container host IP. Must be called before InitFlowExport.
+func (sm *SimulatorManager) SetFlowSourcePerDevice(enabled bool) {
+	sm.flowSourcePerDevice = enabled
+}
+
+// openFlowConnForDevice opens a per-device UDP socket bound to the device's
+// IP (ephemeral source port) and assigns it to device.flowExporter.conn.
+// Silently falls through to the shared socket when:
+//   - per-device mode is disabled,
+//   - namespace isolation is off (device.netNamespace == nil),
+//   - or the bind fails (typically because the opensim ns has no route to
+//     the collector — see issue #36).
+//
+// Best-effort: a failed per-device bind logs once and the exporter keeps
+// working via the shared socket.
+func (sm *SimulatorManager) openFlowConnForDevice(device *DeviceSimulator) {
+	if !sm.flowSourcePerDevice || device.flowExporter == nil {
+		return
+	}
+	if device.netNamespace == nil {
+		return
+	}
+	addr := &net.UDPAddr{IP: device.IP, Port: 0}
+	conn, err := device.netNamespace.ListenUDPInNamespace(addr)
+	if err != nil {
+		log.Printf("flow export: device %s per-device bind failed, falling back to shared socket: %v", device.IP, err)
+		return
+	}
+	conn.SetWriteBuffer(65536)
+	device.flowExporter.conn = conn
+}
+
 // domainIDtoIP converts a uint32 ObservationDomainID back to a net.IP.
 func domainIDtoIP(id uint32) net.IP {
 	ip := make(net.IP, 4)
@@ -171,6 +239,8 @@ func domainIDtoIP(id uint32) net.IP {
 //
 // collectorAddr is "host:port" (e.g. "192.168.1.100:2055").
 // protocol is "netflow9" (the only supported value for Phase 2).
+//
+// Call SetFlowSourcePerDevice beforehand to enable per-device source IP binding.
 func (sm *SimulatorManager) InitFlowExport(collectorAddr, protocol string, activeTimeout, inactiveTimeout, templateInterval, tickInterval time.Duration) error {
 	if sm.flowActive.Load() {
 		return fmt.Errorf("flow export: already active; call Shutdown() before re-initializing")

@@ -30,6 +30,7 @@ sudo ./simulator [flags]
 -flow-active-timeout <duration>   # Active flow expiry timeout (default: 5m)
 -flow-inactive-timeout <duration> # Inactive flow expiry timeout (default: 1m)
 -flow-template-interval <dur>     # Re-send template every N ticks (default: 10m)
+-flow-source-per-device           # Bind per-device UDP socket so src IP = device IP (default: true; requires ns route to collector — see issue #36)
 
 # Tests
 cd go
