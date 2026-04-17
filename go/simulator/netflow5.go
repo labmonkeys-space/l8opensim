@@ -76,6 +76,10 @@ func (*NetFlow5Encoder) PacketSizes() (int, int, int) {
 	return netFlow5HeaderLen, 0, netFlow5RecordLen
 }
 
+// MaxRecordSize returns 0 because NetFlow v5 records are fixed-size at 48
+// bytes on the wire; Tick paginates by PacketSizes()'s recordSize in that case.
+func (*NetFlow5Encoder) MaxRecordSize() int { return 0 }
+
 // EncodePacket serialises a complete NetFlow v5 UDP payload into buf and
 // returns the number of bytes written.
 //

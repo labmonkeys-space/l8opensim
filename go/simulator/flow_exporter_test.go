@@ -683,6 +683,56 @@ func TestFlowExporter_Tick_CloseRace(t *testing.T) {
 	}
 }
 
+// TestInitFlowExport_UnknownProtocol verifies that the default-case error
+// message lists all supported protocols including sflow. This is the
+// assertion point for the spec scenario "Unknown protocol is rejected with
+// updated error message".
+func TestInitFlowExport_UnknownProtocol(t *testing.T) {
+	sm := NewSimulatorManagerWithOptions(false)
+	err := sm.InitFlowExport("127.0.0.1:65530", "nonexistent", time.Second, time.Second, time.Minute, time.Second)
+	if err == nil {
+		t.Fatal("expected error for unknown protocol, got nil")
+	}
+	msg := err.Error()
+	for _, want := range []string{"netflow9", "ipfix", "sflow"} {
+		if !contains(msg, want) {
+			t.Errorf("error message %q missing substring %q", msg, want)
+		}
+	}
+}
+
+// TestInitFlowExport_SFlowCanonicalized verifies both sflow and sflow5 select
+// the sFlow encoder and canonicalize to "sflow" in GetFlowStatus.
+func TestInitFlowExport_SFlowCanonicalized(t *testing.T) {
+	for _, alias := range []string{"sflow", "sflow5", "SFLOW", "SFlow5"} {
+		sm := NewSimulatorManagerWithOptions(false)
+		err := sm.InitFlowExport("127.0.0.1:65531", alias, time.Second, time.Second, time.Minute, time.Hour)
+		if err != nil {
+			t.Errorf("alias %q: InitFlowExport returned error: %v", alias, err)
+			continue
+		}
+		status := sm.GetFlowStatus()
+		if status.Protocol != "sflow" {
+			t.Errorf("alias %q: Protocol = %q, want \"sflow\" (canonical)", alias, status.Protocol)
+		}
+		_ = sm.Shutdown()
+	}
+}
+
+// contains is a tiny stand-in for strings.Contains to avoid growing this test
+// file's import list for a single use.
+func contains(haystack, needle string) bool {
+	if len(needle) == 0 {
+		return true
+	}
+	for i := 0; i+len(needle) <= len(haystack); i++ {
+		if haystack[i:i+len(needle)] == needle {
+			return true
+		}
+	}
+	return false
+}
+
 // TestFlowExporter_Close_Idempotent verifies that Close is safe on nil and
 // repeat invocations — required because both DeviceSimulator.Stop and
 // DeviceSimulator.stopListenersOnly call Close during shutdown paths.
