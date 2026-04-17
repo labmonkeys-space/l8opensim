@@ -30,7 +30,7 @@ sudo ./simulator [flags]
 -flow-active-timeout <duration>   # Active flow expiry timeout (default: 5m)
 -flow-inactive-timeout <duration> # Inactive flow expiry timeout (default: 1m)
 -flow-template-interval <dur>     # Re-send template every N ticks (default: 10m)
--flow-source-per-device           # Bind per-device UDP socket so src IP = device IP (default: true; requires ns route to collector — see issue #36)
+-flow-source-per-device           # Bind per-device UDP socket so src IP = device IP (default: true)
 
 # Tests
 cd go
@@ -81,6 +81,7 @@ docker build --no-cache --platform=linux/amd64 -t saichler/opensim-web:latest .
 - **Buffer pool** — reduces GC pressure on SNMP request handling
 - **Shared SSH/TLS keys** across all devices — avoids per-device key generation overhead
 - **Network namespace isolation** (`opensim` namespace) — prevents systemd-networkd interference
+- **Per-device flow egress** — `setupVethPair` installs a `FORWARD -i veth-sim-host -j ACCEPT` iptables rule so that per-device flow exporters can send UDP out of the ns through the host's routing table (Docker-present hosts default FORWARD to drop). Rule is removed in `NetNamespace.Close`. The simulator image includes `iptables` for this reason. On the downstream flow collector, `rp_filter` may need to be relaxed (`net.ipv4.conf.*.rp_filter=0` or `2`) to accept packets with 10.42.0.0/16 source IPs.
 
 ### Device types
 
