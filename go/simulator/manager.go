@@ -325,6 +325,7 @@ func (sm *SimulatorManager) Shutdown() error {
 	if sm.flowActive.Load() {
 		sm.flowStopOnce.Do(func() { close(sm.flowStopCh) })
 		sm.flowWg.Wait()
+		sm.flowActive.Store(false)
 	}
 	if sm.flowConn != nil {
 		sm.flowConn.Close()

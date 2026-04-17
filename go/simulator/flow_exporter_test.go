@@ -558,10 +558,18 @@ func TestGetFlowStatus_Enabled(t *testing.T) {
 	sm.devices["10.5.0.1"] = device
 	sm.mu.Unlock()
 
-	// Wait for at least one tick cycle to deliver packets.
-	receivePacket(ch)
-
-	status := sm.GetFlowStatus()
+	// Poll until TotalPacketsSent is updated. receivePacket() synchronises on
+	// UDP arrival, which races the atomic Add in tickAllFlowExporters — use a
+	// short polling loop to fence the counter reliably.
+	deadline := time.Now().Add(2 * time.Second)
+	var status FlowStatus
+	for time.Now().Before(deadline) {
+		receivePacket(ch)
+		status = sm.GetFlowStatus()
+		if status.TotalPacketsSent > 0 {
+			break
+		}
+	}
 	if !status.Enabled {
 		t.Error("expected Enabled=true after InitFlowExport")
 	}

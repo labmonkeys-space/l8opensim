@@ -187,11 +187,14 @@ func (sm *SimulatorManager) InitFlowExport(collectorAddr, protocol string, activ
 	}
 
 	var enc FlowEncoder
+	var canonicalProtocol string
 	switch strings.ToLower(protocol) {
 	case "netflow9", "nf9", "":
 		enc = NetFlow9Encoder{}
+		canonicalProtocol = "netflow9"
 	case "ipfix", "ipfix10":
 		enc = IPFIXEncoder{}
+		canonicalProtocol = "ipfix"
 	default:
 		conn.Close()
 		return fmt.Errorf("flow export: unknown protocol %q (supported: netflow9, ipfix)", protocol)
@@ -200,7 +203,7 @@ func (sm *SimulatorManager) InitFlowExport(collectorAddr, protocol string, activ
 	sm.flowConn = conn
 	sm.flowCollectorAddr = addr
 	sm.flowCollectorStr = collectorAddr
-	sm.flowProtocol = strings.ToLower(protocol)
+	sm.flowProtocol = canonicalProtocol
 	sm.flowEncoder = enc
 	sm.flowActiveTimeout = activeTimeout
 	sm.flowInactiveTimeout = inactiveTimeout
@@ -301,7 +304,7 @@ func (sm *SimulatorManager) GetFlowStatus() FlowStatus {
 
 	var lastTemplate string
 	if ms := sm.flowStatLastTmpl.Load(); ms > 0 {
-		lastTemplate = time.UnixMilli(ms).UTC().Format(time.RFC3339)
+		lastTemplate = time.UnixMilli(ms).UTC().Format(time.RFC3339Nano)
 	}
 
 	return FlowStatus{

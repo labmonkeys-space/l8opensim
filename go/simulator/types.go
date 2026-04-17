@@ -191,7 +191,7 @@ type SimulatorManager struct {
 
 	// Flow export cumulative counters (updated atomically by tickAllFlowExporters).
 	flowStatPackets  atomic.Uint64 // total UDP datagrams sent since InitFlowExport
-	flowStatBytes    atomic.Uint64 // total encoded payload bytes sent since InitFlowExport
+	flowStatBytes    atomic.Uint64 // total bytes written to UDP (headers + records + padding) since InitFlowExport
 	flowStatRecords  atomic.Uint64 // total flow records exported since InitFlowExport
 	flowStatLastTmpl atomic.Int64  // unix milliseconds of the most recent template transmission
 
@@ -288,9 +288,9 @@ type FlowStatus struct {
 	Enabled            bool   `json:"enabled"`
 	Protocol           string `json:"protocol,omitempty"`
 	Collector          string `json:"collector,omitempty"`
-	TotalFlowsExported uint64 `json:"total_flows_exported,omitempty"`
-	TotalPacketsSent   uint64 `json:"total_packets_sent,omitempty"`
-	TotalBytesSent     uint64 `json:"total_bytes_sent,omitempty"`
-	DevicesExporting   int    `json:"devices_exporting,omitempty"`
+	TotalFlowsExported uint64 `json:"total_flows_exported"`
+	TotalPacketsSent   uint64 `json:"total_packets_sent"`
+	TotalBytesSent     uint64 `json:"total_bytes_sent"`
+	DevicesExporting   int    `json:"devices_exporting"`
 	LastTemplateSend   string `json:"last_template_send,omitempty"`
 }
