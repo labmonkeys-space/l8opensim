@@ -23,13 +23,13 @@ sudo ./simulator [flags]
 -snmpv3-priv <proto>    # none | des | aes128
 -no-namespace           # Disable network namespace isolation
 
-# Flow export flags (NetFlow v9 / IPFIX)
+# Flow export flags (NetFlow v5 / v9 / IPFIX)
 -flow-collector <host:port>       # Enable flow export to this UDP collector
--flow-protocol <proto>            # netflow9 (default) | ipfix
+-flow-protocol <proto>            # netflow9 (default) | ipfix | netflow5
 -flow-tick <duration>             # How often to emit flows (default: 10s)
 -flow-active-timeout <duration>   # Active flow expiry timeout (default: 5m)
 -flow-inactive-timeout <duration> # Inactive flow expiry timeout (default: 1m)
--flow-template-interval <dur>     # Re-send template every N ticks (default: 10m)
+-flow-template-interval <dur>     # Re-send template every N ticks (default: 10m; ignored under netflow5)
 -flow-source-per-device           # Bind per-device UDP socket so src IP = device IP (default: true)
 
 # Tests
@@ -70,7 +70,7 @@ docker build --no-cache --platform=linux/amd64 -t saichler/opensim-web:latest .
 
 **Web API:** `web.go` (route setup) + `api.go` (handlers) + `web_routes*.go` (Linux route script generation). Serves device CRUD, CSV export, system stats, and flow export status (`GET /api/v1/flows/status`).
 
-**Flow export:** `flow_exporter.go` (FlowExporter, FlowEncoder interface, SimulatorManager integration) + `netflow9.go` (NetFlow9Encoder, RFC 3954) + `ipfix.go` (IPFIXEncoder, RFC 7011). One shared UDP socket and ticker goroutine; per-device FlowExporter owns a FlowCache. Protocols: `netflow9` (20B header, 45B/record) and `ipfix` (16B header, 53B/record, absolute epoch-ms timestamps).
+**Flow export:** `flow_exporter.go` (FlowExporter, FlowEncoder interface, SimulatorManager integration) + `netflow9.go` (NetFlow9Encoder, RFC 3954) + `ipfix.go` (IPFIXEncoder, RFC 7011) + `netflow5.go` (NetFlow5Encoder, Cisco v5: 24B header, 48B/record, IPv4-only, 30-record datagram cap, no templates). One shared UDP socket and ticker goroutine; per-device FlowExporter owns a FlowCache. Protocols: `netflow9` (20B header, 45B/record), `ipfix` (16B header, 53B/record, absolute epoch-ms timestamps), and `netflow5` (24B header, 48B/record, SysUptime-relative timestamps like v9, IPv4-only with non-IPv4 records filtered one-shot-logged, 32-bit ASNs clamped to AS_TRANS `0xFFFF`, `-flow-template-interval` is a silent no-op because v5 has no template mechanism).
 
 **Resource loading:** `resources.go` loads and caches the 341 JSON files at startup. Each device type directory has split JSON files for SNMP, SSH, and REST responses that are merged at load time.
 
