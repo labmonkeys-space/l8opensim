@@ -18,7 +18,20 @@ package main
 import (
 	"fmt"
 	mathrand "math/rand"
+	"strings"
 )
+
+// slugifyDeviceType turns a resource filename (e.g. "cisco_catalyst_9500.json")
+// into a lowercase slug suitable for use in device IDs and sysName values
+// (e.g. "cisco-catalyst-9500"). Returns "" when resourceFile is empty.
+func slugifyDeviceType(resourceFile string) string {
+	if resourceFile == "" {
+		return ""
+	}
+	name := strings.TrimSuffix(resourceFile, ".json")
+	name = strings.ReplaceAll(name, "_", "-")
+	return strings.ToLower(name)
+}
 
 // Global lists for generating random device names
 var devicePrefixes = []string{
@@ -53,8 +66,10 @@ var mythNames = []string{
 	"ORION", "ANDROMEDA", "CASSIOPEIA", "VEGA", "ALTAIR", "SIRIUS", "RIGEL", "BETELGEUSE", "POLARIS", "ANTARES",
 }
 
-// getRandomDeviceName generates a random device name using various patterns
-func getRandomDeviceName() string {
+// getRandomDeviceName generates a random device name using various patterns.
+// When typeSlug is non-empty it is appended as a suffix (e.g. "-cisco-catalyst-9500").
+// The result is always lowercase.
+func getRandomDeviceName(typeSlug string) string {
 
 	// Choose a random pattern for the device name
 	patterns := []func() string{
@@ -103,6 +118,8 @@ func getRandomDeviceName() string {
 	// Select a random pattern and generate the name
 	pattern := patterns[mathrand.Intn(len(patterns))]
 	name := pattern()
-	// log.Printf("Generated device name: %s", name)
-	return name
+	if typeSlug != "" {
+		name = name + "-" + typeSlug
+	}
+	return strings.ToLower(name)
 }
