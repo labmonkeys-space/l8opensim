@@ -27,9 +27,10 @@ import (
 	"time"
 )
 
-// FlowEncoder is the protocol-agnostic interface satisfied by both NetFlow v9
-// and IPFIX encoders. uptimeMs is the device uptime in milliseconds at export
-// time; IPFIX encoders may use it to compute absolute timestamps.
+// FlowEncoder is the protocol-agnostic interface satisfied by all flow
+// encoders in this package (NetFlow v5, v9, IPFIX). uptimeMs is the device
+// uptime in milliseconds at export time; IPFIX encoders may use it to compute
+// absolute timestamps.
 type FlowEncoder interface {
 	EncodePacket(domainID uint32, seqNo uint32, uptimeMs uint32,
 		records []FlowRecord, includeTemplate bool, buf []byte) (int, error)
@@ -39,6 +40,13 @@ type FlowEncoder interface {
 	//   templateSize — template set/flowset byte length
 	//   recordSize   — bytes per flow record on the wire
 	PacketSizes() (baseOverhead int, templateSize int, recordSize int)
+	// SeqIncrement returns how much to advance the flow-sequence counter after
+	// a packet carrying packetRecordCount data records. NetFlow v9 and IPFIX
+	// return 1 (RFC 3954 "sequence number of all export packets" / RFC 7011
+	// "per-SCTP-stream message count"). NetFlow v5 returns packetRecordCount
+	// because Cisco v5 defines flow_sequence as the cumulative count of
+	// records, not packets.
+	SeqIncrement(packetRecordCount int) int
 }
 
 // FlowTickStats holds per-tick export counters returned by Tick.
@@ -188,7 +196,9 @@ func (fe *FlowExporter) Tick(now time.Time, encoder FlowEncoder, conn *net.UDPCo
 		stats.PacketsSent++
 		stats.BytesSent += uint64(n)
 		stats.RecordsSent += uint64(len(batch))
-		fe.seqNo++
+		// Advance flow_sequence per the protocol's semantics. NF9/IPFIX advance
+		// by 1 per packet; NF5 advances by the record count of this packet.
+		fe.seqNo += uint32(encoder.SeqIncrement(len(batch)))
 		if sendTemplate {
 			fe.lastTempl = now
 			stats.LastTemplateMs = now.UnixMilli()
