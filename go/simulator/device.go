@@ -25,6 +25,17 @@ import (
 	"time"
 )
 
+// makeDeviceID builds a device ID from an IP and an optional device-type slug.
+// When slug is empty the ID is just the IP; otherwise it is "<ip>-<slug>"
+// (e.g. "10.0.0.1-cisco-catalyst-9500"). The "device-" prefix is intentionally
+// omitted so the ID reflects the device identity directly.
+func makeDeviceID(ip net.IP, typeSlug string) string {
+	if typeSlug == "" {
+		return ip.String()
+	}
+	return fmt.Sprintf("%s-%s", ip.String(), typeSlug)
+}
+
 func (sm *SimulatorManager) CreateDevices(startIP string, count int, netmask string, resourceFile string, v3Config *SNMPv3Config, roundRobin bool, category string, snmpPort int) error {
 	return sm.CreateDevicesWithOptions(startIP, count, netmask, resourceFile, v3Config, true, 0, roundRobin, category, snmpPort)
 }
@@ -155,14 +166,25 @@ func (sm *SimulatorManager) CreateDevicesWithOptions(startIP string, count int, 
 	} else {
 		// No pre-allocation - create devices sequentially (original logic)
 		for i := 0; i < count; i++ {
+			// Select resources first so the device-type slug is available for the device ID
+			deviceResources := resources
+			deviceResourceFile := resourceFile
+			if roundRobin && len(roundRobinResources) > 0 {
+				rrIndex := i % len(roundRobinResources)
+				deviceResources = roundRobinResources[rrIndex]
+				deviceResourceFile = roundRobinResourceFiles[rrIndex]
+			}
+			typeSlug := slugifyDeviceType(deviceResourceFile)
+
 			// Get current IP with a read lock
 			sm.mu.RLock()
 			currentIP := make(net.IP, len(sm.currentIP))
 			copy(currentIP, sm.currentIP)
-			deviceID := fmt.Sprintf("device-%s", currentIP.String())
+			deviceID := makeDeviceID(currentIP, typeSlug)
 
-			// Check if device already exists
-			_, exists := sm.devices[deviceID]
+			// Check IP (not deviceID) so re-invocations with a different
+			// resource file still detect the collision.
+			_, exists := sm.deviceIPs[currentIP.String()]
 			sm.mu.RUnlock()
 
 			if exists {
@@ -215,16 +237,7 @@ func (sm *SimulatorManager) CreateDevicesWithOptions(startIP string, count int, 
 			copy(deviceIP, currentIP)
 
 			sysLocationValue := getRandomCity()
-			sysNameValue := getRandomDeviceName()
-
-			// Select resources based on round robin or single type
-			deviceResources := resources
-			deviceResourceFile := resourceFile
-			if roundRobin && len(roundRobinResources) > 0 {
-				rrIndex := i % len(roundRobinResources)
-				deviceResources = roundRobinResources[rrIndex]
-				deviceResourceFile = roundRobinResourceFiles[rrIndex]
-			}
+			sysNameValue := getRandomDeviceName(typeSlug)
 
 			device := &DeviceSimulator{
 				ID:           deviceID,
@@ -282,6 +295,7 @@ func (sm *SimulatorManager) CreateDevicesWithOptions(startIP string, count int, 
 			// Add device to map with a write lock
 			sm.mu.Lock()
 			sm.devices[deviceID] = device
+			sm.deviceIPs[currentIP.String()] = struct{}{}
 			sm.incrementIP()
 			sm.mu.Unlock()
 
@@ -366,24 +380,25 @@ func (sm *SimulatorManager) createDevicesParallel(count int, netmask string, res
 
 	for i := 0; i < count; i++ {
 		deviceIP := deviceIPs[i]
-		deviceID := fmt.Sprintf("device-%s", deviceIP.String())
 
-		// Check if device already exists
-		sm.mu.RLock()
-		_, exists := sm.devices[deviceID]
-		sm.mu.RUnlock()
-
-		if exists {
-			continue
-		}
-
-		// Select resources based on round robin or single type
+		// Select resources first so the device-type slug is available for the device ID
 		deviceResources := resources
 		deviceResourceFile := resourceFile
 		if roundRobin && len(roundRobinResources) > 0 {
 			rrIndex := i % len(roundRobinResources)
 			deviceResources = roundRobinResources[rrIndex]
 			deviceResourceFile = roundRobinResourceFiles[rrIndex]
+		}
+		deviceID := makeDeviceID(deviceIP, slugifyDeviceType(deviceResourceFile))
+
+		// Check IP (not deviceID) so the duplicate check stays robust against
+		// the device-ID format including a resource-type slug.
+		sm.mu.RLock()
+		_, exists := sm.deviceIPs[deviceIP.String()]
+		sm.mu.RUnlock()
+
+		if exists {
+			continue
 		}
 
 		wg.Add(1)
@@ -451,7 +466,7 @@ func (sm *SimulatorManager) createSingleDevice(deviceIndex int, deviceIP net.IP,
 	}
 
 	sysLocationValue := getRandomCity()
-	sysNameValue := getRandomDeviceName()
+	sysNameValue := getRandomDeviceName(slugifyDeviceType(resourceFile))
 
 	device := &DeviceSimulator{
 		ID:           deviceID,
@@ -507,6 +522,7 @@ func (sm *SimulatorManager) createSingleDevice(deviceIndex int, deviceIP net.IP,
 	// Add device to map with a write lock
 	sm.mu.Lock()
 	sm.devices[deviceID] = device
+	sm.deviceIPs[deviceIP.String()] = struct{}{}
 	sm.mu.Unlock()
 
 	return true
