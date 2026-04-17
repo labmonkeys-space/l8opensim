@@ -154,9 +154,37 @@ func (ns *NetNamespace) setupVethPair() error {
 		log.Printf("Warning: failed to add default route in namespace: %v", err)
 	}
 
+	// Allow forwarding of traffic originating in the namespace. Hosts with
+	// Docker installed (common) default the FORWARD chain policy to drop, so
+	// the kernel silently drops packets leaving the ns on their way to any
+	// non-local destination — notably the flow collector when per-device
+	// source IP mode is enabled. The rule is harmless on ACCEPT-policy hosts.
+	ns.addForwardAcceptRule()
+
 	log.Printf("Veth pair configured: %s (%s) <-> %s (%s)", VETH_HOST, VETH_HOST_IP, VETH_NS, VETH_NS_IP)
 
 	return nil
+}
+
+// addForwardAcceptRule inserts a FORWARD ACCEPT rule matching traffic arriving
+// on the host side of the veth pair. Best-effort: logs on failure but does not
+// abort veth setup, since many deployments either don't need the rule (no
+// forwarded egress from the ns) or have it managed externally.
+func (ns *NetNamespace) addForwardAcceptRule() {
+	cmd := exec.Command("iptables", "-I", "FORWARD", "1", "-i", VETH_HOST, "-j", "ACCEPT")
+	if output, err := cmd.CombinedOutput(); err != nil {
+		log.Printf("Warning: failed to install FORWARD ACCEPT rule for %s (iptables missing?): %v, output: %s",
+			VETH_HOST, err, string(output))
+		return
+	}
+	log.Printf("Installed FORWARD ACCEPT rule for %s (enables per-device egress from namespace)", VETH_HOST)
+}
+
+// removeForwardAcceptRule deletes the rule installed by addForwardAcceptRule.
+// Safe to call when the rule is absent (e.g. if the install failed) — iptables
+// simply returns non-zero and we swallow it.
+func (ns *NetNamespace) removeForwardAcceptRule() {
+	exec.Command("iptables", "-D", "FORWARD", "-i", VETH_HOST, "-j", "ACCEPT").Run()
 }
 
 // AddRouteToNamespace adds a route on the host to reach IPs inside the namespace
@@ -260,6 +288,7 @@ func (ns *NetNamespace) Close() error {
 
 	// Delete veth pair (deleting one end deletes both)
 	if ns.VethSetup {
+		ns.removeForwardAcceptRule()
 		exec.Command("ip", "link", "delete", VETH_HOST).Run()
 		ns.VethSetup = false
 	}

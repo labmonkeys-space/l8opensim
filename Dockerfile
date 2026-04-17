@@ -14,7 +14,7 @@ RUN CGO_ENABLED=0 GOOS=linux GOARCH=${TARGETARCH} go build -o /simulator ./simul
 
 FROM alpine:3.21
 
-RUN apk add --no-cache iproute2
+RUN apk add --no-cache iproute2 iptables
 
 WORKDIR /app
 
