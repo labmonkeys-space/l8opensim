@@ -248,7 +248,8 @@ func domainIDtoIP(id uint32) net.IP {
 // shared ticker goroutine. Call once after NewSimulatorManagerWithOptions.
 //
 // collectorAddr is "host:port" (e.g. "192.168.1.100:2055").
-// protocol is "netflow9" (the only supported value for Phase 2).
+// protocol selects the wire format: "netflow9" (default), "ipfix", or
+// "netflow5". Aliases "nf9", "ipfix10", and "nf5" are also accepted.
 //
 // Call SetFlowSourcePerDevice beforehand to enable per-device source IP binding.
 func (sm *SimulatorManager) InitFlowExport(collectorAddr, protocol string, activeTimeout, inactiveTimeout, templateInterval, tickInterval time.Duration) error {
@@ -275,9 +276,12 @@ func (sm *SimulatorManager) InitFlowExport(collectorAddr, protocol string, activ
 	case "ipfix", "ipfix10":
 		enc = IPFIXEncoder{}
 		canonicalProtocol = "ipfix"
+	case "netflow5", "nf5":
+		enc = &NetFlow5Encoder{}
+		canonicalProtocol = "netflow5"
 	default:
 		conn.Close()
-		return fmt.Errorf("flow export: unknown protocol %q (supported: netflow9, ipfix)", protocol)
+		return fmt.Errorf("flow export: unknown protocol %q (supported: netflow9, ipfix, netflow5)", protocol)
 	}
 
 	sm.flowConn = conn
