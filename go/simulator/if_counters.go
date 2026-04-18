@@ -49,25 +49,28 @@ type IfCounterCycler struct {
 	startTime      time.Time
 	maxIfIndex     int              // upper bound for array indexing
 	knownIfIndexes map[int]struct{} // exact set of ifIndex values present in oidIndex
-	ifSpeedBps     []uint64         // per-interface link speed in bps (slot = ifIndex-1)
-	baseIn         []uint64         // per-interface starting octet counter (in)
-	baseOut        []uint64         // per-interface starting octet counter (out)
-	phaseIn        []float64        // per-interface random phase offset in [0, 2π)
-	phaseOut       []float64
+	// ifIndexList caches knownIfIndexes as a slice so IfIndices is
+	// allocation-free on the hot path (trap varbind template resolution
+	// calls it per fire). Populated once in InitIfCounters; read-only after.
+	ifIndexList []int
+	ifSpeedBps  []uint64  // per-interface link speed in bps (slot = ifIndex-1)
+	baseIn      []uint64  // per-interface starting octet counter (in)
+	baseOut     []uint64  // per-interface starting octet counter (out)
+	phaseIn     []float64 // per-interface random phase offset in [0, 2π)
+	phaseOut    []float64
 }
 
-// IfIndices returns the set of known ifIndex values for this device as a
-// slice (unordered). Used by trap templating ({{.IfIndex}}) to pick a random
-// interface per fire. Returns nil when the device has no indexed interfaces.
+// IfIndices returns the cached slice of known ifIndex values for this device.
+// Used by trap templating ({{.IfIndex}}) to pick a random interface per fire.
+// Returns nil when the device has no indexed interfaces.
+//
+// The returned slice is a shared read-only view — callers must NOT mutate it.
+// Indexing into it with `rand.Intn(len(slice))` is the intended usage.
 func (ic *IfCounterCycler) IfIndices() []int {
-	if ic == nil || len(ic.knownIfIndexes) == 0 {
+	if ic == nil {
 		return nil
 	}
-	out := make([]int, 0, len(ic.knownIfIndexes))
-	for i := range ic.knownIfIndexes {
-		out = append(out, i)
-	}
-	return out
+	return ic.ifIndexList
 }
 
 // GetHCOctets returns the current dynamic counter value for an HC OID, or ""
@@ -160,10 +163,18 @@ func (c *MetricsCycler) InitIfCounters(resources *DeviceResources, seed int64) {
 		}
 	}
 
+	// Freeze the ifIndex set as a slice once so IfIndices returns a cached
+	// read-only view (hot path: trap template resolution).
+	indexList := make([]int, 0, len(knownIdxs))
+	for idx := range knownIdxs {
+		indexList = append(indexList, idx)
+	}
+
 	ic := &IfCounterCycler{
 		startTime:      time.Now(),
 		maxIfIndex:     maxIdx,
 		knownIfIndexes: knownIdxs,
+		ifIndexList:    indexList,
 		ifSpeedBps:     make([]uint64, maxIdx),
 		baseIn:         make([]uint64, maxIdx),
 		baseOut:        make([]uint64, maxIdx),

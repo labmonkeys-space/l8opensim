@@ -32,7 +32,6 @@ import (
 	"net"
 	"net/http"
 	"strings"
-	"sync/atomic"
 	"time"
 
 	"golang.org/x/time/rate"
@@ -302,19 +301,22 @@ func deviceIfIndexFn(device *DeviceSimulator) func() int {
 }
 
 // GetTrapStatus returns a JSON-serializable snapshot of the trap export state.
-// Exposed via GET /api/v1/traps/status.
+// Exposed via GET /api/v1/traps/status. All reads of manager trap state happen
+// under the RLock; downstream-only data (status fields, atomic counters) is
+// populated from local snapshots after RUnlock.
 func (sm *SimulatorManager) GetTrapStatus() TrapStatus {
 	if !sm.trapActive.Load() {
 		return TrapStatus{Enabled: false}
 	}
 
 	sm.mu.RLock()
+	mode := sm.trapMode
 	status := TrapStatus{
 		Enabled:   true,
 		Collector: sm.trapCollectorStr,
 		Community: sm.trapCommunity,
 	}
-	if sm.trapMode == TrapModeInform {
+	if mode == TrapModeInform {
 		status.Mode = "inform"
 	} else {
 		status.Mode = "trap"
@@ -330,27 +332,31 @@ func (sm *SimulatorManager) GetTrapStatus() TrapStatus {
 		devicesExporting++
 		st := d.trapExporter.Stats()
 		sent += st.Sent.Load()
-		if sm.trapMode == TrapModeInform {
+		if mode == TrapModeInform {
 			pending += uint64(d.trapExporter.PendingInformsLen())
 			acked += st.InformsAcked.Load()
 			failed += st.InformsFailed.Load()
 			dropped += st.InformsDropped.Load()
 		}
 	}
+	// Sample limiter tokens under the lock so we can't race with a concurrent
+	// Shutdown that nils sm.trapLimiter after sm.mu.Lock.
+	var tokens int
+	if limiter != nil {
+		tokens = int(limiter.Tokens())
+	}
 	sm.mu.RUnlock()
 
 	status.Sent = sent
 	status.DevicesExporting = devicesExporting
-	if sm.trapMode == TrapModeInform {
+	if mode == TrapModeInform {
 		status.InformsPending = pending
 		status.InformsAcked = acked
 		status.InformsFailed = failed
 		status.InformsDropped = dropped
 	}
 	if limiter != nil {
-		// TokensAt is the approximate instantaneous token count. Conservative
-		// snapshot — not synchronized with concurrent Wait calls.
-		status.RateLimiterTokensAvailable = int(limiter.Tokens())
+		status.RateLimiterTokensAvailable = tokens
 	}
 	return status
 }
@@ -401,20 +407,15 @@ func (sm *SimulatorManager) FireTrapOnDevice(ip, trapName string, overrides map[
 	if id == 0 {
 		return 0, fmt.Errorf("trap fire for %s returned 0 reqID (resolve or write failure)", ip)
 	}
-	atomic.AddUint64(&fireTrapAPIRequests, 1)
 	return id, nil
 }
 
 // Sentinel errors returned by FireTrapOnDevice for HTTP status mapping.
 var (
-	ErrTrapExportDisabled  = fmt.Errorf("trap export disabled")
-	ErrTrapDeviceNotFound  = fmt.Errorf("device not found")
-	ErrTrapEntryNotFound   = fmt.Errorf("trap catalog entry not found")
+	ErrTrapExportDisabled = fmt.Errorf("trap export disabled")
+	ErrTrapDeviceNotFound = fmt.Errorf("device not found")
+	ErrTrapEntryNotFound  = fmt.Errorf("trap catalog entry not found")
 )
-
-// fireTrapAPIRequests counts POST /api/v1/devices/{ip}/trap hits. Not exposed
-// but useful for future diagnostics.
-var fireTrapAPIRequests uint64
 
 // WriteTrapStatusJSON writes GetTrapStatus as JSON to w. Extracted for
 // testability and because the api.go pattern in this codebase is thin handlers.

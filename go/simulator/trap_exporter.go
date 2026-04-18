@@ -275,7 +275,12 @@ func (e *TrapExporter) Fire(entry *CatalogEntry, overrides map[string]string) ui
 			if _, ok := e.pending[reqID]; ok {
 				delete(e.pending, reqID)
 				e.removeFromOrder(reqID)
-				e.stats.InformsOriginated.Add(^uint64(0)) // decrement
+				// Two's-complement decrement: adding (2^64 - 1) is equivalent
+				// to subtracting 1 on uint64, which is the atomic decrement
+				// idiom. Keeps the invariant
+				//   pending + acked + failed + dropped == originated
+				// coherent when the original Fire never made it to the wire.
+				e.stats.InformsOriginated.Add(^uint64(0))
 			}
 			e.pendingMu.Unlock()
 		}
