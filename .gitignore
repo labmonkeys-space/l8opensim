@@ -42,3 +42,11 @@ dist/
 site/
 .venv/
 
+# OpenSpec working directory — spec-driven change proposals, archived
+# changes, and capability specs are managed as a local workflow artifact,
+# not as versioned project documentation.
+openspec/
+
+# BMad framework scratch output (explorations, review artifacts).
+_bmad-output/
+
