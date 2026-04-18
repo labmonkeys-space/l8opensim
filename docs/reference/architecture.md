@@ -8,6 +8,46 @@ server, and — for storage devices — its own HTTPS REST endpoint.
 This page covers the package layout, core components, and the key design
 decisions that make the 30,000-device target tractable.
 
+## System overview
+
+The diagram below is laid out as a [C4 container](https://c4model.com/#ContainerDiagram)
+view (rendered as a Mermaid flowchart): it shows what lives inside the
+l8opensim process boundary, the host-side Linux infrastructure it depends on,
+and how operators and monitoring systems interact with it.
+
+```mermaid
+%%{init: {'themeVariables': {'fontSize': '18px'}}}%%
+flowchart LR
+    operator(["Operator<br/><small>human</small>"]):::person
+    nms(["NMS / Monitoring<br/><small>OpenNMS, Prometheus,<br/>flow collectors</small>"]):::ext
+
+    subgraph l8opensim ["l8opensim (Go process)"]
+        simulator["<b>Simulator</b><br/><small>Go binary</small><br/>Device lifecycle,<br/>SNMP v2c/v3 + SSH + HTTPS REST,<br/>metrics engine, flow exporter"]
+        l8["<b>L8 Overlay</b><br/><small>Go</small><br/>Optional vnet mesh +<br/>HTTPS web proxy :9095"]
+        proxy["<b>Reverse Proxy</b><br/><small>Go</small><br/>L8 frontend to<br/>simulator backend"]
+        resources[("<b>Resources</b><br/><small>379 JSON files</small><br/>28 device-type directories<br/>SNMP / SSH / REST fixtures")]
+    end
+
+    subgraph kernel ["Linux kernel (host)"]
+        netns["<b>opensim netns</b><br/><small>network namespace</small><br/>Isolated routing,<br/>iptables FORWARD rule"]
+        tun["<b>TUN interfaces</b><br/><small>Linux TUN</small><br/>Per-device IP,<br/>pre-allocated in parallel"]
+    end
+
+    operator -->|"CLI flags, REST API<br/><small>HTTP :8080</small>"| simulator
+    operator -->|"Web UI<br/><small>HTTPS :9095</small>"| l8
+    l8 --> proxy --> simulator
+    simulator -->|loads on startup| resources
+    simulator -->|creates, writes<br/><small>ioctl</small>| tun
+    simulator -->|runs inside| netns
+    nms -->|"polls devices<br/><small>SNMP / SSH / HTTPS</small>"| tun
+    simulator -->|"exports flows<br/><small>NetFlow v5/v9,<br/>IPFIX, sFlow v5</small>"| nms
+
+    classDef person fill:#08427b,stroke:#052e56,color:#fff
+    classDef ext fill:#999,stroke:#666,color:#fff
+    classDef default fill:#438dd5,stroke:#2e6da4,color:#fff
+    class simulator,l8,proxy,resources,netns,tun default
+```
+
 ## Package layout
 
 | Path | Purpose |
