@@ -88,7 +88,11 @@ guidance:
 
 Per-device source IP binding reuses the same `opensim` network namespace
 plumbing as flow export — no new `iptables` rules and no new netns setup.
-The same three conditions apply:
+In TRAP mode, a per-device bind failure for any device is survivable: the
+simulator logs a warning and that device falls back to the shared UDP
+socket (its traps arrive at the collector with the simulator host's IP as
+the source). In INFORM mode, the same failure is fatal for that device —
+no ack demux without a per-device socket. The same three conditions apply:
 
 - **`iptables FORWARD` rule.** At startup the simulator inserts
   `FORWARD -i veth-sim-host -j ACCEPT` so Docker-present hosts (which

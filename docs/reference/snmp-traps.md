@@ -8,6 +8,21 @@ JSON shape. For enabling the feature, CLI flags, and troubleshooting see
 [SNMP trap / INFORM export (operator guide)](../ops/snmp-traps.md) and
 [CLI flags → SNMP trap / INFORM export](cli-flags.md#snmp-trap-inform-export-flags).
 
+## Scope and security posture
+
+Traps are always emitted as **SNMPv2c** regardless of whether the
+simulator's polling side is configured with `-snmpv3-engine-id` — the
+two paths are independent. An operator running v3-authenticated polls
+against the simulator still sees v2c community-authenticated traps on
+port 162.
+
+The SNMPv2c community string (`-trap-community`, default `public`) rides
+in the clear on every trap and inform. This is a property of SNMPv2c
+itself, not a simulator choice, and matches how the simulator's polling
+side treats v2c. Do not select a production-like community secret — the
+simulator is for testing collector plumbing, not for ingesting
+confidential data.
+
 ## Architecture
 
 - **Central scheduler goroutine** (`trap_scheduler.go`) owns a min-heap of
@@ -177,8 +192,9 @@ Responses:
 | Status | Body | When |
 |--------|------|------|
 | `202 Accepted` | `{"requestId": <uint32>}` | Success; the trap has been enqueued. For INFORM mode the `requestId` is the INFORM PDU's `request-id` — correlate with `/api/v1/traps/status` to watch its lifecycle. |
-| `400 Bad Request` | `{"success": false, "message": "..."}` | Unknown catalog entry name. |
+| `400 Bad Request` | `{"success": false, "message": "..."}` | Malformed JSON body, missing/empty `name` field, or unknown catalog entry name. |
 | `404 Not Found` | `{"success": false, "message": "..."}` | Unknown device IP. |
+| `500 Internal Server Error` | `{"success": false, "message": "..."}` | `Fire` failed for a non-lookup reason — template resolve error or write failure. Logs on the simulator side carry the detail. |
 | `503 Service Unavailable` | `{"success": false, "message": "..."}` | Trap export is disabled (`-trap-collector` not set). |
 
 The endpoint is fire-and-forget — it does **not** block waiting for an
@@ -188,34 +204,45 @@ INFORM ack.
 
 `GET /api/v1/traps/status` — current snapshot of the trap subsystem.
 
-When enabled in INFORM mode (the most complete response shape):
+Unlike `/api/v1/flows/status`, this endpoint does **not** wrap its body
+in the `{success, message, data}` envelope — `TrapStatus` is serialised
+directly at the top level. When enabled in INFORM mode (the most complete
+response shape):
 
 ```json
 {
-  "success": true,
-  "message": "Success",
-  "data": {
-    "enabled": true,
-    "mode": "inform",
-    "collector": "192.168.1.10:162",
-    "community": "public",
-    "sent": 182430,
-    "informs_pending": 17,
-    "informs_acked": 182380,
-    "informs_failed": 33,
-    "informs_dropped": 0,
-    "rate_limiter_tokens_available": 94,
-    "devices_exporting": 100
-  }
+  "enabled": true,
+  "mode": "inform",
+  "collector": "192.168.1.10:162",
+  "community": "public",
+  "sent": 182430,
+  "informs_pending": 17,
+  "informs_acked": 182380,
+  "informs_failed": 33,
+  "informs_dropped": 0,
+  "rate_limiter_tokens_available": 94,
+  "devices_exporting": 100
 }
 ```
 
 When enabled in TRAP mode, the four `informs_*` fields are omitted (no
-INFORM state to report). When disabled: `{"enabled": false}`.
+INFORM state to report). When disabled the response is:
+
+```json
+{"enabled": false, "sent": 0, "devices_exporting": 0}
+```
+
+(`sent` and `devices_exporting` are not tagged `omitempty` so they are
+always present; their values are zero when the feature is off.)
 
 `rate_limiter_tokens_available` is present only when `-trap-global-cap`
 is set; it's a best-effort instantaneous snapshot, not synchronised with
 concurrent rate-limiter waits.
+
+The `sent` counter increments on **every wire emission including INFORM
+retransmissions**, so `sent` can exceed the sum of the four INFORM state
+counters under retry churn. The counter invariant below applies to
+*originated* informs, not to the `sent` tally.
 
 ### Counter invariant
 

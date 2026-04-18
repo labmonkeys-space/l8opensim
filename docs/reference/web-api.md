@@ -160,33 +160,38 @@ See [Flow export (operator guide)](../ops/flow-export.md) and
 curl http://localhost:8080/api/v1/traps/status
 ```
 
-When trap export is enabled in INFORM mode (the most complete response
-shape):
+Unlike the flow-status endpoint, this response is **not** wrapped in the
+`{success, message, data}` envelope — the handler serialises `TrapStatus`
+directly. When trap export is enabled in INFORM mode (the most complete
+response shape):
 
 ```json
 {
-  "success": true,
-  "message": "Success",
-  "data": {
-    "enabled": true,
-    "mode": "inform",
-    "collector": "192.168.1.10:162",
-    "community": "public",
-    "sent": 182430,
-    "informs_pending": 17,
-    "informs_acked": 182380,
-    "informs_failed": 33,
-    "informs_dropped": 0,
-    "rate_limiter_tokens_available": 94,
-    "devices_exporting": 100
-  }
+  "enabled": true,
+  "mode": "inform",
+  "collector": "192.168.1.10:162",
+  "community": "public",
+  "sent": 182430,
+  "informs_pending": 17,
+  "informs_acked": 182380,
+  "informs_failed": 33,
+  "informs_dropped": 0,
+  "rate_limiter_tokens_available": 94,
+  "devices_exporting": 100
 }
 ```
 
 In TRAP mode the four `informs_*` fields are omitted. When trap export is
-disabled, the response is `{"enabled": false}`.
+disabled the response is:
+
+```json
+{"enabled": false, "sent": 0, "devices_exporting": 0}
+```
+
 `rate_limiter_tokens_available` is only present when `-trap-global-cap` is
-set.
+set. The `sent` counter increments on **every wire emission including
+INFORM retransmissions**, so it can exceed `informs_acked + informs_failed
++ informs_dropped + informs_pending` under retry churn.
 
 See [SNMP trap / INFORM export (operator guide)](../ops/snmp-traps.md) and
 [SNMP trap reference](snmp-traps.md) for the full feature details.
@@ -211,8 +216,9 @@ Response:
 | Status | Body | When |
 |--------|------|------|
 | `202 Accepted` | `{"requestId": <uint32>}` | Trap has been enqueued. In INFORM mode the `requestId` is the INFORM PDU's `request-id`. |
-| `400 Bad Request` | error JSON | Unknown catalog entry name. |
+| `400 Bad Request` | error JSON | Malformed JSON body, missing/empty `name`, or unknown catalog entry. |
 | `404 Not Found` | error JSON | Unknown device IP. |
+| `500 Internal Server Error` | error JSON | Template resolve or write failure (`Fire` returned 0). |
 | `503 Service Unavailable` | error JSON | Trap export is disabled. |
 
 The endpoint does not block waiting for an INFORM ack — use
