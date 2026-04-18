@@ -36,6 +36,11 @@ network namespaces.
 - **Per-device flow export** (NetFlow v5 / v9, IPFIX, sFlow v5) with
   per-device source IPs — see
   [Flow export](https://labmonkeys-space.github.io/l8opensim/ops/flow-export/).
+- **Per-device SNMPv2c trap / INFORM export** — central Poisson scheduler
+  with a global rate cap, a user-overridable JSON catalog, and per-device
+  UDP source IPs. Suited to OpenNMS `trapd` scale testing. Configure with
+  `-trap-collector <host:port>`; full flag list and catalog schema in
+  [CLAUDE.md](CLAUDE.md) → "SNMP trap export".
 
 ## Quick start
 

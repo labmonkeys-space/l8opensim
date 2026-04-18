@@ -18,6 +18,7 @@ package main
 import (
 	"encoding/csv"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"runtime/pprof"
@@ -90,6 +91,58 @@ func systemStatsHandler(w http.ResponseWriter, r *http.Request) {
 func flowStatusHandler(w http.ResponseWriter, r *http.Request) {
 	status := manager.GetFlowStatus()
 	sendDataResponse(w, status)
+}
+
+// trapStatusHandler implements GET /api/v1/traps/status. Returns a
+// TrapStatus JSON body (shape documented in trap_manager.go).
+func trapStatusHandler(w http.ResponseWriter, r *http.Request) {
+	manager.WriteTrapStatusJSON(w)
+}
+
+// fireTrapHandler implements POST /api/v1/devices/{ip}/trap. Body:
+//
+//	{ "name": "linkDown", "varbindOverrides": {"IfIndex": "3"} }
+//
+// Returns 202 Accepted with {"requestId": N} on success.
+// Status code mapping:
+//   - 503 when trap export is not enabled
+//   - 404 when the device IP is unknown
+//   - 400 when the catalog entry name is unknown
+func fireTrapHandler(w http.ResponseWriter, r *http.Request) {
+	vars := mux.Vars(r)
+	ip := vars["ip"]
+
+	var req struct {
+		Name             string            `json:"name"`
+		VarbindOverrides map[string]string `json:"varbindOverrides"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		sendErrorResponse(w, "Invalid JSON: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+	if req.Name == "" {
+		sendErrorResponse(w, "name is required", http.StatusBadRequest)
+		return
+	}
+
+	reqID, err := manager.FireTrapOnDevice(ip, req.Name, req.VarbindOverrides)
+	if err != nil {
+		switch {
+		case errors.Is(err, ErrTrapExportDisabled):
+			sendErrorResponse(w, err.Error(), http.StatusServiceUnavailable)
+		case errors.Is(err, ErrTrapDeviceNotFound):
+			sendErrorResponse(w, err.Error(), http.StatusNotFound)
+		case errors.Is(err, ErrTrapEntryNotFound):
+			sendErrorResponse(w, err.Error(), http.StatusBadRequest)
+		default:
+			sendErrorResponse(w, err.Error(), http.StatusInternalServerError)
+		}
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusAccepted)
+	_ = json.NewEncoder(w).Encode(map[string]uint32{"requestId": reqID})
 }
 
 func deleteDeviceHandler(w http.ResponseWriter, r *http.Request) {
@@ -251,6 +304,8 @@ func setupRoutes() *mux.Router {
 	api.HandleFunc("/status", statusHandler).Methods("GET")
 	api.HandleFunc("/system-stats", systemStatsHandler).Methods("GET")
 	api.HandleFunc("/flows/status", flowStatusHandler).Methods("GET")
+	api.HandleFunc("/traps/status", trapStatusHandler).Methods("GET")
+	api.HandleFunc("/devices/{ip}/trap", fireTrapHandler).Methods("POST")
 	api.HandleFunc("/debug/pprof-memory", pprofMemoryHandler).Methods("GET")
 	api.HandleFunc("/debug/cpu-profile", cpuProfileHandler).Methods("GET")
 

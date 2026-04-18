@@ -30,6 +30,12 @@ const (
 	ASN1_OID          = 0x06
 	SNMP_GET_RESPONSE = 0xa2
 
+	// SNMPv2c trap/inform PDU tags (RFC 3416).
+	// Used by trap_v2c.go for outbound notifications and trap_exporter.go
+	// for matching inbound INFORM acknowledgements (which arrive as GetResponse-PDU).
+	ASN1_INFORM_REQUEST = 0xA6 // InformRequest-PDU
+	ASN1_TRAP_V2C       = 0xA7 // SNMPv2-Trap-PDU
+
 	// SNMPv2c application type tags (RFC 1902 §7.1)
 	ASN1_IPADDRESS = 0x40 // IpAddress  – 4-byte IPv4 address
 	ASN1_COUNTER32 = 0x41 // Counter32  – 32-bit monotonically increasing counter

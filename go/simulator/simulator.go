@@ -110,6 +110,17 @@ func main() {
 		flowTemplateIntervalSecs = flag.Int("flow-template-interval", 60, "Template retransmission interval in seconds (default: 60)")
 		flowTickSecs         = flag.Int("flow-tick-interval", 5, "Flow ticker interval in seconds (default: 5)")
 		flowSourcePerDevice  = flag.Bool("flow-source-per-device", true, "Bind a per-device UDP socket inside the opensim namespace so flow packets use the device's IP as the source address (default: true). Requires the opensim ns to have a route to the collector; set to false to use a single shared socket from the host namespace")
+
+		// SNMP trap / INFORM export flags. See CLAUDE.md "SNMP Trap export" for detail.
+		trapCollector       = flag.String("trap-collector", "", "SNMP trap collector address (host:port, e.g. 10.0.0.50:162); enables trap export when non-empty")
+		trapMode            = flag.String("trap-mode", "trap", "SNMP notification mode: trap (default, fire-and-forget) or inform (acknowledged)")
+		trapInterval        = flag.Duration("trap-interval", 30*time.Second, "Per-device mean firing interval (Poisson-distributed); default 30s")
+		trapGlobalCap       = flag.Int("trap-global-cap", 0, "Simulator-wide tps ceiling for trap fires + retries (0 = unlimited)")
+		trapCatalog         = flag.String("trap-catalog", "", "Path to a JSON trap catalog; overrides the embedded universal 5-trap catalog when set")
+		trapCommunity       = flag.String("trap-community", "public", "SNMPv2c community string for trap/INFORM PDUs")
+		trapSourcePerDevice = flag.Bool("trap-source-per-device", true, "Bind a per-device UDP socket in the opensim ns so trap packets use the device IP as source (required in -trap-mode inform)")
+		trapInformTimeout   = flag.Duration("trap-inform-timeout", 5*time.Second, "Per-retry timeout in INFORM mode (default 5s)")
+		trapInformRetries   = flag.Int("trap-inform-retries", 2, "Maximum retransmissions per INFORM before declaring it failed (default 2)")
 	)
 
 	flag.Parse()
@@ -193,6 +204,30 @@ func main() {
 		)
 		if err != nil {
 			log.Fatalf("Failed to initialize flow export: %v", err)
+		}
+	}
+
+	// Enable SNMP trap / INFORM export if a collector address was provided.
+	// Must run before device creation so per-device TrapExporters are wired
+	// during startup, not post-hoc.
+	if *trapCollector != "" {
+		mode, err := ParseTrapMode(*trapMode)
+		if err != nil {
+			log.Fatalf("Failed to initialize trap export: %v", err)
+		}
+		cfg := TrapConfig{
+			Collector:       *trapCollector,
+			Mode:            mode,
+			Community:       *trapCommunity,
+			Interval:        *trapInterval,
+			GlobalCap:       *trapGlobalCap,
+			CatalogPath:     *trapCatalog,
+			InformTimeout:   *trapInformTimeout,
+			InformRetries:   *trapInformRetries,
+			SourcePerDevice: *trapSourcePerDevice,
+		}
+		if err := manager.StartTrapExport(cfg); err != nil {
+			log.Fatalf("Failed to initialize trap export: %v", err)
 		}
 	}
 
