@@ -82,6 +82,7 @@ nav:
       - Scaling: ops/scaling.md
       - Network Namespace: ops/network-namespace.md
       - Flow Export: ops/flow-export.md
+      - SNMP Traps: ops/snmp-traps.md
       - Troubleshooting: ops/troubleshooting.md
   - Reference:
       - Architecture: reference/architecture.md
@@ -89,6 +90,7 @@ nav:
       - Web API: reference/web-api.md
       - Device Types: reference/device-types.md
       - SNMP: reference/snmp.md
+      - SNMP Traps: reference/snmp-traps.md
       - Flow Export: reference/flow-export.md
       - Resource Files: reference/resource-files.md
       - GPU Simulation:
