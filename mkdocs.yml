@@ -10,6 +10,12 @@ repo_url: https://github.com/labmonkeys-space/l8opensim
 repo_name: labmonkeys-space/l8opensim
 edit_uri: edit/main/docs/
 
+extra_css:
+  - stylesheets/extra.css
+
+extra_javascript:
+  - javascripts/mermaid-zoom.js
+
 theme:
   name: material
   features:
@@ -48,7 +54,11 @@ markdown_extensions:
   - md_in_html
   - tables
   - pymdownx.details
-  - pymdownx.superfences
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_code_format
   - pymdownx.highlight:
       anchor_linenums: true
       line_spans: __span
