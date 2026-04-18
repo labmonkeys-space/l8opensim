@@ -335,6 +335,10 @@ func (sm *SimulatorManager) Shutdown() error {
 		sm.flowConn = nil
 	}
 
+	// Stop the trap subsystem (scheduler goroutine + per-device exporters +
+	// shared fallback socket). Safe to call when trap export was never started.
+	sm.StopTrapExport()
+
 	if sm.useNamespace && sm.netNamespace != nil {
 		// Fast path: when using a namespace, deleting it instantly destroys all
 		// TUN interfaces inside it. No need to delete them one by one.

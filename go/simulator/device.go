@@ -272,6 +272,16 @@ func (sm *SimulatorManager) CreateDevicesWithOptions(startIP string, count int, 
 				sm.registerSFlowCounterSources(device)
 			}
 
+			// Initialize SNMP trap exporter if trap export is enabled.
+			// In INFORM mode a per-device bind failure is fatal for this
+			// device (but not for the simulator as a whole — we log and
+			// skip enabling traps on this one device).
+			if sm.trapActive.Load() {
+				if err := sm.startDeviceTrapExporter(device); err != nil {
+					log.Printf("trap export: skipping device %s: %v", device.IP, err)
+				}
+			}
+
 			// Cache the dynamic values using atomic for lock-free access
 			device.cachedSysName.Store(sysNameValue)
 			device.cachedSysLocation.Store(sysLocationValue)
@@ -504,6 +514,13 @@ func (sm *SimulatorManager) createSingleDevice(deviceIndex int, deviceIP net.IP,
 		sm.registerSFlowCounterSources(device)
 	}
 
+	// Initialize SNMP trap exporter if trap export is enabled.
+	if sm.trapActive.Load() {
+		if err := sm.startDeviceTrapExporter(device); err != nil {
+			log.Printf("trap export: skipping device %s: %v", device.IP, err)
+		}
+	}
+
 	// Cache the dynamic values using atomic for lock-free access
 	device.cachedSysName.Store(sysNameValue)
 	device.cachedSysLocation.Store(sysLocationValue)
@@ -639,6 +656,14 @@ func (d *DeviceSimulator) Stop() error {
 		d.flowExporter.Close() //nolint:errcheck
 	}
 
+	if d.trapExporter != nil {
+		_ = d.trapExporter.Close()
+		if manager != nil && manager.trapScheduler != nil {
+			manager.trapScheduler.Deregister(d.IP)
+		}
+		d.trapExporter = nil
+	}
+
 	// Only destroy TUN interface if it's not pre-allocated and not part of bulk deletion
 	// Individual device stops will close the file descriptor but not delete the interface
 	// Bulk deletion handles the actual interface removal
@@ -677,6 +702,10 @@ func (d *DeviceSimulator) stopListenersOnly() {
 	}
 	if d.flowExporter != nil {
 		d.flowExporter.Close() //nolint:errcheck
+	}
+	if d.trapExporter != nil {
+		_ = d.trapExporter.Close()
+		d.trapExporter = nil
 	}
 	if d.tunIface != nil {
 		d.tunIface.destroy() // Close FD only, no ip link delete

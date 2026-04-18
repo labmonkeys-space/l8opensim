@@ -1,0 +1,43 @@
+{
+  "comment": "Universal SNMPv2c trap catalog (RFC 3418 standard notifications). Loaded via embed.FS from trap_catalog.go when no -trap-catalog override is supplied. Weights are resolved per design.md Open Question #1. The first two varbinds of every SNMPv2-Trap-PDU (sysUpTime.0, snmpTrapOID.0) are prepended automatically by the encoder and MUST NOT appear here — catalog loader rejects entries that list them.",
+  "traps": [
+    {
+      "name": "linkDown",
+      "snmpTrapOID": "1.3.6.1.6.3.1.1.5.3",
+      "weight": 40,
+      "varbinds": [
+        { "oid": "1.3.6.1.2.1.2.2.1.1.{{.IfIndex}}", "type": "integer", "value": "{{.IfIndex}}" },
+        { "oid": "1.3.6.1.2.1.2.2.1.7.{{.IfIndex}}", "type": "integer", "value": "2" },
+        { "oid": "1.3.6.1.2.1.2.2.1.8.{{.IfIndex}}", "type": "integer", "value": "2" }
+      ]
+    },
+    {
+      "name": "linkUp",
+      "snmpTrapOID": "1.3.6.1.6.3.1.1.5.4",
+      "weight": 40,
+      "varbinds": [
+        { "oid": "1.3.6.1.2.1.2.2.1.1.{{.IfIndex}}", "type": "integer", "value": "{{.IfIndex}}" },
+        { "oid": "1.3.6.1.2.1.2.2.1.7.{{.IfIndex}}", "type": "integer", "value": "1" },
+        { "oid": "1.3.6.1.2.1.2.2.1.8.{{.IfIndex}}", "type": "integer", "value": "1" }
+      ]
+    },
+    {
+      "name": "authenticationFailure",
+      "snmpTrapOID": "1.3.6.1.6.3.1.1.5.5",
+      "weight": 10,
+      "varbinds": []
+    },
+    {
+      "name": "coldStart",
+      "snmpTrapOID": "1.3.6.1.6.3.1.1.5.1",
+      "weight": 5,
+      "varbinds": []
+    },
+    {
+      "name": "warmStart",
+      "snmpTrapOID": "1.3.6.1.6.3.1.1.5.2",
+      "weight": 5,
+      "varbinds": []
+    }
+  ]
+}

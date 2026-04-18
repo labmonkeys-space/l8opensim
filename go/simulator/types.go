@@ -23,6 +23,7 @@ import (
 	"time"
 
 	"golang.org/x/crypto/ssh"
+	"golang.org/x/time/rate"
 )
 
 // TUN interface management structures
@@ -82,6 +83,7 @@ type DeviceSimulator struct {
 	cachedSysLocation atomic.Value // Stores string
 	metricsCycler *MetricsCycler   // Per-device cycling CPU/memory metrics
 	flowExporter  *FlowExporter   // NetFlow/IPFIX exporter (nil if flow export disabled)
+	trapExporter  *TrapExporter   // SNMP trap/inform exporter (nil if trap export disabled)
 	netNamespace  *NetNamespace   // Network namespace (nil if using root namespace)
 	running      bool
 	mu           sync.RWMutex
@@ -201,6 +203,25 @@ type SimulatorManager struct {
 	flowStatBytes    atomic.Uint64 // total bytes written to UDP (headers + records + padding) since InitFlowExport
 	flowStatRecords  atomic.Uint64 // total flow records exported since InitFlowExport
 	flowStatLastTmpl atomic.Int64  // unix milliseconds of the most recent template transmission
+
+	// SNMP trap export state (nil/zero when disabled; set by StartTrapExport).
+	// See trap_manager.go for lifecycle and trap_exporter.go for per-device state.
+	trapActive          atomic.Bool
+	trapCatalog         *Catalog
+	trapScheduler       *TrapScheduler
+	trapEncoder         TrapEncoder
+	trapLimiter         *rate.Limiter // shared global cap (nil = unlimited)
+	trapConn            *net.UDPConn  // shared fallback when per-device bind disabled
+	trapCollectorAddr   *net.UDPAddr
+	trapCollectorStr    string
+	trapMode            TrapMode
+	trapCommunity       string
+	trapInterval        time.Duration
+	trapGlobalCap       int
+	trapInformTimeout   time.Duration
+	trapInformRetries   int
+	trapSourcePerDevice bool
+	trapCatalogPath     string // "" when using embedded catalog
 
 	mu              sync.RWMutex
 }

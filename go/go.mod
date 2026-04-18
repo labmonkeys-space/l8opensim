@@ -14,6 +14,7 @@ require (
 	github.com/saichler/probler v0.0.0-20260322220154-5be3ac99d934
 	golang.org/x/crypto v0.50.0
 	golang.org/x/sys v0.43.0
+	golang.org/x/time v0.15.0
 	google.golang.org/protobuf v1.36.11
 )
 

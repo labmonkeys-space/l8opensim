@@ -56,6 +56,20 @@ type IfCounterCycler struct {
 	phaseOut       []float64
 }
 
+// IfIndices returns the set of known ifIndex values for this device as a
+// slice (unordered). Used by trap templating ({{.IfIndex}}) to pick a random
+// interface per fire. Returns nil when the device has no indexed interfaces.
+func (ic *IfCounterCycler) IfIndices() []int {
+	if ic == nil || len(ic.knownIfIndexes) == 0 {
+		return nil
+	}
+	out := make([]int, 0, len(ic.knownIfIndexes))
+	for i := range ic.knownIfIndexes {
+		out = append(out, i)
+	}
+	return out
+}
+
 // GetHCOctets returns the current dynamic counter value for an HC OID, or ""
 // if the OID is not an HC in/out-octets OID for a known interface index.
 func (ic *IfCounterCycler) GetHCOctets(oid string) string {
