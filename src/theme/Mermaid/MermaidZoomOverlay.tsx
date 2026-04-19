@@ -24,6 +24,9 @@ function OverlayBody({svg, onClose}: {svg: string; onClose: () => void}) {
     };
     window.addEventListener('keydown', handleKey);
     return () => window.removeEventListener('keydown', handleKey);
+    // onClose is listed as a dep, but the parent MUST keep its identity
+    // stable across renders — otherwise the keydown listener is torn down
+    // and reinstalled on every render while the overlay is open.
   }, [onClose]);
 
   return createPortal(
