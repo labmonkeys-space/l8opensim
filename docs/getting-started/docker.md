@@ -27,12 +27,13 @@ docker run --rm -it \
   -auto-start-ip 192.168.100.1 -auto-count 10
 ```
 
-!!! warning "Host FORWARD policy"
-    On hosts with Docker installed, the default `FORWARD` chain in iptables
-    is `DROP`. The simulator inserts a `FORWARD -i veth-sim-host -j ACCEPT`
-    rule at startup so per-device flow exporters can reach external
-    collectors. On clean shutdown the rule is removed. See
-    [Flow export → Prerequisites](../ops/flow-export.md#prerequisites-for-per-device-source-ip).
+:::warning[Host FORWARD policy]
+On hosts with Docker installed, the default `FORWARD` chain in iptables
+is `DROP`. The simulator inserts a `FORWARD -i veth-sim-host -j ACCEPT`
+rule at startup so per-device flow exporters can reach external
+collectors. On clean shutdown the rule is removed. See
+[Flow export → Prerequisites](../ops/flow-export.md#prerequisites-for-per-device-source-ip).
+:::
 
 ## Build locally
 

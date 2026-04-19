@@ -12,11 +12,12 @@ container workflows see [Docker](docker.md).
   [`go/go.mod`](https://github.com/labmonkeys-space/l8opensim/blob/main/go/go.mod).
 - Basic networking tools: `ip`, `iptables`.
 
-!!! tip "Ubuntu one-shot"
-    On fresh Ubuntu hosts run
-    [`sudo ./ubuntu_setup.sh`](https://github.com/labmonkeys-space/l8opensim/blob/main/ubuntu_setup.sh)
-    to install dependencies, raise system limits, and enable TUN/TAP support
-    in one step. For scale tuning see [Scaling](../ops/scaling.md).
+:::tip[Ubuntu one-shot]
+On fresh Ubuntu hosts run
+[`sudo ./ubuntu_setup.sh`](https://github.com/labmonkeys-space/l8opensim/blob/main/ubuntu_setup.sh)
+to install dependencies, raise system limits, and enable TUN/TAP support
+in one step. For scale tuning see [Scaling](../ops/scaling.md).
+:::
 
 ## Build
 
@@ -38,7 +39,7 @@ sudo ./simulator
 sudo ./simulator -auto-start-ip 192.168.100.1 -auto-count 5
 ```
 
-Once the simulator is up, open the web UI at <http://localhost:8080/> or
+Once the simulator is up, open the web UI at [http://localhost:8080/](http://localhost:8080/) or
 drive it via the REST API — see [Web API](../reference/web-api.md).
 
 ## Verify

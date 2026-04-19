@@ -14,7 +14,7 @@ section consolidates the GPU-specific design notes originally kept under
 - **[Protobuf model](proto-model.md)** — the `GpuDevice` protobuf schema
   in `probler/proto/inventory.proto`: top-level entity, host system
   resources, individual GPUs, NVLink / NVSwitch topology, and health.
-- **[Pollaris and parsing rules](pollaris.md)** — the l8parser pollaris
+- **[Pollaris and parsing rules](pollaris.mdx)** — the l8parser pollaris
   definitions and parsing rules that collect SNMP, SSH, and REST data from
   the simulator and populate the `GpuDevice` model. Part 1 covers the
   foundational SNMP polls; Part 2 covers SSH / REST and the gap closure to

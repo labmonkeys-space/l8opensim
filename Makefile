@@ -11,18 +11,14 @@ DOCKER_TAGS  ?= $(SIM_IMAGE)
 GOOS   ?= linux
 GOARCH ?= amd64
 
-# Docs toolchain (MkDocs + Material). Contributors install into a local .venv
-# so their system Python stays untouched.
-VENV_DIR     := .venv
-PYTHON       ?= python3
-VENV_PY      := $(VENV_DIR)/bin/python
-VENV_PIP     := $(VENV_DIR)/bin/pip
-VENV_MKDOCS  := $(VENV_DIR)/bin/mkdocs
+# Docs toolchain (Docusaurus). Contributors install Node dependencies into
+# ./node_modules via `npm ci`; Node version is pinned in .nvmrc.
+NPM ?= npm
 
 UNAME_S := $(shell uname -s)
 
 .PHONY: all build run test tidy check-tidy dist clean docker docker-build docker-push docker-up docker-down help \
-        check-go check-docker check-buildx check-linux check-python \
+        check-go check-docker check-buildx check-linux check-node \
         docs-install docs-serve docs-build docs-clean
 
 all: build
@@ -94,35 +90,29 @@ clean:
 	rm -f $(BUILD_DIR)/$(BINARY)
 	rm -rf dist/
 
-## docs-install: Create a local .venv and install the docs toolchain into it
-docs-install: check-python
-	@if [ ! -d "$(VENV_DIR)" ]; then \
-	  echo "Creating virtualenv at $(VENV_DIR)..."; \
-	  $(PYTHON) -m venv $(VENV_DIR); \
-	fi
-	$(VENV_PIP) install --upgrade pip
-	$(VENV_PIP) install -r docs/requirements.txt
+## docs-install: Install the Docusaurus toolchain via npm ci
+docs-install: check-node node_modules/.package-lock.json
 
-## docs-serve: Run mkdocs serve (live-reload) on http://localhost:8000
-docs-serve:
-	@[ -x "$(VENV_MKDOCS)" ] || { \
-	  echo "Error: $(VENV_MKDOCS) not found — run 'make docs-install' first."; \
-	  exit 1; \
-	}
-	$(VENV_MKDOCS) serve
+# node_modules/.package-lock.json is created by `npm ci`/`npm install` and
+# rewritten on every install. Using it as the make target for
+# node_modules freshness means `docs-serve` / `docs-build` automatically
+# re-install when package-lock.json changes, without forcing `npm ci` on
+# every invocation. Contributors with a stale tree no longer silently
+# run against old deps.
+node_modules/.package-lock.json: package-lock.json | check-node
+	$(NPM) ci
 
-## docs-build: Build the docs site with --strict (fails on broken links / warnings)
-docs-build:
-	@[ -x "$(VENV_MKDOCS)" ] || { \
-	  echo "Error: $(VENV_MKDOCS) not found — run 'make docs-install' first."; \
-	  exit 1; \
-	}
-	$(VENV_MKDOCS) build --strict
+## docs-serve: Run docusaurus start (live-reload) on http://localhost:3000
+docs-serve: node_modules/.package-lock.json
+	$(NPM) run start
 
-## docs-clean: Remove the built docs site and the local .venv
+## docs-build: Build the docs site (onBrokenLinks=throw; fails on broken links / warnings)
+docs-build: node_modules/.package-lock.json
+	$(NPM) run build
+
+## docs-clean: Remove built docs artefacts and installed Node dependencies
 docs-clean:
-	rm -rf site/
-	rm -rf $(VENV_DIR)
+	rm -rf build/ .docusaurus/ node_modules/
 
 ## help: Show this help
 help:
@@ -177,10 +167,10 @@ check-linux:
 	  exit 1; \
 	}
 
-check-python:
-	@command -v $(PYTHON) >/dev/null 2>&1 || { \
-	  echo "Error: '$(PYTHON)' not found."; \
-	  echo "       Install Python 3.10+ and ensure it is on your PATH."; \
-	  echo "       Override the interpreter with 'make docs-install PYTHON=python3.12'."; \
+check-node:
+	@command -v $(NPM) >/dev/null 2>&1 || { \
+	  echo "Error: '$(NPM)' not found."; \
+	  echo "       Install Node 20 LTS (see .nvmrc) — e.g. 'nvm install && nvm use'"; \
+	  echo "       or 'brew install node@20' / the installer at https://nodejs.org/."; \
 	  exit 1; \
 	}

@@ -37,10 +37,11 @@ Docker installed default the `FORWARD` chain to `DROP`, which silently
 blocks per-device flow-export UDP from reaching the collector. Without the
 rule the simulator logs a warning and flows disappear on such hosts.
 
-!!! note "iptables is required on the host"
-    The container image ships `iptables` for this reason. Bare-metal
-    hosts need `iptables` (or `iptables-nft`) available and on the
-    simulator's `PATH`.
+:::note[iptables is required on the host]
+The container image ships `iptables` for this reason. Bare-metal
+hosts need `iptables` (or `iptables-nft`) available and on the
+simulator's `PATH`.
+:::
 
 See [Flow export (operator guide)](flow-export.md#prerequisites-for-per-device-source-ip)
 for the full context — per-device source IPs route out of the namespace via

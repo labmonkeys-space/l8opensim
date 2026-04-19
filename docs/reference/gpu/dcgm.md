@@ -1,11 +1,12 @@
 # NVIDIA DCGM simulation
 
-!!! note "Simulator side of the GPU story"
-    This page covers the **simulator** — the metric OID types, the GPU
-    cycler extension, device profiles, resource file layout, and
-    integration points. Pair it with [Protobuf model](proto-model.md) (the
-    shape of the output data) and [Pollaris and parsing rules](pollaris.md)
-    (the collector side).
+:::note[Simulator side of the GPU story]
+This page covers the **simulator** — the metric OID types, the GPU
+cycler extension, device profiles, resource file layout, and
+integration points. Pair it with [Protobuf model](proto-model.md) (the
+shape of the output data) and [Pollaris and parsing rules](pollaris.mdx)
+(the collector side).
+:::
 
 ## Overview
 

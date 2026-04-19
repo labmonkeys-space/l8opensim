@@ -8,7 +8,7 @@ collectors that key on the agent source IP attribute correctly without extra
 work.
 
 This page is the operator-facing setup guide. For the CLI flags see
-[CLI flags → SNMP trap / INFORM export](../reference/cli-flags.md#snmp-trap-inform-export-flags);
+[CLI flags → SNMP trap / INFORM export](../reference/cli-flags.md#snmp-trap--inform-export-flags);
 for wire format, catalog JSON, and HTTP endpoints see
 [SNMP trap reference](../reference/snmp-traps.md).
 
@@ -159,6 +159,6 @@ conflicts) see [Troubleshooting](troubleshooting.md).
 ## Related
 
 - [SNMP trap reference](../reference/snmp-traps.md) — wire format, catalog JSON, HTTP endpoints
-- [CLI flags → SNMP trap / INFORM export flags](../reference/cli-flags.md#snmp-trap-inform-export-flags)
+- [CLI flags → SNMP trap / INFORM export flags](../reference/cli-flags.md#snmp-trap--inform-export-flags)
 - [Flow export (operator guide)](flow-export.md) — shared `opensim` namespace plumbing
 - [Web API → Fire a trap on demand](../reference/web-api.md#fire-a-trap-on-demand)
