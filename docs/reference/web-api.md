@@ -19,6 +19,8 @@ management web UI at `/`.
 | `/api/v1/status` | GET | Manager status. |
 | `/api/v1/system-stats` | GET | System stats (file descriptors, memory). |
 | `/api/v1/flows/status` | GET | Flow export status and cumulative counters. |
+| `/api/v1/traps/status` | GET | SNMP trap export status and INFORM counters. |
+| `/api/v1/devices/{ip}/trap` | POST | Fire a named catalog trap on a specific device. |
 | `/health` | GET | Health check endpoint. |
 
 ## Create devices
@@ -151,6 +153,76 @@ When flow export is disabled the response is `{"enabled": false}`.
 
 See [Flow export (operator guide)](../ops/flow-export.md) and
 [Flow export reference](flow-export.md) for protocol-specific details.
+
+## Trap export status
+
+```bash
+curl http://localhost:8080/api/v1/traps/status
+```
+
+Unlike the flow-status endpoint, this response is **not** wrapped in the
+`{success, message, data}` envelope — the handler serialises `TrapStatus`
+directly. When trap export is enabled in INFORM mode (the most complete
+response shape):
+
+```json
+{
+  "enabled": true,
+  "mode": "inform",
+  "collector": "192.168.1.10:162",
+  "community": "public",
+  "sent": 182430,
+  "informs_pending": 17,
+  "informs_acked": 182380,
+  "informs_failed": 33,
+  "informs_dropped": 0,
+  "rate_limiter_tokens_available": 94,
+  "devices_exporting": 100
+}
+```
+
+In TRAP mode the four `informs_*` fields are omitted. When trap export is
+disabled the response is:
+
+```json
+{"enabled": false, "sent": 0, "devices_exporting": 0}
+```
+
+`rate_limiter_tokens_available` is only present when `-trap-global-cap` is
+set. The `sent` counter increments on **every wire emission including
+INFORM retransmissions**, so it can exceed `informs_acked + informs_failed
++ informs_dropped + informs_pending` under retry churn.
+
+See [SNMP trap / INFORM export (operator guide)](../ops/snmp-traps.md) and
+[SNMP trap reference](snmp-traps.md) for the full feature details.
+
+## Fire a trap on demand
+
+```bash
+curl -X POST http://localhost:8080/api/v1/devices/192.168.100.1/trap \
+  -H "Content-Type: application/json" \
+  -d '{"name":"linkDown","varbindOverrides":{"IfIndex":"3"}}'
+```
+
+Request body:
+
+| Field | Type | Required | Meaning |
+|-------|------|----------|---------|
+| `name` | string | yes | Catalog entry name (e.g. `linkDown`, `linkUp`, `coldStart`). |
+| `varbindOverrides` | object | no | Map of template-field → string-value overrides. Only fields from the catalog template vocabulary are accepted (`IfIndex`, `Uptime`, `Now`, `DeviceIP`). |
+
+Response:
+
+| Status | Body | When |
+|--------|------|------|
+| `202 Accepted` | `{"requestId": <uint32>}` | Trap has been enqueued. In INFORM mode the `requestId` is the INFORM PDU's `request-id`. |
+| `400 Bad Request` | error JSON | Malformed JSON body, missing/empty `name`, or unknown catalog entry. |
+| `404 Not Found` | error JSON | Unknown device IP. |
+| `500 Internal Server Error` | error JSON | Template resolve or write failure (`Fire` returned 0). |
+| `503 Service Unavailable` | error JSON | Trap export is disabled. |
+
+The endpoint does not block waiting for an INFORM ack — use
+`/api/v1/traps/status` to observe INFORM lifecycle counters.
 
 ## Device interaction
 

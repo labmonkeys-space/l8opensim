@@ -100,3 +100,17 @@ Vendor-specific OIDs (Cisco, Juniper, Arista, NVIDIA, etc.) are provided per
 device type under `go/simulator/resources/<device>/`. See
 [Resource files](resource-files.md) for the JSON schema and
 [Device types](device-types.md) for the catalog.
+
+## Notifications (trap / INFORM)
+
+SNMP defines both a request/response path — the GET / GETNEXT / GETBULK /
+SET operations documented above — and a push path where a device initiates
+a notification to a monitoring collector. l8opensim implements the push
+path for SNMPv2c only: fire-and-forget TRAPs (PDU `0xA7`) and
+acknowledged INFORMs (PDU `0xA6`). SNMPv1 traps and SNMPv3 notifications
+are deferred.
+
+See [SNMP trap reference](snmp-traps.md) for wire format, the JSON
+catalog schema, and the HTTP endpoints, and
+[SNMP trap / INFORM export (operator guide)](../ops/snmp-traps.md) for
+enabling the feature and the `snmptrapd` smoke test.

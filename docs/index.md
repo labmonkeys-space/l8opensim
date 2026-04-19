@@ -27,7 +27,8 @@ landing page; everything below lives here.
     flow export.
 
     [:octicons-arrow-right-24: Scaling](ops/scaling.md) ·
-    [:octicons-arrow-right-24: Flow export](ops/flow-export.md)
+    [:octicons-arrow-right-24: Flow export](ops/flow-export.md) ·
+    [:octicons-arrow-right-24: SNMP traps](ops/snmp-traps.md)
 
 -   __Reference__
 

@@ -75,6 +75,24 @@ details.
 | `-flow-template-interval` | int (seconds) | `60` | Template retransmission interval (NetFlow v9 / IPFIX only). |
 | `-flow-source-per-device` | bool | `true` | Use each device's IP as the UDP source address. |
 
+## SNMP trap / INFORM export flags
+
+See [SNMP trap / INFORM export (operator guide)](../ops/snmp-traps.md) for
+prerequisites and `snmptrapd` smoke-test, and
+[SNMP trap reference](snmp-traps.md) for wire format and catalog JSON.
+
+| Flag | Type | Default | Purpose |
+|------|------|---------|---------|
+| `-trap-collector` | string | — | Enable trap export to this UDP collector (e.g. `192.168.1.10:162`). Empty disables the feature. |
+| `-trap-mode` | `trap` \| `inform` | `trap` | Notification mode. TRAP is fire-and-forget; INFORM is acknowledged and retried. |
+| `-trap-interval` | duration | `30s` | Per-device mean firing interval (Poisson-distributed, not periodic). |
+| `-trap-global-cap` | int (tps) | `0` | Simulator-wide rate ceiling across fires + INFORM retries. `0` is unlimited. |
+| `-trap-catalog` | string | — | Path to a JSON catalog; empty uses the embedded universal 5-trap catalog. |
+| `-trap-community` | string | `public` | SNMPv2c community string. |
+| `-trap-source-per-device` | bool | `true` | Use each device's IP as the UDP source address. **Required** when `-trap-mode inform`. |
+| `-trap-inform-timeout` | duration | `5s` | Per-retry timeout in INFORM mode. |
+| `-trap-inform-retries` | int | `2` | Maximum retransmissions per INFORM before it's declared failed. |
+
 ## Examples
 
 ```bash
