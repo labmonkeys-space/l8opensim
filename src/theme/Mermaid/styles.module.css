@@ -1,0 +1,53 @@
+/* Click-target affordance for the rendered mermaid container. */
+.wrapper {
+  cursor: zoom-in;
+  /* Keyboard-focus outline uses the theme's accent so the focus ring is
+     visible in both light and dark modes without a hardcoded colour. */
+  border-radius: 0.25rem;
+}
+
+.wrapper:focus-visible {
+  outline: 2px solid var(--ifm-color-primary);
+  outline-offset: 2px;
+}
+
+/* Full-viewport translucent overlay that hosts the enlarged SVG. */
+.overlay {
+  position: fixed;
+  inset: 0;
+  /* Docusaurus's fixed navbar sits at --ifm-z-index-fixed (200 by default);
+     overlay stays above it. */
+  z-index: calc(var(--ifm-z-index-fixed, 200) + 10);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1rem;
+  background: rgba(0, 0, 0, 0.65);
+  cursor: zoom-out;
+  opacity: 0;
+  transition: opacity 150ms ease-out;
+}
+
+.overlayOpen {
+  opacity: 1;
+}
+
+/* Bounded container for the cloned SVG. Uses the theme's surface colour so
+   dark mode produces a dark inner card instead of a brightness-inverted one. */
+.inner {
+  max-width: 95vw;
+  max-height: 95vh;
+  padding: 1.5rem;
+  background: var(--ifm-background-surface-color);
+  border-radius: 0.5rem;
+  box-shadow: 0 10px 40px rgba(0, 0, 0, 0.4);
+  overflow: auto;
+  cursor: default;
+}
+
+.inner svg {
+  display: block;
+  max-width: 100%;
+  max-height: calc(95vh - 3rem);
+  height: auto;
+}
