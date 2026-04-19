@@ -77,7 +77,7 @@ Not every OID is static. The following are computed at query time regardless
 of what the resource files contain:
 
 - **CPU, memory, temperature** — cycle through a 100-point sine-wave pattern
-  per device. See [SNMP reference → Dynamic metrics](snmp.md#dynamic-cpu-memory-temperature-metrics).
+  per device. See [SNMP reference → Dynamic metrics](snmp.md#dynamic-cpu--memory--temperature-metrics).
 - **HC interface counters** (`ifHCInOctets` / `ifHCOutOctets`) — computed
   analytically as monotonically increasing `Counter64` values, phase-offset
   per interface. See [SNMP reference → HC counters](snmp.md#dynamic-hc-interface-traffic-counters).

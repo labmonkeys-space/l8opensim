@@ -1,21 +1,25 @@
 name: Docs
 
-# NOTE: The site is currently published at
-# https://labmonkeys-space.github.io/l8opensim/. When the repo is renamed
-# (`detach-fork-rename-simwerk`), update `mkdocs.yml` — this workflow simply
-# runs `gh-deploy` against whichever repo it lives in, so no changes are
-# required here at rename time.
+# Publishes the Docusaurus site at
+# https://labmonkeys-space.github.io/l8opensim/ on every push to main. Toolchain
+# and Node version are pinned via package-lock.json and .nvmrc respectively.
 #
-# First-deploy manual step (documented in issue #45): after this workflow
-# succeeds for the first time, a maintainer must go to Settings -> Pages
-# and set Source to `gh-pages` branch, `/` root.
+# First-deploy manual step: after this workflow succeeds for the first time
+# following the Docusaurus migration, a maintainer must confirm the GitHub
+# Pages source is still set to the `gh-pages` branch in Settings -> Pages.
 
 on:
   push:
     branches: [main]
     paths:
       - 'docs/**'
-      - 'mkdocs.yml'
+      - 'docusaurus.config.ts'
+      - 'sidebars.ts'
+      - 'src/**'
+      - 'static/**'
+      - 'package.json'
+      - 'package-lock.json'
+      - '.nvmrc'
       - '.github/workflows/docs.yml'
       - 'Makefile'
   workflow_dispatch:
@@ -36,14 +40,13 @@ jobs:
       - name: Checkout
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
         with:
-          fetch-depth: 0  # gh-deploy needs history to push to gh-pages
+          fetch-depth: 0  # deploy action needs history to push to gh-pages
 
-      - name: Set up Python
-        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405  # v6.2.0
+      - name: Set up Node
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020  # v4.4.0
         with:
-          python-version: '3.12'
-          cache: pip
-          cache-dependency-path: docs/requirements.txt
+          node-version-file: .nvmrc
+          cache: npm
 
       - name: Install docs toolchain
         run: make docs-install
@@ -51,10 +54,11 @@ jobs:
       - name: Verify strict build
         run: make docs-build
 
-      - name: Configure git for gh-deploy
-        run: |
-          git config user.name  "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-
       - name: Deploy to gh-pages
-        run: .venv/bin/mkdocs gh-deploy --force --no-history
+        uses: peaceiris/actions-gh-pages@4f9cc6602d3f66b9c108549d475ec49e8ef4d45e  # v4.0.0
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: ./build
+          force_orphan: true
+          user_name: 'github-actions[bot]'
+          user_email: '41898282+github-actions[bot]@users.noreply.github.com'

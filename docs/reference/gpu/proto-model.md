@@ -1,10 +1,11 @@
 # GPU protobuf model
 
-!!! note "Source of truth"
-    The authoritative definition lives in
-    `probler/proto/inventory.proto`. This page is the reference write-up
-    originally authored as a design plan and kept here so the navigation
-    flow (simulator → pollaris → model) is complete.
+:::note[Source of truth]
+The authoritative definition lives in
+`probler/proto/inventory.proto`. This page is the reference write-up
+originally authored as a design plan and kept here so the navigation
+flow (simulator → pollaris → model) is complete.
+:::
 
 ## Overview
 

@@ -1,3 +1,6 @@
+import Tabs from '@theme/Tabs';
+import TabItem from '@theme/TabItem';
+
 # GPU pollaris and parsing rules
 
 This page describes the polling definitions (pollaris) and parsing rules in
@@ -8,7 +11,7 @@ parts:
 1. **[Foundational SNMP pollaris](#part-1-foundational-snmp-pollaris)** —
    the `SnmpGpuTable` rule, the vendor detection wiring, and the initial set
    of SNMP polls that cover about half of `GpuDevice`.
-2. **[Complete coverage (SNMP + SSH + REST)](#part-2-complete-coverage-snmp-ssh-rest)** —
+2. **[Complete coverage (SNMP + SSH + REST)](#part-2-complete-coverage-snmp--ssh--rest)** —
    the gap analysis for the remaining fields and the additional SSH / REST
    polls plus new parsing rules needed to close it.
 
@@ -124,64 +127,85 @@ Groups: ["nvidia", "nvidia-gpu"]
 
 **Polls to create:**
 
-=== "Poll 1: `nvidiaSystem` — Device info"
+<Tabs groupId="gpu-polls">
+<TabItem value="poll1" label="Poll 1: nvidiaSystem">
 
-    - **What:** `.1.3.6.1.2.1.1` (system MIB)
-    - **Operation:** `L8C_Map`
-    - **Cadence:** DEFAULT_CADENCE
-    - **Attributes:**
-        - `gpudevice.deviceinfo.hostname` ← Set from `.1.3.6.1.2.1.1.5.0` (sysName)
-        - `gpudevice.deviceinfo.vendor` ← Contains "53246" → "NVIDIA"
-        - `gpudevice.deviceinfo.location` ← Set from `.1.3.6.1.2.1.1.6.0` (sysLocation)
-        - `gpudevice.deviceinfo.uptime` ← Set from `.1.3.6.1.2.1.1.3.0` (sysUpTime)
-        - `gpudevice.deviceinfo.devicestatus` ← MapToDeviceStatus
-        - `gpudevice.deviceinfo.osversion` ← Contains from sysDescr (parse OS info)
-        - `gpudevice.deviceinfo.kernelversion` ← Contains from sysDescr (parse kernel)
+**Device info**
 
-=== "Poll 2: `nvidiaGpuModule` — GPU count & DCGM version"
+- **What:** `.1.3.6.1.2.1.1` (system MIB)
+- **Operation:** `L8C_Map`
+- **Cadence:** DEFAULT_CADENCE
+- **Attributes:**
+  - `gpudevice.deviceinfo.hostname` ← Set from `.1.3.6.1.2.1.1.5.0` (sysName)
+  - `gpudevice.deviceinfo.vendor` ← Contains "53246" → "NVIDIA"
+  - `gpudevice.deviceinfo.location` ← Set from `.1.3.6.1.2.1.1.6.0` (sysLocation)
+  - `gpudevice.deviceinfo.uptime` ← Set from `.1.3.6.1.2.1.1.3.0` (sysUpTime)
+  - `gpudevice.deviceinfo.devicestatus` ← MapToDeviceStatus
+  - `gpudevice.deviceinfo.osversion` ← Contains from sysDescr (parse OS info)
+  - `gpudevice.deviceinfo.kernelversion` ← Contains from sysDescr (parse kernel)
 
-    - **What:** `.1.3.6.1.4.1.53246.1.1.1.0` (NVIDIA module)
-    - **Operation:** `L8C_Map`
-    - **Cadence:** DEFAULT_CADENCE
-    - **Attributes:**
-        - `gpudevice.deviceinfo.gpucount` ← Set from `.1.3.6.1.4.1.53246.1.1.1.0.1.0`
-        - `gpudevice.deviceinfo.dcgmversion` ← Set from `.1.3.6.1.4.1.53246.1.1.1.0.2.0`
+</TabItem>
+<TabItem value="poll2" label="Poll 2: nvidiaGpuModule">
 
-=== "Poll 3: `nvidiaGpuInfo` — Per-GPU static info"
+**GPU count & DCGM version**
 
-    - **What:** `.1.3.6.1.4.1.53246.1.1.1.1` (NVIDIA GPU table)
-    - **Operation:** `L8C_Map`
-    - **Cadence:** DEFAULT_CADENCE
-    - **Attributes:** single attribute using `SnmpGpuTable` with static mapping:
-        - `gpudevice.gpus` ← `SnmpGpuTable(mapping: "1:devicename:set,2:deviceuuid:set,3:serialnumber:set,4:pcibusid:set,13:driverversion:set,14:cudaversion:set,15:ecccorrectedcount:set,16:eccuncorrectedcount:set,17:powerstate:set")`
+- **What:** `.1.3.6.1.4.1.53246.1.1.1.0` (NVIDIA module)
+- **Operation:** `L8C_Map`
+- **Cadence:** DEFAULT_CADENCE
+- **Attributes:**
+  - `gpudevice.deviceinfo.gpucount` ← Set from `.1.3.6.1.4.1.53246.1.1.1.0.1.0`
+  - `gpudevice.deviceinfo.dcgmversion` ← Set from `.1.3.6.1.4.1.53246.1.1.1.0.2.0`
 
-=== "Poll 4: `nvidiaGpuMetrics` — Per-GPU dynamic metrics"
+</TabItem>
+<TabItem value="poll3" label="Poll 3: nvidiaGpuInfo">
 
-    - **What:** `.1.3.6.1.4.1.53246.1.1.1.1` (same table, different cadence)
-    - **Operation:** `L8C_Map`
-    - **Cadence:** EVERY_5_MINUTES_ALWAYS (metrics need frequent polling)
-    - **Attributes:** single attribute using `SnmpGpuTable` with time-series mapping:
-        - `gpudevice.gpus` ← `SnmpGpuTable(mapping: "5:gpuutilizationpercent:ts,6:vramusedmib:ts,7:temperaturecelsius:ts,8:powerdrawwatts:ts,9:fanspeedpercent:ts,10:smclockmhz:ts,11:memclockmhz:ts,12:memoryutilizationpercent:ts")`
+**Per-GPU static info**
 
-=== "Poll 5: `nvidiaHostResources` — Host CPU/memory/storage"
+- **What:** `.1.3.6.1.4.1.53246.1.1.1.1` (NVIDIA GPU table)
+- **Operation:** `L8C_Map`
+- **Cadence:** DEFAULT_CADENCE
+- **Attributes:** single attribute using `SnmpGpuTable` with static mapping:
+  - `gpudevice.gpus` ← `SnmpGpuTable(mapping: "1:devicename:set,2:deviceuuid:set,3:serialnumber:set,4:pcibusid:set,13:driverversion:set,14:cudaversion:set,15:ecccorrectedcount:set,16:eccuncorrectedcount:set,17:powerstate:set")`
 
-    - **What:** `.1.3.6.1.2.1.25` (Host Resources MIB)
-    - **Operation:** `L8C_Map`
-    - **Cadence:** DEFAULT_CADENCE
-    - **Attributes:**
-        - `gpudevice.system.memorytotalbytes` ← Set from `.1.3.6.1.2.1.25.2.2.0`
-        - `gpudevice.system.cpumodel` ← Set from `.1.3.6.1.2.1.25.3.2.1.3.1`
-        - `gpudevice.system.cpuutilizationpercent` ← SetTimeSeries from `.1.3.6.1.2.1.25.3.3.1.2.1`
-        - `gpudevice.system.storagedescription` ← Set from `.1.3.6.1.2.1.25.2.3.1.3.2`
-        - `gpudevice.system.storagetotalbytes` ← Set from `.1.3.6.1.2.1.25.2.3.1.5.2`
-        - `gpudevice.system.storageusedbytes` ← SetTimeSeries from `.1.3.6.1.2.1.25.2.3.1.6.2`
+</TabItem>
+<TabItem value="poll4" label="Poll 4: nvidiaGpuMetrics">
 
-=== "Poll 6: `nvidiaInterfaces` — Network interfaces"
+**Per-GPU dynamic metrics**
 
-    - **What:** `.1.3.6.1.2.1.2.2.1` (IF-MIB)
-    - **Operation:** `L8C_Table`
-    - **Cadence:** EVERY_15_MINUTES_ALWAYS
-    - **Attributes:** existing table-to-map pattern → `gpudevice.system.networkinterfaces.*`
+- **What:** `.1.3.6.1.4.1.53246.1.1.1.1` (same table, different cadence)
+- **Operation:** `L8C_Map`
+- **Cadence:** EVERY_5_MINUTES_ALWAYS (metrics need frequent polling)
+- **Attributes:** single attribute using `SnmpGpuTable` with time-series mapping:
+  - `gpudevice.gpus` ← `SnmpGpuTable(mapping: "5:gpuutilizationpercent:ts,6:vramusedmib:ts,7:temperaturecelsius:ts,8:powerdrawwatts:ts,9:fanspeedpercent:ts,10:smclockmhz:ts,11:memclockmhz:ts,12:memoryutilizationpercent:ts")`
+
+</TabItem>
+<TabItem value="poll5" label="Poll 5: nvidiaHostResources">
+
+**Host CPU / memory / storage**
+
+- **What:** `.1.3.6.1.2.1.25` (Host Resources MIB)
+- **Operation:** `L8C_Map`
+- **Cadence:** DEFAULT_CADENCE
+- **Attributes:**
+  - `gpudevice.system.memorytotalbytes` ← Set from `.1.3.6.1.2.1.25.2.2.0`
+  - `gpudevice.system.cpumodel` ← Set from `.1.3.6.1.2.1.25.3.2.1.3.1`
+  - `gpudevice.system.cpuutilizationpercent` ← SetTimeSeries from `.1.3.6.1.2.1.25.3.3.1.2.1`
+  - `gpudevice.system.storagedescription` ← Set from `.1.3.6.1.2.1.25.2.3.1.3.2`
+  - `gpudevice.system.storagetotalbytes` ← Set from `.1.3.6.1.2.1.25.2.3.1.5.2`
+  - `gpudevice.system.storageusedbytes` ← SetTimeSeries from `.1.3.6.1.2.1.25.2.3.1.6.2`
+
+</TabItem>
+<TabItem value="poll6" label="Poll 6: nvidiaInterfaces">
+
+**Network interfaces**
+
+- **What:** `.1.3.6.1.2.1.2.2.1` (IF-MIB)
+- **Operation:** `L8C_Table`
+- **Cadence:** EVERY_15_MINUTES_ALWAYS
+- **Attributes:** existing table-to-map pattern → `gpudevice.system.networkinterfaces.*`
+
+</TabItem>
+</Tabs>
 
 #### Phase 1.3: Updates to `SNMP.go`
 
@@ -363,41 +387,49 @@ parameter to select the parser:
 Each format parser extracts per-GPU data from the structured `nvidia-smi`
 text output.
 
-=== "utilization"
+<Tabs groupId="nvidia-smi-formats">
+<TabItem value="utilization" label="utilization">
 
-    From `nvidia-smi -q -d UTILIZATION` — parses per-GPU blocks, extracts:
+From `nvidia-smi -q -d UTILIZATION` — parses per-GPU blocks, extracts:
 
-    - `encoder_utilization_percent` per GPU
-    - `decoder_utilization_percent` per GPU
+- `encoder_utilization_percent` per GPU
+- `decoder_utilization_percent` per GPU
 
-=== "temperature"
+</TabItem>
+<TabItem value="temperature" label="temperature">
 
-    From `nvidia-smi -q -d TEMPERATURE` — parses per-GPU blocks, extracts:
+From `nvidia-smi -q -d TEMPERATURE` — parses per-GPU blocks, extracts:
 
-    - `memory_temperature_celsius` per GPU
-    - `shutdown_temperature` per GPU (static)
-    - `slowdown_temperature` per GPU (static)
+- `memory_temperature_celsius` per GPU
+- `shutdown_temperature` per GPU (static)
+- `slowdown_temperature` per GPU (static)
 
-=== "power"
+</TabItem>
+<TabItem value="power" label="power">
 
-    From `nvidia-smi -q -d POWER` — parses per-GPU blocks, extracts:
+From `nvidia-smi -q -d POWER` — parses per-GPU blocks, extracts:
 
-    - `power_limit_watts` per GPU (static)
+- `power_limit_watts` per GPU (static)
 
-=== "version"
+</TabItem>
+<TabItem value="version" label="version">
 
-    From `show version` — parses key-value output, extracts:
+From `show version` — parses key-value output, extracts:
 
-    - `gpudevice.deviceinfo.kernelversion`
-    - `gpudevice.deviceinfo.model` (from DGX/HGX Software line)
-    - `gpudevice.deviceinfo.serialnumber` (if present)
+- `gpudevice.deviceinfo.kernelversion`
+- `gpudevice.deviceinfo.model` (from DGX/HGX Software line)
+- `gpudevice.deviceinfo.serialnumber` (if present)
 
-=== "lscpu"
+</TabItem>
+<TabItem value="lscpu" label="lscpu">
 
-    From `lscpu` — parses key-value output, extracts:
+From `lscpu` — parses key-value output, extracts:
 
-    - `gpudevice.system.cpusockets`
-    - `gpudevice.system.cpucorestotal`
+- `gpudevice.system.cpusockets`
+- `gpudevice.system.cpucorestotal`
+
+</TabItem>
+</Tabs>
 
 **New file:** `l8parser/go/parser/rules/RestJsonParse.go` (~150 lines)
 

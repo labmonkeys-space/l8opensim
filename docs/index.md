@@ -1,3 +1,9 @@
+---
+slug: /
+title: l8opensim
+sidebar_label: Home
+---
+
 # l8opensim
 
 **Layer 8 Data Center Simulator** — SNMP v2c/v3, SSH, and HTTPS REST simulation
@@ -9,47 +15,41 @@ landing page; everything below lives here.
 
 ## Where to go next
 
-<div class="grid cards" markdown>
+### Getting Started
 
--   __Getting Started__
+Build the simulator, bring up a small test fleet, and run it in Docker.
 
-    ---
+- [Quick start](getting-started/quick-start.md)
+- [Docker](getting-started/docker.md)
 
-    Build the simulator, bring up a small test fleet, and run it in Docker.
+### Operations
 
-    [:octicons-arrow-right-24: Quick start](getting-started/quick-start.md)
+Scale to 30k devices, tune the `opensim` network namespace, configure flow
+export and SNMP trap emission.
 
--   __Operations__
+- [Scaling](ops/scaling.md)
+- [Flow export](ops/flow-export.md)
+- [SNMP traps](ops/snmp-traps.md)
 
-    ---
+### Reference
 
-    Scale to 30k devices, tune the `opensim` network namespace, and configure
-    flow export.
+Full CLI flag catalog, REST API, device-type tables, and protocol details.
 
-    [:octicons-arrow-right-24: Scaling](ops/scaling.md) ·
-    [:octicons-arrow-right-24: Flow export](ops/flow-export.md) ·
-    [:octicons-arrow-right-24: SNMP traps](ops/snmp-traps.md)
+- [CLI flags](reference/cli-flags.md)
+- [Web API](reference/web-api.md)
+- [Device types](reference/device-types.md)
+- [SNMP](reference/snmp.md) · [SNMP traps](reference/snmp-traps.md)
+- [Flow export reference](reference/flow-export.md)
 
--   __Reference__
+### GPU Simulation
 
-    ---
+NVIDIA DGX/HGX simulation, DCGM OID layout, and the pollaris / parser
+integration plan.
 
-    Full CLI flag catalog, REST API, device-type tables, and protocol details.
-
-    [:octicons-arrow-right-24: CLI flags](reference/cli-flags.md) ·
-    [:octicons-arrow-right-24: Web API](reference/web-api.md) ·
-    [:octicons-arrow-right-24: Device types](reference/device-types.md)
-
--   __GPU Simulation__
-
-    ---
-
-    NVIDIA DGX/HGX simulation, DCGM OID layout, and the pollaris / parser
-    integration plan.
-
-    [:octicons-arrow-right-24: GPU overview](reference/gpu/index.md)
-
-</div>
+- [GPU overview](reference/gpu/index.md)
+- [Protobuf model](reference/gpu/proto-model.md)
+- [Pollaris & parsing](reference/gpu/pollaris.mdx)
+- [DCGM simulation](reference/gpu/dcgm.md)
 
 ## What it is
 

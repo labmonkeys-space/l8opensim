@@ -6,7 +6,7 @@ notifications are deferred and tracked as follow-up work. This page covers
 the wire format, the JSON catalog schema, the HTTP endpoints, and the status
 JSON shape. For enabling the feature, CLI flags, and troubleshooting see
 [SNMP trap / INFORM export (operator guide)](../ops/snmp-traps.md) and
-[CLI flags → SNMP trap / INFORM export](cli-flags.md#snmp-trap-inform-export-flags).
+[CLI flags → SNMP trap / INFORM export](cli-flags.md#snmp-trap--inform-export-flags).
 
 ## Scope and security posture
 
@@ -264,7 +264,7 @@ state transition.
 
 The nine `-trap-*` flags are documented with their types, defaults, and
 purposes at
-[CLI flags → SNMP trap / INFORM export](cli-flags.md#snmp-trap-inform-export-flags).
+[CLI flags → SNMP trap / INFORM export](cli-flags.md#snmp-trap--inform-export-flags).
 
 ## Related
 
