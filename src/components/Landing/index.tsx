@@ -1,0 +1,273 @@
+import React, {useState} from 'react';
+import useBaseUrl from '@docusaurus/useBaseUrl';
+import Terminal from './Terminal';
+import {FEATURES, CATEGORIES, DOCS, STATUS} from './data';
+
+function Panel({title, meta, children}: {title?: string; meta?: string; children: React.ReactNode}) {
+  return (
+    <div className="l8-panel">
+      {title && (
+        <div className="l8-panel__hd">
+          <span className="l8-panel__title">{title}</span>
+          {meta && <span className="l8-panel__meta">{meta}</span>}
+        </div>
+      )}
+      <div className="l8-panel__bd">{children}</div>
+    </div>
+  );
+}
+
+function Stat({label, value, unit}: {label: string; value: string; unit?: string}) {
+  return (
+    <div className="l8-stat">
+      <div className="l8-stat__label">{label}</div>
+      <div className="l8-stat__val">
+        <span className="l8-stat__num">{value}</span>
+        {unit && <span className="l8-stat__unit">{unit}</span>}
+      </div>
+    </div>
+  );
+}
+
+function Copyable({text, prompt = '$'}: {text: string; prompt?: string}) {
+  const [copied, setCopied] = useState(false);
+  return (
+    <div className="l8-copy">
+      <span className="l8-copy__prompt">{prompt}</span>
+      <code className="l8-copy__text">{text}</code>
+      <button
+        type="button"
+        className="l8-copy__btn"
+        onClick={() => {
+          navigator.clipboard?.writeText(text);
+          setCopied(true);
+          setTimeout(() => setCopied(false), 1200);
+        }}
+      >
+        {copied ? 'copied' : 'copy'}
+      </button>
+    </div>
+  );
+}
+
+function Icon({name}: {name: string}) {
+  const c = {width: 18, height: 18, viewBox: '0 0 18 18', fill: 'none', stroke: 'currentColor', strokeWidth: 1} as const;
+  switch (name) {
+    case 'scale':
+      return (
+        <svg {...c}>
+          {[0, 1, 2].flatMap(r => [0, 1, 2].map(col => (
+            <rect key={`${r}-${col}`} x={2 + col * 5} y={2 + r * 5} width="4" height="4" />
+          )))}
+        </svg>
+      );
+    case 'proto':
+      return (
+        <svg {...c}>
+          <path d="M2 5h14M2 9h14M2 13h14" />
+          <circle cx="5" cy="5" r="0.8" fill="currentColor" />
+          <circle cx="10" cy="9" r="0.8" fill="currentColor" />
+          <circle cx="13" cy="13" r="0.8" fill="currentColor" />
+        </svg>
+      );
+    case 'devices':
+      return (<svg {...c}><rect x="2" y="3" width="14" height="9" /><path d="M6 15h6M9 12v3" /></svg>);
+    case 'gpu':
+      return (<svg {...c}><rect x="2" y="4" width="14" height="10" /><rect x="4" y="6" width="4" height="3" /><rect x="10" y="6" width="4" height="3" /><path d="M4 11h10" /></svg>);
+    case 'isol':
+      return (<svg {...c}><rect x="2" y="2" width="14" height="14" strokeDasharray="2 2" /><rect x="5" y="5" width="8" height="8" /></svg>);
+    case 'metric':
+      return (<svg {...c}><path d="M2 13 L5 9 L8 11 L11 5 L14 8 L16 7" /></svg>);
+    default:
+      return null;
+  }
+}
+
+function DocLink({to, t, h}: {to: string; t: string; h: string}) {
+  return (
+    <a href={to} className="l8-docs__link">
+      <span className="l8-docs__link-t">{t}</span>
+      <span className="l8-docs__link-h">{h}</span>
+      <span className="l8-docs__link-arr">→</span>
+    </a>
+  );
+}
+
+export default function Landing(): JSX.Element {
+  const quickStart = useBaseUrl('/getting-started/quick-start');
+
+  return (
+    <main className="l8-page">
+      <div className="l8-container">
+        {/* hero */}
+        <section className="l8-hero">
+          <div className="l8-hero__grid">
+            <div>
+              <div className="l8-hero__eyebrow">
+                <span className="l8-dot" /> v0.1.1 · Apache-2.0 · Go 1.26
+              </div>
+              <h1 className="l8-hero__title">
+                A network load target<br />
+                for the <span className="l8-hi">monitoring tools</span><br />
+                you're writing.
+              </h1>
+              <p className="l8-hero__body">
+                l8opensim simulates up to <b>30,000</b> network devices, GPU servers, storage systems
+                and Linux hosts on a single Linux host — each with its own IP, SNMP listener, SSH
+                server, HTTPS REST endpoint and flow exporter. Built on TUN interfaces and network
+                namespaces.
+              </p>
+              <div className="l8-hero__ctas">
+                <a className="l8-btn l8-btn--primary" href={quickStart}>quick start →</a>
+                <a className="l8-btn" href="https://github.com/labmonkeys-space/l8opensim">github ↗</a>
+              </div>
+            </div>
+            <div style={{display: 'grid', gap: 16}}>
+              <Terminal />
+              <div className="l8-hero__stats">
+                <Stat label="devices / host" value="30,000" unit="max" />
+                <Stat label="device types"   value="28"     unit="in 8 cat." />
+                <Stat label="mem / device"   value="~1"     unit="KB" />
+                <Stat label="alloc time"     value="12.4"   unit="s @ 30k" />
+              </div>
+            </div>
+          </div>
+        </section>
+
+        {/* 01 quick start */}
+        <section className="l8-sec">
+          <div className="l8-sec__hd">
+            <span className="l8-sec__num">01</span>
+            <h2 className="l8-sec__title">quick start</h2>
+            <span className="l8-sec__sub">three commands and a sudo</span>
+          </div>
+          <div className="l8-grid-3">
+            <Panel title="01 · clone" meta="git">
+              <Copyable text="git clone https://github.com/labmonkeys-space/l8opensim.git" />
+              <Copyable text="cd l8opensim/go/simulator" />
+            </Panel>
+            <Panel title="02 · build" meta="go 1.26+">
+              <Copyable text="go mod tidy" />
+              <Copyable text="go build -o simulator ." />
+            </Panel>
+            <Panel title="03 · run" meta="needs root">
+              <Copyable text="sudo ./simulator -auto-start-ip 10.0.0.1 -auto-count 100" />
+            </Panel>
+          </div>
+        </section>
+
+        {/* 02 features */}
+        <section className="l8-sec">
+          <div className="l8-sec__hd">
+            <span className="l8-sec__num">02</span>
+            <h2 className="l8-sec__title">what's in the box</h2>
+            <span className="l8-sec__sub">six pillars</span>
+          </div>
+          <div className="l8-features">
+            {FEATURES.map((f, i) => (
+              <div key={f.title} className="l8-panel">
+                <div className="l8-panel__hd">
+                  <span className="l8-panel__meta" style={{color: 'var(--l8-fg-mute)'}}>{String(i + 1).padStart(2, '0')}</span>
+                </div>
+                <div className="l8-panel__bd">
+                  <div className="l8-feat__ic"><Icon name={f.icon} /></div>
+                  <div className="l8-feat__t">{f.title}</div>
+                  <p className="l8-feat__b">{f.body}</p>
+                </div>
+              </div>
+            ))}
+          </div>
+        </section>
+
+        {/* 03 catalog */}
+        <section className="l8-sec">
+          <div className="l8-sec__hd">
+            <span className="l8-sec__num">03</span>
+            <h2 className="l8-sec__title">device catalog</h2>
+            <span className="l8-sec__sub">28 types · 8 categories · 341 resource files</span>
+          </div>
+          <div className="l8-grid-4">
+            {CATEGORIES.map(cat => (
+              <Panel key={cat.name} title={cat.name.toLowerCase()} meta={`${cat.items.length}`}>
+                <ul className="l8-cat__list">
+                  {cat.items.map(i => (<li key={i}><span className="l8-cat__bullet">›</span>{i}</li>))}
+                </ul>
+              </Panel>
+            ))}
+          </div>
+        </section>
+
+        {/* 04 status & scale */}
+        <section className="l8-sec">
+          <div className="l8-sec__hd">
+            <span className="l8-sec__num">04</span>
+            <h2 className="l8-sec__title">status & scale</h2>
+            <span className="l8-sec__sub">what works · how big</span>
+          </div>
+          <div className="l8-grid-3">
+            {STATUS.map(s => (
+              <Panel key={s.k} title={s.k.toLowerCase()} meta={`${s.items.length}`}>
+                <ul className="l8-status__list">
+                  {s.items.map(i => (<li key={i}><span className="l8-status__tick">■</span>{i}</li>))}
+                </ul>
+              </Panel>
+            ))}
+          </div>
+          <div className="l8-scale">
+            <Stat label="concurrent devices" value="30,000" unit="tested" />
+            <Stat label="device types"       value="28" />
+            <Stat label="resource files"     value="341" unit="json" />
+            <Stat label="world cities"       value="98"  unit="sysLocation" />
+            <Stat label="ssh commands"       value="36+" unit="linux" />
+          </div>
+        </section>
+
+        {/* 05 docs map */}
+        <section className="l8-sec">
+          <div className="l8-sec__hd">
+            <span className="l8-sec__num">05</span>
+            <h2 className="l8-sec__title">documentation map</h2>
+            <span className="l8-sec__sub">jump in</span>
+          </div>
+          <div className="l8-grid-4">
+            {DOCS.map(d => (
+              <Panel key={d.group} title={d.group.toLowerCase()}>
+                <p className="l8-docs__body">{d.body}</p>
+                <ul className="l8-docs__links">
+                  {d.links.map(l => (
+                    <li key={l.h}><DocLinkBU t={l.t} h={l.h} /></li>
+                  ))}
+                </ul>
+              </Panel>
+            ))}
+          </div>
+        </section>
+
+        {/* cta */}
+        <section className="l8-sec" style={{borderBottom: 'none'}}>
+          <Panel>
+            <div className="l8-cta">
+              <div>
+                <div className="l8-cta__eye">→ get started</div>
+                <h2 className="l8-cta__t">Spin up 30,000 devices in&nbsp;under&nbsp;13&nbsp;seconds.</h2>
+                <p className="l8-cta__b">Apache-2.0. No agents, no cloud, no per-device fees. Just TUN interfaces and a little Go.</p>
+              </div>
+              <div className="l8-cta__r">
+                <a className="l8-btn l8-btn--primary" href={quickStart}>quick start →</a>
+                <a className="l8-btn" href="https://github.com/labmonkeys-space/l8opensim">github ↗</a>
+              </div>
+            </div>
+          </Panel>
+        </section>
+      </div>
+    </main>
+  );
+}
+
+// Separate component so we can call the `useBaseUrl` hook per link (hooks cannot
+// run inside a .map callback's arrow if we want SSR-safe base-url resolution
+// under Docusaurus — this defers it to render time).
+function DocLinkBU({t, h}: {t: string; h: string}) {
+  const to = useBaseUrl(h);
+  return <DocLink to={to} t={t} h={h} />;
+}
