@@ -1,0 +1,67 @@
+{
+  "comment": "Universal generic syslog catalog (RFC 5424 and RFC 3164 compatible). Loaded via embed.FS from syslog_catalog.go when no -syslog-catalog override is supplied. Weights are resolved per design.md §D10. Facility and severity accept either canonical string names or integers 0..23 / 0..7. Templates support the six fields listed in design.md §D4: DeviceIP, SysName, IfIndex, IfName, Now, Uptime. Spec intent: exercise OpenNMS syslogd ingestion queues, source-IP→node mapping, rate handling, PRI parsing — NOT vendor-idiomatic UEI matchers (per-device-type catalogs are a follow-up).",
+  "entries": [
+    {
+      "name": "interface-up",
+      "weight": 40,
+      "facility": "local7",
+      "severity": "notice",
+      "appName": "IFMGR",
+      "msgId": "LINKUP",
+      "structuredData": {
+        "ifIndex": "{{.IfIndex}}",
+        "ifName": "{{.IfName}}"
+      },
+      "template": "Interface {{.IfName}} (ifIndex={{.IfIndex}}) changed state to up"
+    },
+    {
+      "name": "interface-down",
+      "weight": 40,
+      "facility": "local7",
+      "severity": "error",
+      "appName": "IFMGR",
+      "msgId": "LINKDOWN",
+      "structuredData": {
+        "ifIndex": "{{.IfIndex}}",
+        "ifName": "{{.IfName}}"
+      },
+      "template": "Interface {{.IfName}} (ifIndex={{.IfIndex}}) changed state to down"
+    },
+    {
+      "name": "auth-success",
+      "weight": 20,
+      "facility": "authpriv",
+      "severity": "info",
+      "appName": "sshd",
+      "msgId": "LOGIN",
+      "template": "Accepted password for admin from 10.0.0.1 port 54321 ssh2"
+    },
+    {
+      "name": "auth-failure",
+      "weight": 20,
+      "facility": "authpriv",
+      "severity": "warning",
+      "appName": "sshd",
+      "msgId": "FAIL",
+      "template": "Failed password for admin from 10.0.0.1 port 54321 ssh2"
+    },
+    {
+      "name": "config-change",
+      "weight": 10,
+      "facility": "local7",
+      "severity": "notice",
+      "appName": "SYSMGR",
+      "msgId": "CONFIG",
+      "template": "Configuration changed by admin from console"
+    },
+    {
+      "name": "system-restart",
+      "weight": 5,
+      "facility": "local7",
+      "severity": "warning",
+      "appName": "SYSMGR",
+      "msgId": "RESTART",
+      "template": "System restart requested by admin"
+    }
+  ]
+}
