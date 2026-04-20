@@ -43,6 +43,14 @@ sudo ./simulator [flags]
 -trap-inform-timeout <duration>   # Per-retry timeout in inform mode (default: 5s)
 -trap-inform-retries <int>        # Max retransmissions per inform (default: 2)
 
+# UDP syslog export flags (RFC 5424 / RFC 3164)
+-syslog-collector <host:port>     # Enable UDP syslog export to this collector (default port 514)
+-syslog-format <fmt>              # 5424 (default, structured) | 3164 (legacy BSD)
+-syslog-interval <duration>       # Per-device mean firing interval, Poisson-distributed (default: 10s)
+-syslog-global-cap <rate>         # Simulator-wide rate ceiling (0 = unlimited)
+-syslog-catalog <path>            # Override embedded universal 6-entry catalog
+-syslog-source-per-device         # Source IP = device IP (default: true; bind failure is non-fatal, falls back to shared socket)
+
 # Tests
 cd go
 go test ./...
@@ -111,6 +119,27 @@ The `FlowEncoder` interface has a `MaxRecordSize() int` extension point: fixed-s
 **Trap HTTP endpoints:**
 - `GET /api/v1/traps/status` — JSON with `enabled`, `mode`, `sent`, INFORM counters (`informs_pending`, `informs_acked`, `informs_failed`, `informs_dropped` when mode=inform), `rate_limiter_tokens_available` (when `-trap-global-cap` is set), `devices_exporting`.
 - `POST /api/v1/devices/{ip}/trap` — body `{"name":"linkDown","varbindOverrides":{"IfIndex":"3"}}` → `202 Accepted` + `{"requestId": N}`. `400` for unknown catalog entry, `404` for unknown device, `503` when trap export is disabled. Fire-and-forget: returns without waiting on INFORM ack.
+
+**UDP syslog export:** `syslog_manager.go` (SimulatorManager integration, SyslogConfig, `StartSyslogExport` / `StopSyslogExport`, `SyslogStatus`) + `syslog_catalog.go` (JSON catalog with embedded universal 6-entry set; weighted-random pick; `text/template`-based body / structured-data resolution with all templates pre-compiled at load) + `syslog_wire.go` (`SyslogEncoder` interface with `RFC5424Encoder` and `RFC3164Encoder` — PRI calc, ISO 8601 / `Mmm DD HH:MM:SS` timestamps, SD-PARAM escape per §6.3.3, HOSTNAME / APP-NAME / MSGID / TAG sanitisation, MaxMessageSize enforcement) + `syslog_scheduler.go` (single central min-heap scheduler with Poisson inter-arrival + `golang.org/x/time/rate` global cap; derived context so `Stop()` is bounded-time under cap) + `syslog_exporter.go` (per-device `SyslogExporter` with atomic per-device UDP socket and shared-socket fallback).
+
+**Syslog catalog:**
+- Default catalog is compiled into the binary from `resources/_common/syslog.json` via `embed.FS` — feature works out of the box.
+- Override with `-syslog-catalog <path>` (complete replacement, not merge).
+- Universal catalog ships 6 entries: `interface-up` / `interface-down` (local7.notice/error, IFMGR), `auth-success` / `auth-failure` (authpriv.info/warning, sshd), `config-change` / `system-restart` (local7.notice/warning, SYSMGR). Weights sum to 135.
+- Template vocabulary is restricted to `{{.DeviceIP}}`, `{{.SysName}}`, `{{.IfIndex}}`, `{{.IfName}}`, `{{.Now}}`, `{{.Uptime}}`. Unknown fields are rejected at catalog load.
+- SD-NAME keys are validated against RFC 5424 §6.3.3 at load; each templated value is pre-compiled to a `*template.Template` so the fire hot path is allocation-light (measured 894 ns/op).
+- Entry `appName` is required (RFC 3164 TAG has no NILVALUE). Facility and severity accept canonical names (`local7`, `error`) or integers in range (`0..23` / `0..7`). MTU-safety dry-render rejects entries whose worst-case rendered output exceeds 1400 bytes.
+
+**Syslog operational notes:**
+- Only one format on the wire at a time — `-syslog-format 5424` (default) or `3164`. Mixed formats on one socket break auto-detecting parsers downstream; operators select one per deployment.
+- Per-device UDP source binding reuses the same `setupVethPair` + `FORWARD -i veth-sim-host -j ACCEPT` rule shared by flow / trap. No new netns / iptables surface.
+- Per-device bind failure is **non-fatal** for syslog (unlike INFORM): exporter logs a warning and falls back to the shared socket. When the primary per-device write fails but the shared fallback succeeds, the primary failure is logged and stats count the send as successful.
+- The collector-side `rp_filter` caveat is the same as flow / trap — accept UDP from device IPs with `net.ipv4.conf.*.rp_filter=0` or `2`.
+- On-demand HTTP fires **bypass the global rate limiter** (test-harness use case; scheduler-driven traffic still honours `-syslog-global-cap`).
+
+**Syslog HTTP endpoints:**
+- `GET /api/v1/syslog/status` — JSON with `enabled`, `format` (`5424` or `3164`), `collector`, `sent`, `send_failures`, `rate_limiter_tokens_available` (when `-syslog-global-cap` is set), `devices_exporting`.
+- `POST /api/v1/devices/{ip}/syslog` — body `{"name":"interface-down","templateOverrides":{"IfIndex":"3","IfName":"Gi0/3"}}` → `202 Accepted` + `{}`. `400` for unknown catalog entry or malformed JSON, `404` for unknown device, `503` when syslog export is disabled.
 
 **Resource loading:** `resources.go` loads and caches the 379 JSON files at startup. Each device type directory has split JSON files for SNMP, SSH, and REST responses that are merged at load time.
 

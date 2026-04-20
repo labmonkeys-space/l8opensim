@@ -84,6 +84,7 @@ type DeviceSimulator struct {
 	metricsCycler *MetricsCycler   // Per-device cycling CPU/memory metrics
 	flowExporter  *FlowExporter   // NetFlow/IPFIX exporter (nil if flow export disabled)
 	trapExporter  *TrapExporter   // SNMP trap/inform exporter (nil if trap export disabled)
+	syslogExporter *SyslogExporter // UDP syslog exporter (nil if syslog export disabled)
 	netNamespace  *NetNamespace   // Network namespace (nil if using root namespace)
 	running      bool
 	mu           sync.RWMutex
@@ -222,6 +223,22 @@ type SimulatorManager struct {
 	trapInformRetries   int
 	trapSourcePerDevice bool
 	trapCatalogPath     string // "" when using embedded catalog
+
+	// UDP syslog export state (nil/zero when disabled; set by StartSyslogExport).
+	// See syslog_manager.go for lifecycle and syslog_exporter.go for per-device state.
+	syslogActive          atomic.Bool
+	syslogCatalog         *SyslogCatalog
+	syslogScheduler       *SyslogScheduler
+	syslogEncoder         SyslogEncoder
+	syslogLimiter         *rate.Limiter // independent of trap's limiter (design.md §D9)
+	syslogConn            *net.UDPConn  // shared fallback when per-device bind disabled or fails
+	syslogCollectorAddr   *net.UDPAddr
+	syslogCollectorStr    string
+	syslogFormat          SyslogFormat
+	syslogInterval        time.Duration
+	syslogGlobalCap       int
+	syslogSourcePerDevice bool
+	syslogCatalogPath     string // "" when using embedded catalog
 
 	mu              sync.RWMutex
 }

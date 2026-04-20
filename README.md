@@ -41,6 +41,15 @@ network namespaces.
   UDP source IPs. Suited to OpenNMS `trapd` scale testing. Configure with
   `-trap-collector <host:port>`; full flag list and catalog schema in
   [CLAUDE.md](CLAUDE.md) → "SNMP trap export".
+- **Per-device UDP syslog export** (RFC 5424 / RFC 3164) — central
+  Poisson scheduler with a global rate cap, user-overridable JSON
+  catalog, and per-device UDP source IPs. Ships six generic entries
+  (interface up/down, auth success/failure, config change, system
+  restart) spanning `local7` and `authpriv`; select format with
+  `-syslog-format 5424|3164`. Suited to OpenNMS `syslogd` scale
+  testing — configure with `-syslog-collector <host:port>`; full flag
+  list and catalog schema in [CLAUDE.md](CLAUDE.md) →
+  "UDP syslog export".
 
 ## Quick start
 
