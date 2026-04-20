@@ -35,8 +35,10 @@ import (
 	"math/rand"
 	"os"
 	"sort"
+	"strconv"
 	"strings"
 	"text/template"
+	"time"
 )
 
 //go:embed resources/_common/syslog.json
@@ -195,28 +197,41 @@ type syslogCatalogJSON struct {
 	Entries []syslogCatalogEntryJSON `json:"entries"`
 }
 
+// syslogSDEntry is one pre-compiled structured-data key/value pair. `Tmpl`
+// is non-nil when the source value contained a template directive; in that
+// case `Raw` is kept only for error messages. When `Tmpl` is nil the source
+// was a literal and `Raw` is used verbatim. Order is fixed at catalog load
+// so RFC 5424 output is deterministic across renders.
+type syslogSDEntry struct {
+	Key  string
+	Tmpl *template.Template
+	Raw  string
+}
+
 // SyslogCatalogEntry is one parsed catalog entry. `TemplateTmpl` and
 // `HostnameTmpl` are nil when the corresponding source string was empty;
-// callers must check before invoking Execute. `StructuredData` is flattened
-// to a stable sorted slice of [key, value] pairs so RFC 5424 output is
-// deterministic across renders.
+// callers must check before invoking Execute.
 type SyslogCatalogEntry struct {
-	Name               string
-	Weight             int
-	Facility           SyslogFacility
-	Severity           SyslogSeverity
-	AppName            string
-	MsgID              string
-	StructuredDataKeys []string          // sorted; empty when no SD
-	StructuredData     map[string]string // same data, by key
-	Hostname           string            // raw source — empty means "use default derivation"
-	HostnameTmpl       *template.Template
-	Template           string // raw source — may be empty
-	TemplateTmpl       *template.Template
+	Name           string
+	Weight         int
+	Facility       SyslogFacility
+	Severity       SyslogSeverity
+	AppName        string
+	MsgID          string
+	StructuredData []syslogSDEntry // sorted by Key; pre-compiled
+	Hostname       string          // raw source — empty means "use default derivation"
+	HostnameTmpl   *template.Template
+	Template       string // raw source — may be empty
+	TemplateTmpl   *template.Template
 }
 
 // SyslogCatalog is the whole parsed catalog plus cached weight metadata for
 // Pick. Immutable after load; safe for concurrent read.
+//
+// Concurrency note: the catalog is safe to share across goroutines, but
+// the `*rand.Rand` argument to `Pick` is NOT — math/rand's Rand is not
+// concurrency-safe. Scheduler code must own a per-goroutine Rand or
+// protect a shared one with a mutex.
 type SyslogCatalog struct {
 	Entries     []*SyslogCatalogEntry
 	ByName      map[string]*SyslogCatalogEntry
@@ -324,7 +339,14 @@ func compileSyslogEntry(raw syslogCatalogEntryJSON, source string, idx int) (*Sy
 	if !raw.Severity.set {
 		return nil, fmt.Errorf("syslog catalog: %s entry %q: severity is required", source, raw.Name)
 	}
+	if raw.AppName == "" {
+		return nil, fmt.Errorf("syslog catalog: %s entry %q: appName is required "+
+			"(RFC 3164 has no NILVALUE — every entry must name the emitting app)",
+			source, raw.Name)
+	}
 	weight := raw.Weight
+	// weight == 0 is coerced to 1 for consistency with trap_catalog.go behaviour.
+	// Operators who want "never pick" should omit the entry rather than set weight 0.
 	if weight == 0 {
 		weight = 1
 	}
@@ -341,15 +363,6 @@ func compileSyslogEntry(raw syslogCatalogEntryJSON, source string, idx int) (*Sy
 		MsgID:    raw.MsgID,
 		Hostname: raw.Hostname,
 		Template: raw.Template,
-	}
-	if len(raw.StructuredData) > 0 {
-		entry.StructuredData = make(map[string]string, len(raw.StructuredData))
-		entry.StructuredDataKeys = make([]string, 0, len(raw.StructuredData))
-		for k, v := range raw.StructuredData {
-			entry.StructuredData[k] = v
-			entry.StructuredDataKeys = append(entry.StructuredDataKeys, k)
-		}
-		sort.Strings(entry.StructuredDataKeys)
 	}
 
 	// Validate template fields in every templatable string before parsing
@@ -369,11 +382,6 @@ func compileSyslogEntry(raw syslogCatalogEntryJSON, source string, idx int) (*Sy
 			return nil, err
 		}
 	}
-	for k, v := range raw.StructuredData {
-		if err := validateSyslogTemplateFields(v, raw.Name, "structuredData."+k); err != nil {
-			return nil, err
-		}
-	}
 
 	if raw.Template != "" {
 		tmpl, err := template.New(raw.Name + ".template").Parse(raw.Template)
@@ -390,15 +398,68 @@ func compileSyslogEntry(raw syslogCatalogEntryJSON, source string, idx int) (*Sy
 		entry.HostnameTmpl = tmpl
 	}
 
-	// MTU-safety dry-render (design.md §D12). We render with worst-case values
-	// for every template field and reject the entry at load time if the total
-	// 5424 message bytes exceed maxSyslogMessageBytes. 5424 is always at least
-	// as large as 3164 for the same inputs (structured data + BOM overhead),
-	// so checking 5424 is sufficient.
+	// Structured-data: validate each key against RFC 5424 §6.3.3 SD-NAME,
+	// field-validate the value, and pre-compile its template at load time
+	// (spec Requirement "Varbind templating" — templates parsed once at
+	// catalog load, not at every fire).
+	if len(raw.StructuredData) > 0 {
+		entry.StructuredData = make([]syslogSDEntry, 0, len(raw.StructuredData))
+		keys := make([]string, 0, len(raw.StructuredData))
+		for k := range raw.StructuredData {
+			keys = append(keys, k)
+		}
+		sort.Strings(keys)
+		for _, k := range keys {
+			if err := validateSyslogSDName(k, raw.Name); err != nil {
+				return nil, err
+			}
+			v := raw.StructuredData[k]
+			if err := validateSyslogTemplateFields(v, raw.Name, "structuredData."+k); err != nil {
+				return nil, err
+			}
+			sd := syslogSDEntry{Key: k, Raw: v}
+			if strings.Contains(v, "{{") {
+				tmpl, err := template.New(raw.Name + ".sd." + k).Parse(v)
+				if err != nil {
+					return nil, fmt.Errorf("syslog catalog: %s entry %q structuredData[%s] parse: %w",
+						source, raw.Name, k, err)
+				}
+				sd.Tmpl = tmpl
+			}
+			entry.StructuredData = append(entry.StructuredData, sd)
+		}
+	}
+
+	// MTU-safety dry-render (design.md §D12). Render with worst-case values
+	// for every template field using the *actual* 5424 encoder — an earlier
+	// implementation used an approximation that underestimated in two ways
+	// (SD-value escape expansion was ignored; per-SD-pair leading space
+	// wasn't counted). Running the real encoder gives an exact upper bound
+	// for the worst-case context, which is what the spec requires.
 	if err := validateSyslogEntrySize(entry, source); err != nil {
 		return nil, err
 	}
 	return entry, nil
+}
+
+// validateSyslogSDName rejects SD-NAME values that violate RFC 5424 §6.3.3.
+// SD-NAME = 1*32PRINTUSASCII excluding `=`, SP, `]`, `"`.
+func validateSyslogSDName(name, entryName string) error {
+	if len(name) == 0 || len(name) > 32 {
+		return fmt.Errorf("syslog catalog: entry %q structuredData key %q: length %d "+
+			"violates RFC 5424 §6.3.3 (SD-NAME must be 1..32 characters)",
+			entryName, name, len(name))
+	}
+	for i := 0; i < len(name); i++ {
+		c := name[i]
+		if c < 33 || c > 126 || c == '=' || c == ']' || c == '"' {
+			return fmt.Errorf("syslog catalog: entry %q structuredData key %q: invalid "+
+				"character %q at position %d (RFC 5424 §6.3.3 SD-NAME excludes "+
+				"SP, `=`, `]`, `\"` and non-printable ASCII)",
+				entryName, name, string(c), i)
+		}
+	}
+	return nil
 }
 
 // validateSyslogTemplateFields scans s for `{{.Ident}}` tokens and rejects
@@ -434,10 +495,12 @@ func validateSyslogTemplateFields(s, entryName, which string) error {
 	}
 }
 
-// validateSyslogEntrySize renders the entry against a worst-case context and
-// rejects it if the 5424 byte length exceeds maxSyslogMessageBytes. The
-// worst-case context uses the longest plausible values for every template
-// field (design.md §D12) so the check is an upper bound across all devices.
+// validateSyslogEntrySize renders the entry against a worst-case context
+// using the actual 5424 encoder and rejects it if the encoded size exceeds
+// maxSyslogMessageBytes. Using the real encoder (not an approximation)
+// means the check accounts for SD-value escape expansion, per-pair
+// leading spaces, header token sanitisation, and every other format
+// detail the encoder performs.
 func validateSyslogEntrySize(entry *SyslogCatalogEntry, source string) error {
 	worst := SyslogTemplateCtx{
 		DeviceIP: "255.255.255.255",
@@ -451,36 +514,30 @@ func validateSyslogEntrySize(entry *SyslogCatalogEntry, source string) error {
 	if err != nil {
 		return fmt.Errorf("syslog catalog: %s entry %q dry-render: %w", source, entry.Name, err)
 	}
-	// The 5424 encoder is the heavier of the two formats; use it to size.
-	size := estimateRFC5424Size(resolved, worst.SysName)
-	if size > maxSyslogMessageBytes {
+	// When the catalog entry has no hostname template, simulate the
+	// exporter-level fallback to sysName so the worst-case bytes include
+	// a realistic HOSTNAME.
+	if resolved.Hostname == "" {
+		resolved.Hostname = worst.SysName
+	}
+
+	var buf bytes.Buffer
+	enc := &RFC5424Encoder{}
+	// Use a fixed worst-case timestamp — the exact value doesn't matter,
+	// TIMESTAMP width is constant for the 5424 format.
+	if err := enc.Encode(&buf, resolved, time.Unix(worst.Now, 0).UTC()); err != nil {
+		// The encoder itself enforces MaxMessageSize; surface that error
+		// with the catalog context so operators know which entry tripped.
+		return fmt.Errorf("syslog catalog: %s entry %q: dry-encoded size exceeds MTU-safety "+
+			"ceiling (%w) — shorten the template or structured-data fields",
+			source, entry.Name, err)
+	}
+	if buf.Len() > maxSyslogMessageBytes {
 		return fmt.Errorf("syslog catalog: %s entry %q: dry-rendered size %d exceeds MTU-safety "+
 			"ceiling of %d bytes — shorten the template or structured-data fields",
-			source, entry.Name, size, maxSyslogMessageBytes)
+			source, entry.Name, buf.Len(), maxSyslogMessageBytes)
 	}
 	return nil
-}
-
-// estimateRFC5424Size computes a reasonable upper bound on the emitted 5424
-// datagram size for `r`. It doesn't do the full format pass (that's in
-// syslog_wire.go); it just sums the field lengths plus conservative per-field
-// overhead. Used only for catalog-load MTU validation.
-func estimateRFC5424Size(r SyslogResolved, fallbackHost string) int {
-	host := r.Hostname
-	if host == "" {
-		host = fallbackHost
-	}
-	// `<PRI>` up to 5 bytes, version+timestamp+BOM ≈ 34 bytes, 5 separator
-	// spaces, 4 NILVALUE dashes on a bare message. Round to 64 for safety.
-	overhead := 64
-	sdLen := 0
-	for _, kv := range r.StructuredData {
-		sdLen += len(kv.Key) + len(kv.Value) + 4 // `key="..."`
-	}
-	if sdLen > 0 {
-		sdLen += 32 // `[meta@32473 ...]` wrapping
-	}
-	return overhead + len(host) + len(r.AppName) + len(r.MsgID) + sdLen + len(r.Message)
 }
 
 // Pick selects a catalog entry via weighted-random draw. rnd must be non-nil.
@@ -567,32 +624,30 @@ func (e *SyslogCatalogEntry) resolveAgainst(ctx SyslogTemplateCtx, _ map[string]
 		}
 		out.Hostname = buf.String()
 	}
-	if len(e.StructuredDataKeys) > 0 {
-		out.StructuredData = make([]SyslogSDPair, 0, len(e.StructuredDataKeys))
-		for _, k := range e.StructuredDataKeys {
-			raw := e.StructuredData[k]
-			// Structured-data values may contain templates too.
-			if strings.Contains(raw, "{{") {
-				tmpl, err := template.New(e.Name + ".sd." + k).Parse(raw)
-				if err != nil {
-					return SyslogResolved{}, fmt.Errorf("syslog %q structuredData[%s]: %w", e.Name, k, err)
-				}
-				buf.Reset()
-				if err := tmpl.Execute(&buf, ctx); err != nil {
-					return SyslogResolved{}, fmt.Errorf("syslog %q structuredData[%s]: %w", e.Name, k, err)
-				}
-				out.StructuredData = append(out.StructuredData, SyslogSDPair{Key: k, Value: buf.String()})
-			} else {
-				out.StructuredData = append(out.StructuredData, SyslogSDPair{Key: k, Value: raw})
+	if len(e.StructuredData) > 0 {
+		out.StructuredData = make([]SyslogSDPair, 0, len(e.StructuredData))
+		for _, sd := range e.StructuredData {
+			if sd.Tmpl == nil {
+				out.StructuredData = append(out.StructuredData, SyslogSDPair{Key: sd.Key, Value: sd.Raw})
+				continue
 			}
+			buf.Reset()
+			if err := sd.Tmpl.Execute(&buf, ctx); err != nil {
+				return SyslogResolved{}, fmt.Errorf("syslog %q structuredData[%s]: %w", e.Name, sd.Key, err)
+			}
+			out.StructuredData = append(out.StructuredData, SyslogSDPair{Key: sd.Key, Value: buf.String()})
 		}
 	}
 	return out, nil
 }
 
+// parseIntFieldSyslog is a strict decimal-integer parser for HTTP override
+// payloads. Unlike `fmt.Sscanf("%d")`, which accepts trailing non-numeric
+// bytes silently (`"3abc"` → 3), `strconv.Atoi` requires the entire string
+// to be a well-formed integer.
 func parseIntFieldSyslog(s, name string) (int, error) {
-	var n int
-	if _, err := fmt.Sscanf(s, "%d", &n); err != nil {
+	n, err := strconv.Atoi(s)
+	if err != nil {
 		return 0, fmt.Errorf("syslog template override %s: expected integer, got %q", name, s)
 	}
 	return n, nil

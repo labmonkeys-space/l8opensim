@@ -304,6 +304,104 @@ func TestByteIdentity5424(t *testing.T) {
 	}
 }
 
+// TestEncoderMaxMessageSizeEnforced — oversize messages must fail at
+// encode time rather than being sent as truncated/fragmented datagrams.
+// Exercises both 5424 and 3164.
+func TestEncoderMaxMessageSizeEnforced(t *testing.T) {
+	oversize := strings.Repeat("A", maxSyslogMessageBytes+50)
+
+	t.Run("5424", func(t *testing.T) {
+		var buf bytes.Buffer
+		enc := &RFC5424Encoder{}
+		msg := makeResolved(oversize)
+		if err := enc.Encode(&buf, msg, fixedNow()); err == nil {
+			t.Fatal("expected size-exceeded error, got nil")
+		}
+	})
+	t.Run("3164", func(t *testing.T) {
+		var buf bytes.Buffer
+		enc := &RFC3164Encoder{}
+		msg := makeResolved(oversize)
+		if err := enc.Encode(&buf, msg, fixedNow()); err == nil {
+			t.Fatal("expected size-exceeded error, got nil")
+		}
+	})
+}
+
+// TestEncoderMSGInjectionSanitised — CR / LF / NUL in MSG or SD values
+// MUST NOT pass through verbatim; otherwise an attacker or catalog author
+// could inject a fake `<PRI>` line into the collector's stream.
+func TestEncoderMSGInjectionSanitised(t *testing.T) {
+	t.Run("5424 MSG strips newline", func(t *testing.T) {
+		var buf bytes.Buffer
+		enc := &RFC5424Encoder{}
+		msg := makeResolved("real msg\n<0>fake injection")
+		if err := enc.Encode(&buf, msg, fixedNow()); err != nil {
+			t.Fatal(err)
+		}
+		wire := buf.String()
+		if strings.Contains(wire, "\n") {
+			t.Errorf("literal newline leaked to wire: %q", wire)
+		}
+		// The fake PRI characters are still in the message but no longer on
+		// a new line — downstream parsers see one contiguous message.
+		if !strings.Contains(wire, "real msg <0>fake injection") {
+			t.Errorf("expected newline -> space replacement, got: %q", wire)
+		}
+	})
+	t.Run("5424 SD value strips CRLF/NUL", func(t *testing.T) {
+		var buf bytes.Buffer
+		enc := &RFC5424Encoder{}
+		msg := makeResolved("body")
+		msg.StructuredData = []SyslogSDPair{{Key: "k", Value: "v1\r\nv2\x00v3"}}
+		if err := enc.Encode(&buf, msg, fixedNow()); err != nil {
+			t.Fatal(err)
+		}
+		wire := buf.String()
+		if strings.ContainsAny(wire, "\r\n\x00") {
+			t.Errorf("control bytes leaked to SD wire: %q", wire)
+		}
+	})
+	t.Run("3164 MSG strips newline", func(t *testing.T) {
+		var buf bytes.Buffer
+		enc := &RFC3164Encoder{}
+		msg := makeResolved("real\n<0>fake")
+		if err := enc.Encode(&buf, msg, fixedNow()); err != nil {
+			t.Fatal(err)
+		}
+		if strings.Contains(buf.String(), "\n") {
+			t.Errorf("literal newline leaked to wire: %q", buf.String())
+		}
+	})
+}
+
+// TestEncoderHeaderFramingCharsSanitised — `<`, `>`, `[`, `]`, `"` in
+// HOSTNAME / APP-NAME / MSGID must not pass through verbatim; those
+// characters carry framing meaning in RFC 5424 and can desync parsers.
+func TestEncoderHeaderFramingCharsSanitised(t *testing.T) {
+	var buf bytes.Buffer
+	enc := &RFC5424Encoder{}
+	msg := makeResolved("body")
+	msg.AppName = "IF<MGR>"
+	msg.MsgID = "LINK[DOWN]"
+	msg.Hostname = "host[fake]"
+	if err := enc.Encode(&buf, msg, fixedNow()); err != nil {
+		t.Fatal(err)
+	}
+	wire := buf.String()
+	for _, bad := range []string{"<MGR>", "[DOWN]", "[fake]"} {
+		if strings.Contains(wire, bad) {
+			t.Errorf("framing char leaked to wire: %q contains %q", wire, bad)
+		}
+	}
+	// Each disallowed char should have been replaced with `_`.
+	for _, good := range []string{"IF_MGR_", "LINK_DOWN_", "host_fake_"} {
+		if !strings.Contains(wire, good) {
+			t.Errorf("wire %q missing expected sanitised token %q", wire, good)
+		}
+	}
+}
+
 // TestByteIdentity3164 pins the MD5 of a canonical RFC 3164 encode.
 func TestByteIdentity3164(t *testing.T) {
 	var buf bytes.Buffer

@@ -7,6 +7,8 @@ package main
 
 import (
 	"math/rand"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -59,12 +61,12 @@ func TestSyslogCatalogOutOfRangeSeverity(t *testing.T) {
 	}{
 		{
 			name: "int too high",
-			body: `{"entries":[{"name":"x","facility":"user","severity":8,"template":"m"}]}`,
+			body: `{"entries":[{"name":"x","facility":"user","severity":8,"appName":"a","template":"m"}]}`,
 			want: "out of range",
 		},
 		{
 			name: "unknown string",
-			body: `{"entries":[{"name":"x","facility":"user","severity":"notASeverity","template":"m"}]}`,
+			body: `{"entries":[{"name":"x","facility":"user","severity":"notASeverity","appName":"a","template":"m"}]}`,
 			want: "unknown severity name",
 		},
 	}
@@ -83,7 +85,7 @@ func TestSyslogCatalogOutOfRangeSeverity(t *testing.T) {
 
 // TestSyslogCatalogUnknownFacility covers the facility side of the enum check.
 func TestSyslogCatalogUnknownFacility(t *testing.T) {
-	body := `{"entries":[{"name":"x","facility":"notAFacility","severity":"info","template":"m"}]}`
+	body := `{"entries":[{"name":"x","facility":"notAFacility","severity":"info","appName":"a","template":"m"}]}`
 	_, err := parseSyslogCatalog([]byte(body), "<test>")
 	if err == nil {
 		t.Fatal("expected error, got nil")
@@ -95,7 +97,7 @@ func TestSyslogCatalogUnknownFacility(t *testing.T) {
 
 // TestSyslogCatalogUnknownTemplateField rejects {{.NotAField}} at load.
 func TestSyslogCatalogUnknownTemplateField(t *testing.T) {
-	body := `{"entries":[{"name":"x","facility":"user","severity":"info","template":"hi {{.NotAField}}"}]}`
+	body := `{"entries":[{"name":"x","facility":"user","severity":"info","appName":"a","template":"hi {{.NotAField}}"}]}`
 	_, err := parseSyslogCatalog([]byte(body), "<test>")
 	if err == nil {
 		t.Fatal("expected error, got nil")
@@ -110,7 +112,7 @@ func TestSyslogCatalogUnknownTemplateField(t *testing.T) {
 // load time rather than producing truncated wire output at fire time.
 func TestSyslogCatalogOversizeRejected(t *testing.T) {
 	big := strings.Repeat("A", maxSyslogMessageBytes+100)
-	body := `{"entries":[{"name":"x","facility":"user","severity":"info","template":"` + big + `"}]}`
+	body := `{"entries":[{"name":"x","facility":"user","severity":"info","appName":"a","template":"` + big + `"}]}`
 	_, err := parseSyslogCatalog([]byte(body), "<test>")
 	if err == nil {
 		t.Fatal("expected error, got nil")
@@ -125,8 +127,8 @@ func TestSyslogCatalogOversizeRejected(t *testing.T) {
 // see the heavier entry ~8000 times (+/- a few %).
 func TestSyslogCatalogPickDistribution(t *testing.T) {
 	body := `{"entries":[
-		{"name":"heavy","facility":"user","severity":"info","template":"h","weight":40},
-		{"name":"light","facility":"user","severity":"info","template":"l","weight":10}
+		{"name":"heavy","facility":"user","severity":"info","appName":"a","template":"h","weight":40},
+		{"name":"light","facility":"user","severity":"info","appName":"a","template":"l","weight":10}
 	]}`
 	cat, err := parseSyslogCatalog([]byte(body), "<test>")
 	if err != nil {
@@ -233,8 +235,8 @@ func TestSyslogCatalogResolveUnknownOverride(t *testing.T) {
 // TestSyslogCatalogDuplicateName rejects two entries with the same name.
 func TestSyslogCatalogDuplicateName(t *testing.T) {
 	body := `{"entries":[
-		{"name":"dup","facility":"user","severity":"info","template":"a"},
-		{"name":"dup","facility":"user","severity":"info","template":"b"}
+		{"name":"dup","facility":"user","severity":"info","appName":"a","template":"a"},
+		{"name":"dup","facility":"user","severity":"info","appName":"a","template":"b"}
 	]}`
 	_, err := parseSyslogCatalog([]byte(body), "<test>")
 	if err == nil {
@@ -249,7 +251,7 @@ func TestSyslogCatalogDuplicateName(t *testing.T) {
 // integer syntax parse for facility (same for severity, implicitly covered
 // by the out-of-range tests above).
 func TestSyslogCatalogFacilityIntegerAccepted(t *testing.T) {
-	body := `{"entries":[{"name":"x","facility":23,"severity":3,"template":"m"}]}`
+	body := `{"entries":[{"name":"x","facility":23,"severity":3,"appName":"a","template":"m"}]}`
 	cat, err := parseSyslogCatalog([]byte(body), "<test>")
 	if err != nil {
 		t.Fatal(err)
@@ -259,5 +261,151 @@ func TestSyslogCatalogFacilityIntegerAccepted(t *testing.T) {
 	}
 	if cat.Entries[0].Severity != 3 {
 		t.Errorf("severity: got %d, want 3", cat.Entries[0].Severity)
+	}
+}
+
+// TestSyslogCatalogEmptyAppNameRejected — empty `appName` is a catalog
+// error because RFC 3164 has no NILVALUE for the TAG field.
+func TestSyslogCatalogEmptyAppNameRejected(t *testing.T) {
+	body := `{"entries":[{"name":"x","facility":"user","severity":"info","template":"m"}]}`
+	_, err := parseSyslogCatalog([]byte(body), "<test>")
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+	if !strings.Contains(err.Error(), "appName is required") {
+		t.Errorf("error %q: want mention of appName required", err.Error())
+	}
+}
+
+// TestSyslogCatalogSDNameInvalid covers the RFC 5424 §6.3.3 SD-NAME
+// grammar rejection: keys containing SP, =, ], ", or non-printable ASCII.
+func TestSyslogCatalogSDNameInvalid(t *testing.T) {
+	cases := []struct {
+		name string
+		key  string
+	}{
+		{"space in key", "has space"},
+		{"equals in key", "a=b"},
+		{"quote in key", `bad"`},
+		{"bracket in key", "bad]"},
+		{"empty key", ""},
+		{"too long", strings.Repeat("x", 33)},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			body := `{"entries":[{"name":"x","facility":"user","severity":"info","appName":"a","structuredData":{"` +
+				strings.ReplaceAll(strings.ReplaceAll(tc.key, `\`, `\\`), `"`, `\"`) +
+				`":"v"},"template":"m"}]}`
+			_, err := parseSyslogCatalog([]byte(body), "<test>")
+			if err == nil {
+				t.Fatal("expected error, got nil")
+			}
+			if !strings.Contains(err.Error(), "SD-NAME") {
+				t.Errorf("error %q: want SD-NAME mention", err.Error())
+			}
+		})
+	}
+}
+
+// TestSyslogCatalogParseIntStrict covers the strconv.Atoi tightening —
+// `fmt.Sscanf` previously accepted `"3abc"` as 3 silently.
+func TestSyslogCatalogParseIntStrict(t *testing.T) {
+	cat, err := LoadEmbeddedSyslogCatalog()
+	if err != nil {
+		t.Fatal(err)
+	}
+	e := cat.ByName["interface-down"]
+	for _, bad := range []string{"3abc", "", " 3", "3 ", "12.5"} {
+		if _, err := e.Resolve(SyslogTemplateCtx{}, map[string]string{"IfIndex": bad}); err == nil {
+			t.Errorf("expected error on IfIndex=%q, got nil", bad)
+		}
+	}
+	// Negative numbers are still accepted (they parse as valid integers).
+	// If the app wants to reject negatives it must do so at a higher layer.
+	if _, err := e.Resolve(SyslogTemplateCtx{}, map[string]string{"IfIndex": "-1"}); err != nil {
+		t.Errorf("negative IfIndex should parse: %v", err)
+	}
+}
+
+// TestSyslogCatalogSDTemplatesPreCompiled verifies that SD templates are
+// parsed at catalog load — the pre-compiled `*template.Template` is stored
+// on the entry, not re-parsed at every Resolve call.
+func TestSyslogCatalogSDTemplatesPreCompiled(t *testing.T) {
+	cat, err := LoadEmbeddedSyslogCatalog()
+	if err != nil {
+		t.Fatal(err)
+	}
+	e := cat.ByName["interface-down"]
+	if len(e.StructuredData) == 0 {
+		t.Fatal("interface-down has no structured data")
+	}
+	// At least one SD entry has a templated value (ifIndex -> "{{.IfIndex}}");
+	// assert it has a non-nil pre-compiled template.
+	foundTmpl := false
+	for _, sd := range e.StructuredData {
+		if sd.Tmpl != nil {
+			foundTmpl = true
+		}
+	}
+	if !foundTmpl {
+		t.Error("expected at least one pre-compiled SD template on interface-down")
+	}
+}
+
+// TestSyslogCatalogFileOverrideReplaces covers the spec scenario
+// "File override replaces embedded catalog" (Requirement "Syslog catalog
+// structure and loading"). Writes a minimal catalog file with three
+// custom entries and asserts the six universal entries are absent.
+func TestSyslogCatalogFileOverrideReplaces(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "custom.json")
+	body := `{"entries":[
+		{"name":"alpha","facility":"user","severity":"info","appName":"a","template":"A"},
+		{"name":"beta","facility":"user","severity":"info","appName":"a","template":"B"},
+		{"name":"gamma","facility":"user","severity":"info","appName":"a","template":"C"}
+	]}`
+	if err := os.WriteFile(path, []byte(body), 0644); err != nil {
+		t.Fatal(err)
+	}
+	cat, err := LoadSyslogCatalogFromFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := len(cat.Entries), 3; got != want {
+		t.Fatalf("entry count: got %d, want %d", got, want)
+	}
+	for _, name := range []string{"interface-up", "interface-down", "auth-success", "auth-failure", "config-change", "system-restart"} {
+		if _, ok := cat.ByName[name]; ok {
+			t.Errorf("universal entry %q unexpectedly present in file-override catalog", name)
+		}
+	}
+	for _, name := range []string{"alpha", "beta", "gamma"} {
+		if _, ok := cat.ByName[name]; !ok {
+			t.Errorf("custom entry %q missing from file-override catalog", name)
+		}
+	}
+}
+
+// BenchmarkSyslogResolve covers the spec scenario "Template evaluation
+// is not N² at scale" — mean per-fire Resolve SHALL be < 50 µs.
+func BenchmarkSyslogResolve(b *testing.B) {
+	cat, err := LoadEmbeddedSyslogCatalog()
+	if err != nil {
+		b.Fatal(err)
+	}
+	e := cat.ByName["interface-down"]
+	ctx := SyslogTemplateCtx{
+		DeviceIP: "10.42.0.1",
+		SysName:  "rtr-edge-01",
+		IfIndex:  3,
+		IfName:   "GigabitEthernet0/3",
+		Now:      1700000000,
+		Uptime:   123456,
+	}
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		if _, err := e.Resolve(ctx, nil); err != nil {
+			b.Fatal(err)
+		}
 	}
 }

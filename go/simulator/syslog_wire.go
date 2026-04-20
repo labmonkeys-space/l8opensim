@@ -31,7 +31,6 @@ package main
 import (
 	"bytes"
 	"fmt"
-	"strings"
 	"time"
 )
 
@@ -90,20 +89,86 @@ func calculatePRI(facility SyslogFacility, severity SyslogSeverity) string {
 	return fmt.Sprintf("<%d>", f*8+s)
 }
 
-// sanitiseHostToken replaces whitespace with hyphens and rejects empty
-// strings. Both RFC 3164 (§4.1.2) and RFC 5424 (§6.2.4) treat HOSTNAME as a
-// single printable token; embedded whitespace breaks field parsing
-// downstream. Caller pre-normalisation keeps the wire bytes predictable.
-func sanitiseHostToken(s string) string {
+// sanitiseHostname normalises HOSTNAME for both RFC formats. Spaces and
+// tabs become hyphens (spec Requirement "HOSTNAME derivation" — spaces
+// replaced to preserve the single-token structure); any other byte that
+// would break the header-token grammar (<, >, [, ], ", control chars)
+// becomes `_`. Empty input returns empty so the encoder's NILVALUE branch
+// can fire.
+func sanitiseHostname(s string) string {
 	if s == "" {
 		return ""
 	}
-	// Avoid allocating if there's nothing to do (common case).
-	if strings.IndexAny(s, " \t\n\r") < 0 {
+	b := make([]byte, 0, len(s))
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		switch {
+		case c == ' ' || c == '\t':
+			b = append(b, '-')
+		case c < 33 || c > 126 || c == '<' || c == '>' || c == '[' || c == ']' || c == '"':
+			b = append(b, '_')
+		default:
+			b = append(b, c)
+		}
+	}
+	return string(b)
+}
+
+// sanitiseHeaderField normalises APP-NAME, MSGID, and TAG values. Any byte
+// that breaks the header-token grammar (non-printable ASCII, or PRI / SD
+// framing delimiters) becomes `_`. Unlike HOSTNAME, spaces are *not*
+// converted to hyphens — the surrounding format already disallows spaces,
+// so they collapse to `_` along with other disallowed bytes.
+func sanitiseHeaderField(s string) string {
+	if s == "" {
+		return ""
+	}
+	b := make([]byte, 0, len(s))
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		if c < 33 || c > 126 || c == '<' || c == '>' || c == '[' || c == ']' || c == '"' {
+			b = append(b, '_')
+		} else {
+			b = append(b, c)
+		}
+	}
+	return string(b)
+}
+
+// sanitiseMessageBody strips injection-enabling control bytes from MSG and
+// STRUCTURED-DATA param values. Newlines / carriage returns / NULs get
+// replaced with spaces so a crafted catalog or HTTP-override cannot inject
+// a fake `<PRI>` line into the collector's stream after a newline.
+// Everything else — punctuation, whitespace other than CR/LF, high-bit
+// bytes — passes through. The 5424 SD-value path does its own
+// `" \ ]` backslash-escape on top of this.
+func sanitiseMessageBody(s string) string {
+	if s == "" {
+		return ""
+	}
+	// Fast path — if no control bytes, no allocation.
+	clean := true
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		if c == 0x00 || c == '\r' || c == '\n' {
+			clean = false
+			break
+		}
+	}
+	if clean {
 		return s
 	}
-	r := strings.NewReplacer(" ", "-", "\t", "-", "\n", "-", "\r", "-")
-	return r.Replace(s)
+	b := make([]byte, len(s))
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		switch c {
+		case 0x00, '\r', '\n':
+			b[i] = ' '
+		default:
+			b[i] = c
+		}
+	}
+	return string(b)
 }
 
 // -----------------------------------------------------------------------------
@@ -138,6 +203,8 @@ func (*RFC5424Encoder) Encode(buf *bytes.Buffer, msg SyslogResolved, now time.Ti
 	if buf == nil {
 		return fmt.Errorf("syslog 5424: buf is nil")
 	}
+	startLen := buf.Len()
+
 	// PRI + VERSION
 	buf.WriteString(calculatePRI(msg.Facility, msg.Severity))
 	buf.WriteByte('1')
@@ -154,14 +221,14 @@ func (*RFC5424Encoder) Encode(buf *bytes.Buffer, msg SyslogResolved, now time.Ti
 	buf.WriteByte(' ')
 
 	// HOSTNAME / APP-NAME / PROCID / MSGID (NILVALUE `-` when empty).
-	writeSyslog5424Field(buf, sanitiseHostToken(msg.Hostname))
+	writeSyslog5424Field(buf, sanitiseHostname(msg.Hostname))
 	buf.WriteByte(' ')
-	writeSyslog5424Field(buf, msg.AppName)
+	writeSyslog5424Field(buf, sanitiseHeaderField(msg.AppName))
 	buf.WriteByte(' ')
 	// PROCID not yet in scope (design §D4); always NILVALUE.
 	buf.WriteByte('-')
 	buf.WriteByte(' ')
-	writeSyslog5424Field(buf, msg.MsgID)
+	writeSyslog5424Field(buf, sanitiseHeaderField(msg.MsgID))
 	buf.WriteByte(' ')
 
 	// STRUCTURED-DATA.
@@ -172,12 +239,12 @@ func (*RFC5424Encoder) Encode(buf *bytes.Buffer, msg SyslogResolved, now time.Ti
 		buf.WriteString(syslogSDID)
 		for _, kv := range msg.StructuredData {
 			buf.WriteByte(' ')
+			// Keys are validated at catalog load against RFC 5424 SD-NAME.
 			buf.WriteString(kv.Key)
 			buf.WriteString(`="`)
-			// Escape backslash, double-quote, and close-bracket per RFC 5424
-			// §6.3.3 (PARAM-VALUE) — these are the only reserved characters
-			// inside the quoted value.
-			writeSyslog5424SDParamValue(buf, kv.Value)
+			// Strip injection-enabling control bytes first, then escape the
+			// RFC 5424 §6.3.3 reserved characters.
+			writeSyslog5424SDParamValue(buf, sanitiseMessageBody(kv.Value))
 			buf.WriteByte('"')
 		}
 		buf.WriteByte(']')
@@ -186,25 +253,27 @@ func (*RFC5424Encoder) Encode(buf *bytes.Buffer, msg SyslogResolved, now time.Ti
 	// MSG (no BOM — decision at top of file).
 	if msg.Message != "" {
 		buf.WriteByte(' ')
-		buf.WriteString(msg.Message)
+		buf.WriteString(sanitiseMessageBody(msg.Message))
+	}
+
+	// MTU safety: the catalog MTU guard uses this same encoder, but HTTP
+	// overrides or future exporter paths can still produce oversize content.
+	// Fail loudly rather than sending a truncated or fragmented datagram.
+	if encoded := buf.Len() - startLen; encoded > maxSyslogMessageBytes {
+		return fmt.Errorf("syslog 5424: encoded size %d exceeds MaxMessageSize %d",
+			encoded, maxSyslogMessageBytes)
 	}
 	return nil
 }
 
 // writeSyslog5424Field emits a single syslog 5424 header field value,
-// substituting NILVALUE `-` for empty input.
+// substituting NILVALUE `-` for empty input. Callers are responsible for
+// passing a value that has already been run through sanitiseHeaderField /
+// sanitiseHostname — this function trusts its input.
 func writeSyslog5424Field(buf *bytes.Buffer, v string) {
 	if v == "" {
 		buf.WriteByte('-')
 		return
-	}
-	// Header fields are tokens (no spaces permitted per RFC 5424 ABNF). The
-	// catalog's StringsLoader already rejects fields that contain spaces;
-	// this is an additional guard for operator-supplied content.
-	if strings.ContainsAny(v, " \t\n") {
-		// Replace rather than error — at fire time we can't fail the write
-		// and lose the message; substitute safer characters.
-		v = strings.NewReplacer(" ", "_", "\t", "_", "\n", "_").Replace(v)
 	}
 	buf.WriteString(v)
 }
@@ -248,6 +317,8 @@ func (*RFC3164Encoder) Encode(buf *bytes.Buffer, msg SyslogResolved, now time.Ti
 	if msg.Hostname == "" {
 		return fmt.Errorf("syslog 3164: hostname is required")
 	}
+	startLen := buf.Len()
+
 	// PRI
 	buf.WriteString(calculatePRI(msg.Facility, msg.Severity))
 
@@ -266,15 +337,16 @@ func (*RFC3164Encoder) Encode(buf *bytes.Buffer, msg SyslogResolved, now time.Ti
 	buf.WriteByte(' ')
 
 	// HOSTNAME
-	buf.WriteString(sanitiseHostToken(msg.Hostname))
+	buf.WriteString(sanitiseHostname(msg.Hostname))
 	buf.WriteByte(' ')
 
-	// TAG — truncated to 32 characters. RFC 5424-only fields (msgId,
-	// structuredData) are silently ignored (design.md Requirement
-	// "RFC 3164 wire format").
-	tag := msg.AppName
+	// TAG — sanitised to ASCII-token form and truncated to 32 characters.
+	// RFC 5424-only fields (msgId, structuredData) are silently ignored
+	// (design.md Requirement "RFC 3164 wire format").
+	tag := sanitiseHeaderField(msg.AppName)
 	if tag == "" {
-		// 3164 has no NILVALUE; use a placeholder token.
+		// 3164 has no NILVALUE; the catalog loader rejects empty AppName
+		// so this path is defensive only.
 		tag = "unknown"
 	}
 	if len(tag) > syslogTagMaxLen {
@@ -284,7 +356,12 @@ func (*RFC3164Encoder) Encode(buf *bytes.Buffer, msg SyslogResolved, now time.Ti
 	buf.WriteByte(':')
 	if msg.Message != "" {
 		buf.WriteByte(' ')
-		buf.WriteString(msg.Message)
+		buf.WriteString(sanitiseMessageBody(msg.Message))
+	}
+
+	if encoded := buf.Len() - startLen; encoded > maxSyslogMessageBytes {
+		return fmt.Errorf("syslog 3164: encoded size %d exceeds MaxMessageSize %d",
+			encoded, maxSyslogMessageBytes)
 	}
 	return nil
 }
