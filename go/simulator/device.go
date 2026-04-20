@@ -284,11 +284,10 @@ func (sm *SimulatorManager) CreateDevicesWithOptions(startIP string, count int, 
 
 			// Initialize UDP syslog exporter if syslog export is enabled.
 			// Per-device bind failure is non-fatal (no ack path that requires
-			// symmetric source IPs); exporter falls back to the shared socket.
+			// symmetric source IPs); exporter falls back to the shared socket
+			// with an in-function warning log.
 			if sm.syslogActive.Load() {
-				if err := sm.startDeviceSyslogExporter(device); err != nil {
-					log.Printf("syslog export: skipping device %s: %v", device.IP, err)
-				}
+				sm.startDeviceSyslogExporter(device)
 			}
 
 			// Cache the dynamic values using atomic for lock-free access
@@ -532,9 +531,7 @@ func (sm *SimulatorManager) createSingleDevice(deviceIndex int, deviceIP net.IP,
 
 	// Initialize UDP syslog exporter if syslog export is enabled.
 	if sm.syslogActive.Load() {
-		if err := sm.startDeviceSyslogExporter(device); err != nil {
-			log.Printf("syslog export: skipping device %s: %v", device.IP, err)
-		}
+		sm.startDeviceSyslogExporter(device)
 	}
 
 	// Cache the dynamic values using atomic for lock-free access

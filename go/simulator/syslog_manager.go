@@ -82,6 +82,12 @@ func (sm *SimulatorManager) StartSyslogExport(cfg SyslogConfig) error {
 	if cfg.Interval <= 0 {
 		return fmt.Errorf("syslog export: -syslog-interval must be positive, got %s", cfg.Interval)
 	}
+	// Mirror NewSyslogScheduler's own floor: sub-millisecond intervals
+	// busy-loop the scheduler when no global cap is set. Catch it here with
+	// a clean startup error rather than let the scheduler constructor panic.
+	if cfg.Interval < time.Millisecond {
+		return fmt.Errorf("syslog export: -syslog-interval must be >= 1ms, got %s", cfg.Interval)
+	}
 	if cfg.GlobalCap < 0 {
 		return fmt.Errorf("syslog export: -syslog-global-cap must be non-negative, got %d", cfg.GlobalCap)
 	}
@@ -166,12 +172,23 @@ func (sm *SimulatorManager) StopSyslogExport() {
 	}
 	sm.syslogActive.Store(false)
 
+	// Snapshot per-device exporters under each device's own mutex so we
+	// don't race `startDeviceSyslogExporter` (which writes under d.mu) or
+	// direct reads from `GetSyslogStatus` / `FireSyslogOnDevice`.
 	sm.mu.RLock()
 	scheduler := sm.syslogScheduler
-	devices := make([]*DeviceSimulator, 0, len(sm.devices))
+	type devExp struct {
+		d   *DeviceSimulator
+		exp *SyslogExporter
+	}
+	captured := make([]devExp, 0, len(sm.devices))
 	for _, d := range sm.devices {
-		if d.syslogExporter != nil {
-			devices = append(devices, d)
+		d.mu.Lock()
+		exp := d.syslogExporter
+		d.syslogExporter = nil
+		d.mu.Unlock()
+		if exp != nil {
+			captured = append(captured, devExp{d: d, exp: exp})
 		}
 	}
 	conn := sm.syslogConn
@@ -180,11 +197,8 @@ func (sm *SimulatorManager) StopSyslogExport() {
 	if scheduler != nil {
 		scheduler.Stop()
 	}
-	for _, d := range devices {
-		if d.syslogExporter != nil {
-			_ = d.syslogExporter.Close()
-			d.syslogExporter = nil
-		}
+	for _, ce := range captured {
+		_ = ce.exp.Close()
 	}
 	if conn != nil {
 		_ = conn.Close()
@@ -203,11 +217,20 @@ func (sm *SimulatorManager) StopSyslogExport() {
 //
 // Unlike the trap counterpart, per-device bind failure is never fatal for
 // syslog — there is no ack path that requires symmetric source IPs. On bind
-// failure we log a warning and fall back to the shared socket.
-func (sm *SimulatorManager) startDeviceSyslogExporter(device *DeviceSimulator) error {
+// failure we log a warning and fall back to the shared socket. Every error
+// scenario inside this function is handled internally (logged + degraded),
+// so the function has no error return; the trap-style signature was trimmed
+// after a review noted the call-site `err != nil` log branches were dead.
+func (sm *SimulatorManager) startDeviceSyslogExporter(device *DeviceSimulator) {
 	if !sm.syslogActive.Load() || device == nil {
-		return nil
+		return
 	}
+	// `device.sysName` is written once at device construction and never
+	// mutated (the simulator doesn't expose sysName-set via the admin API),
+	// so reading it here without holding `device.mu` is safe. Capture it
+	// into the exporter options as a plain string; subsequent runtime
+	// changes to `device.sysName` — if ever introduced — would not be
+	// reflected in emitted syslog messages until the exporter is rebuilt.
 	sm.mu.RLock()
 	opts := SyslogExporterOptions{
 		DeviceIP:   device.IP,
@@ -240,7 +263,6 @@ func (sm *SimulatorManager) startDeviceSyslogExporter(device *DeviceSimulator) e
 	if scheduler != nil {
 		scheduler.Register(device.IP, exporter)
 	}
-	return nil
 }
 
 // deviceIfNameFn returns the ifName for a given ifIndex on the device.
@@ -278,11 +300,16 @@ func (sm *SimulatorManager) GetSyslogStatus() SyslogStatus {
 	var sent, failures uint64
 	devicesExporting := 0
 	for _, d := range sm.devices {
-		if d.syslogExporter == nil {
+		// Snapshot the exporter pointer under d.mu so a concurrent Stop
+		// path (which nils it under d.mu.Lock) can't race this read.
+		d.mu.RLock()
+		exp := d.syslogExporter
+		d.mu.RUnlock()
+		if exp == nil {
 			continue
 		}
 		devicesExporting++
-		st := d.syslogExporter.Stats()
+		st := exp.Stats()
 		sent += st.Sent.Load()
 		failures += st.SendFailures.Load()
 	}
@@ -327,10 +354,15 @@ func (sm *SimulatorManager) FireSyslogOnDevice(ip, entryName string, overrides m
 	if device == nil {
 		return fmt.Errorf("%w: %q", ErrSyslogDeviceNotFound, ip)
 	}
-	if device.syslogExporter == nil {
+	// Snapshot the exporter pointer under d.mu so a concurrent Stop can't
+	// nil it between the guard check and the Fire call (TOCTOU).
+	device.mu.RLock()
+	exp := device.syslogExporter
+	device.mu.RUnlock()
+	if exp == nil {
 		return fmt.Errorf("%w: device %s has no syslog exporter", ErrSyslogExportDisabled, ip)
 	}
-	return device.syslogExporter.Fire(entry, overrides)
+	return exp.Fire(entry, overrides)
 }
 
 // WriteSyslogStatusJSON writes GetSyslogStatus as JSON to w. Extracted for

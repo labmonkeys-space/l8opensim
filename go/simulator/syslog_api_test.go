@@ -6,8 +6,11 @@
 package main
 
 import (
+	"encoding/json"
 	"errors"
 	"net"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
@@ -161,6 +164,12 @@ func TestFireSyslogOnDevice_HappyPath(t *testing.T) {
 	if !strings.Contains(wire, "LINKDOWN") {
 		t.Errorf("wire missing MsgID: %q", wire)
 	}
+	// Spec Requirement "On-demand HTTP syslog endpoint" scenario "Valid
+	// request returns 202" says "AND the sent counter SHALL increment
+	// by 1". Verify via the status endpoint.
+	if got := sm.GetSyslogStatus().Sent; got != 1 {
+		t.Errorf("SyslogStatus.Sent after one Fire: got %d, want 1", got)
+	}
 }
 
 func TestFireSyslogOnDevice_UnknownCatalogName(t *testing.T) {
@@ -218,6 +227,157 @@ func TestFireSyslogOnDevice_OverridesApplied(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
+// HTTP handler tests (go through the real mux + handlers)
+// ---------------------------------------------------------------------------
+
+// withManager temporarily installs sm as the package-level `manager`
+// variable that `fireSyslogHandler` and `syslogStatusHandler` read.
+// Restores the previous value on test cleanup.
+func withManager(t *testing.T, sm *SimulatorManager) {
+	t.Helper()
+	prev := manager
+	manager = sm
+	t.Cleanup(func() { manager = prev })
+}
+
+func TestSyslogHTTP_StatusEndpointDisabled(t *testing.T) {
+	sm := newTestSyslogManager()
+	withManager(t, sm)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/syslog/status", nil)
+	rr := httptest.NewRecorder()
+	setupRoutes().ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status code: got %d, want 200", rr.Code)
+	}
+	var body SyslogStatus
+	if err := json.Unmarshal(rr.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode body: %v — raw=%q", err, rr.Body.String())
+	}
+	if body.Enabled {
+		t.Errorf("Enabled: got %v, want false when feature disabled", body.Enabled)
+	}
+}
+
+func TestSyslogHTTP_StatusEndpointEnabled(t *testing.T) {
+	sm, _, _ := startSyslogForTest(t, SyslogFormat5424)
+	withManager(t, sm)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/syslog/status", nil)
+	rr := httptest.NewRecorder()
+	setupRoutes().ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status code: got %d, want 200", rr.Code)
+	}
+	var body SyslogStatus
+	if err := json.Unmarshal(rr.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode body: %v", err)
+	}
+	if !body.Enabled || body.Format != "5424" || body.DevicesExporting != 1 {
+		t.Errorf("enabled status unexpected: %+v", body)
+	}
+}
+
+func TestSyslogHTTP_FireEndpoint202(t *testing.T) {
+	sm, collector, device := startSyslogForTest(t, SyslogFormat5424)
+	withManager(t, sm)
+
+	body := strings.NewReader(`{"name":"interface-down"}`)
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/devices/"+device.IP.String()+"/syslog", body)
+	rr := httptest.NewRecorder()
+	setupRoutes().ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusAccepted {
+		t.Fatalf("status code: got %d, want 202 — body=%q", rr.Code, rr.Body.String())
+	}
+	if got := strings.TrimSpace(rr.Body.String()); got != "{}" {
+		t.Errorf("body: got %q, want {}", got)
+	}
+	// Verify the datagram actually reached the collector (end-to-end
+	// validation of the manager → exporter → UDP path through the HTTP
+	// handler surface).
+	_ = collector.SetReadDeadline(time.Now().Add(500 * time.Millisecond))
+	buf := make([]byte, 2048)
+	if _, _, err := collector.ReadFromUDP(buf); err != nil {
+		t.Errorf("collector did not receive datagram: %v", err)
+	}
+}
+
+func TestSyslogHTTP_FireEndpoint400UnknownCatalogEntry(t *testing.T) {
+	sm, _, device := startSyslogForTest(t, SyslogFormat5424)
+	withManager(t, sm)
+
+	body := strings.NewReader(`{"name":"notACatalogEntry"}`)
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/devices/"+device.IP.String()+"/syslog", body)
+	rr := httptest.NewRecorder()
+	setupRoutes().ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("status code: got %d, want 400 — body=%q", rr.Code, rr.Body.String())
+	}
+}
+
+func TestSyslogHTTP_FireEndpoint404UnknownDevice(t *testing.T) {
+	sm, _, _ := startSyslogForTest(t, SyslogFormat5424)
+	withManager(t, sm)
+
+	body := strings.NewReader(`{"name":"interface-up"}`)
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/devices/10.99.99.99/syslog", body)
+	rr := httptest.NewRecorder()
+	setupRoutes().ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusNotFound {
+		t.Fatalf("status code: got %d, want 404", rr.Code)
+	}
+}
+
+func TestSyslogHTTP_FireEndpoint503FeatureDisabled(t *testing.T) {
+	sm := newTestSyslogManager()
+	withManager(t, sm)
+
+	body := strings.NewReader(`{"name":"interface-up"}`)
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/devices/10.0.0.1/syslog", body)
+	rr := httptest.NewRecorder()
+	setupRoutes().ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status code: got %d, want 503", rr.Code)
+	}
+}
+
+func TestSyslogHTTP_FireEndpoint400MissingName(t *testing.T) {
+	sm, _, device := startSyslogForTest(t, SyslogFormat5424)
+	withManager(t, sm)
+
+	body := strings.NewReader(`{}`)
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/devices/"+device.IP.String()+"/syslog", body)
+	rr := httptest.NewRecorder()
+	setupRoutes().ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("status code: got %d, want 400", rr.Code)
+	}
+}
+
+func TestSyslogHTTP_FireEndpoint400UnknownField(t *testing.T) {
+	// `DisallowUnknownFields` fix: a typo'd key surfaces as 400 instead
+	// of being silently dropped.
+	sm, _, device := startSyslogForTest(t, SyslogFormat5424)
+	withManager(t, sm)
+
+	body := strings.NewReader(`{"name":"interface-down","tempalteOverrides":{"IfIndex":"7"}}`)
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/devices/"+device.IP.String()+"/syslog", body)
+	rr := httptest.NewRecorder()
+	setupRoutes().ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("typo'd field accepted silently: got %d, want 400", rr.Code)
+	}
+}
+
+// ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
 
@@ -242,10 +402,14 @@ func startSyslogForTest(t *testing.T, format SyslogFormat) (*SimulatorManager, *
 	collector, collectorAddr := newLocalUDPCollector(t)
 
 	err := sm.StartSyslogExport(SyslogConfig{
-		Collector:       collectorAddr.String(),
-		Format:          format,
-		Interval:        10 * time.Second, // long — test fires directly via FireSyslogOnDevice
-		SourcePerDevice: false,            // no netns available in unit tests
+		Collector: collectorAddr.String(),
+		Format:    format,
+		// One hour, not ten seconds: the scheduler's Poisson draw has an
+		// unbounded tail, and at 10s the ~1% of runs with a sub-second
+		// tail draw made `TestFireSyslogOnDevice_OverridesApplied` read
+		// the scheduled datagram instead of the explicit-fire one.
+		Interval:        time.Hour,
+		SourcePerDevice: false, // no netns available in unit tests
 	})
 	if err != nil {
 		t.Fatalf("StartSyslogExport: %v", err)

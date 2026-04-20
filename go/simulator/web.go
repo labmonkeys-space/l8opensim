@@ -124,7 +124,15 @@ func fireSyslogHandler(w http.ResponseWriter, r *http.Request) {
 		Name              string            `json:"name"`
 		TemplateOverrides map[string]string `json:"templateOverrides"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	// Bound the request body so a malicious or misconfigured client can't
+	// force an unbounded allocation on the admin-plane HTTP surface.
+	r.Body = http.MaxBytesReader(w, r.Body, 64<<10)
+	dec := json.NewDecoder(r.Body)
+	// Reject unknown field names so typo'd override keys (e.g.
+	// `tempalteOverrides`) surface as a 400 instead of being silently
+	// dropped and producing confusing "overrides didn't apply" debugging.
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&req); err != nil {
 		sendErrorResponse(w, "Invalid JSON: "+err.Error(), http.StatusBadRequest)
 		return
 	}

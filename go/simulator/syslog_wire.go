@@ -31,6 +31,7 @@ package main
 import (
 	"bytes"
 	"fmt"
+	"strings"
 	"time"
 )
 
@@ -43,8 +44,13 @@ const (
 )
 
 // ParseSyslogFormat validates the operator-supplied -syslog-format value.
+// Leading/trailing whitespace and case are normalised, matching the
+// tolerance of the equivalent `ParseTrapMode` — operators occasionally
+// quote flag arguments with stray whitespace and that shouldn't be a
+// startup error.
 func ParseSyslogFormat(s string) (SyslogFormat, error) {
-	switch s {
+	normalised := strings.ToLower(strings.TrimSpace(s))
+	switch normalised {
 	case string(SyslogFormat5424):
 		return SyslogFormat5424, nil
 	case string(SyslogFormat3164):

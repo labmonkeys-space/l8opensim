@@ -130,6 +130,62 @@ The `FlowEncoder` interface has a `MaxRecordSize() int` extension point: fixed-s
 - SD-NAME keys are validated against RFC 5424 §6.3.3 at load; each templated value is pre-compiled to a `*template.Template` so the fire hot path is allocation-light (measured 894 ns/op).
 - Entry `appName` is required (RFC 3164 TAG has no NILVALUE). Facility and severity accept canonical names (`local7`, `error`) or integers in range (`0..23` / `0..7`). MTU-safety dry-render rejects entries whose worst-case rendered output exceeds 1400 bytes.
 
+**Syslog catalog JSON schema** (one entry; the file is `{"entries":[…]}`):
+
+```json
+{
+  "name":     "interface-down",       // required; unique within catalog
+  "weight":   40,                     // weighted-random Pick; 0/omitted → 1
+  "facility": "local7",               // name (kern/user/.../local0..local7) or integer 0..23
+  "severity": "error",                // name (emerg/alert/crit/err|error/warning|warn/notice/info/debug) or integer 0..7
+  "appName":  "IFMGR",                // required (3164 TAG has no NILVALUE); sanitised to ASCII token
+  "msgId":    "LINKDOWN",             // 5424 MSGID; empty → NILVALUE; dropped in 3164
+  "hostname": "{{.SysName}}",         // optional override; empty → sysName→DeviceIP fallback
+  "structuredData": {                 // 5424 STRUCTURED-DATA; empty map → NILVALUE; dropped in 3164
+    "ifIndex": "{{.IfIndex}}",        // keys must match RFC 5424 §6.3.3 SD-NAME grammar
+    "ifName":  "{{.IfName}}"
+  },
+  "template": "Interface {{.IfName}} (ifIndex={{.IfIndex}}) changed state to down"
+}
+```
+
+**HOSTNAME derivation priority** (resolved at fire time, per design §D5):
+1. If the catalog entry defines a non-empty `hostname` template, render it (with the six-field vocabulary) and use the result.
+2. Otherwise, use the device's stored `sysName.0` value (captured at device construction).
+3. Otherwise, use the device's IPv4 as dotted-quad.
+
+In every branch the result is run through `sanitiseHostname`: spaces become hyphens (spec mandate), other framing / control chars become `_`.
+
+**PRI calculation and vocabulary** (per RFC 5424 §6.2.1, shared by 5424 and 3164):
+
+- `PRI = facility * 8 + severity`, emitted as `<N>` with no leading zeros (range 0..191).
+- Catalog entries accept either the canonical name or the integer:
+
+  | Facility   | Int | Facility   | Int | Facility   | Int |
+  |------------|-----|------------|-----|------------|-----|
+  | `kern`     | 0   | `cron`     | 9   | `local0`   | 16  |
+  | `user`     | 1   | `authpriv` | 10  | `local1`   | 17  |
+  | `mail`     | 2   | `ftp`      | 11  | `local2`   | 18  |
+  | `daemon`   | 3   | `ntp`      | 12  | `local3`   | 19  |
+  | `auth`     | 4   | `audit`    | 13  | `local4`   | 20  |
+  | `syslog`   | 5   | `alert`    | 14  | `local5`   | 21  |
+  | `lpr`      | 6   | `clock`    | 15  | `local6`   | 22  |
+  | `news`     | 7   |            |     | `local7`   | 23  |
+  | `uucp`     | 8   |            |     |            |     |
+
+  | Severity  | Int | Aliases       |
+  |-----------|-----|---------------|
+  | `emerg`   | 0   |               |
+  | `alert`   | 1   |               |
+  | `crit`    | 2   |               |
+  | `err`     | 3   | `error`       |
+  | `warning` | 4   | `warn`        |
+  | `notice`  | 5   |               |
+  | `info`    | 6   |               |
+  | `debug`   | 7   |               |
+
+  Out-of-range integers or unknown names are rejected at catalog load.
+
 **Syslog operational notes:**
 - Only one format on the wire at a time — `-syslog-format 5424` (default) or `3164`. Mixed formats on one socket break auto-detecting parsers downstream; operators select one per deployment.
 - Per-device UDP source binding reuses the same `setupVethPair` + `FORWARD -i veth-sim-host -j ACCEPT` rule shared by flow / trap. No new netns / iptables surface.
