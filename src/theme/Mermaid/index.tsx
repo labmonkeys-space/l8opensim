@@ -15,17 +15,35 @@ import styles from './styles.module.css';
 
 type Props = WrapperProps<typeof MermaidType>;
 
-// Suffix every id="..." attribute on the cloned SVG so the inline diagram
-// and the overlay copy don't both claim the same id while the overlay is
-// open (HTML validity + WCAG 4.1.1). Also rewrites the matching #id
-// references inside the SVG's internal CSS so mermaid's per-diagram styles
-// still apply to the clone.
-function uniquifySvgIds(svgHtml: string): string {
-  const suffix = '-zoom';
-  return svgHtml
-    .replace(/id="([^"]+)"/g, `id="$1${suffix}"`)
-    .replace(/#([\w-]+)/g, `#$1${suffix}`);
-}
+// Intentionally no id-rewriting on the cloned SVG.
+//
+// The overlay keeps the inline diagram's ids intact, which technically
+// produces duplicate ids in the document while the modal is open. A
+// previous iteration of this code tried to suffix every id="…" plus the
+// id references in `url(#…)` / `href="#…"` contexts to avoid that, but:
+//
+//   1. Mermaid emits markers as `url(<absolute-page-url>#<id>)` — the
+//      narrow `url(#…)` pattern does not match, so marker references
+//      silently break.
+//   2. Mermaid ships per-diagram styles in an embedded `<style>` block
+//      using `#<root-svg-id>` selectors. Those selectors would also need
+//      to be rewritten; doing so via regex risks clobbering hex colour
+//      literals inside the same CSS block.
+//
+// In combination those partial rewrites left the cloned diagram with no
+// matching CSS for its edge paths (paths fell back to default black fill)
+// and with markers pointing at non-existent ids — edge artefacts and
+// missing arrowheads. Keeping the duplicate ids for the brief modal
+// lifetime is the pragmatic choice: marker references resolve to the
+// first matching element (the inline diagram's marker, which has the
+// identical definition), CSS selectors apply to both copies with the
+// same result, and the only downside is a transient HTML-validity warning
+// that no visible or audible client reacts to.
+//
+// Sizing: handled by CSS. `.inner` has an explicit `width: 95vw` so
+// mermaid's emitted `<svg width="100%">` resolves to a concrete pixel
+// width. Without a definite parent width the SVG collapses to its
+// foreignObject minimum or to zero.
 
 export default function MermaidWrapper(props: Props): ReactNode {
   const wrapperRef = useRef<HTMLDivElement>(null);
@@ -43,7 +61,7 @@ export default function MermaidWrapper(props: Props): ReactNode {
     if (!svg) {
       return; // Mermaid hasn't finished rendering yet — no-op click.
     }
-    setOverlaySvg(uniquifySvgIds(svg.outerHTML));
+    setOverlaySvg(svg.outerHTML);
   }, []);
 
   // Stable identity: MermaidZoomOverlay's keydown effect lists this in its
