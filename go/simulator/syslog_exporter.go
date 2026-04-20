@@ -31,6 +31,8 @@ package main
 
 import (
 	"bytes"
+	"errors"
+	"fmt"
 	"log"
 	"net"
 	"sync/atomic"
@@ -99,7 +101,17 @@ type SyslogExporterOptions struct {
 // NewSyslogExporter builds a SyslogExporter. The per-device conn is not
 // opened here — callers call SetConn once the socket is bound inside the
 // device's netns (see openSyslogConnForDevice below).
+//
+// Panics on invalid options (nil/zero DeviceIP, nil Collector). Matches the
+// panic-on-misconfiguration style of NewSyslogScheduler and NewTrapScheduler:
+// these are programmer errors at construction time, not runtime faults.
 func NewSyslogExporter(opts SyslogExporterOptions) *SyslogExporter {
+	if len(opts.DeviceIP) == 0 {
+		panic("NewSyslogExporter: DeviceIP required")
+	}
+	if opts.Collector == nil {
+		panic("NewSyslogExporter: Collector required")
+	}
 	if opts.Encoder == nil {
 		// Default to RFC 5424 so a constructor typo doesn't ship RFC 3164
 		// by accident. In practice the manager always passes one explicitly.
@@ -128,8 +140,15 @@ func NewSyslogExporter(opts SyslogExporterOptions) *SyslogExporter {
 // exporter is registered with the scheduler if per-device source IPs are
 // desired. Passing nil unsets the socket; subsequent Fire calls fall back
 // to the shared socket if one was configured.
+//
+// If a previous conn was installed, it is closed here — callers do not
+// need to close it themselves, and forgetting to would leak a file
+// descriptor per rebind.
 func (e *SyslogExporter) SetConn(c *net.UDPConn) {
-	e.conn.Store(c)
+	old := e.conn.Swap(c)
+	if old != nil && old != c {
+		_ = old.Close()
+	}
 }
 
 // Stats returns a pointer to the exporter's atomic stats. The underlying
@@ -186,6 +205,13 @@ func (e *SyslogExporter) Fire(entry *SyslogCatalogEntry, overrides map[string]st
 	}
 
 	if err := e.writeDatagram(buf.Bytes()); err != nil {
+		// Shutdown race: Close may have invalidated the socket we captured
+		// before the write. The message was lost, but not because of an
+		// actual send failure — attributing it to SendFailures confuses
+		// operator dashboards. Silently drop.
+		if e.closing.Load() {
+			return nil
+		}
 		e.stats.SendFailures.Add(1)
 		return err
 	}
@@ -194,29 +220,45 @@ func (e *SyslogExporter) Fire(entry *SyslogCatalogEntry, overrides map[string]st
 }
 
 // writeDatagram sends pdu to the collector using the per-device socket
-// (preferred) or the shared fallback. Returns nil on success, the last
-// error on failure.
+// (preferred) or the shared fallback.
+//
+// Error reporting: on fallback, if the per-device write fails but the
+// shared write succeeds, the per-device error is LOGGED (so operators can
+// debug the primary failure) but nil is returned so the caller's counter
+// treats it as a successful send. If both writes fail, a joined error is
+// returned carrying both causes so callers don't lose the primary
+// diagnostic.
 func (e *SyslogExporter) writeDatagram(pdu []byte) error {
+	var primaryErr error
 	conn := e.conn.Load()
 	if conn != nil {
 		if _, err := conn.WriteToUDP(pdu, e.collector); err == nil {
 			return nil
 		} else {
-			// Per-device write failed; try shared fallback below. Retain
-			// the error for the case where fallback is nil.
-			if e.sharedConn == nil {
-				return err
-			}
+			primaryErr = fmt.Errorf("per-device socket: %w", err)
 		}
 	}
-	if e.sharedConn != nil {
-		if _, err := e.sharedConn.WriteToUDP(pdu, e.collector); err == nil {
-			return nil
-		} else {
-			return err
+	if e.sharedConn == nil {
+		if primaryErr != nil {
+			return primaryErr
 		}
+		return errNoSyslogSocket
 	}
-	return errNoSyslogSocket
+	_, err := e.sharedConn.WriteToUDP(pdu, e.collector)
+	if err == nil {
+		if primaryErr != nil {
+			// Fallback succeeded — log the primary failure so the operator
+			// can diagnose why the per-device path stopped working.
+			log.Printf("syslog: %s per-device write failed, sent via shared socket: %v",
+				e.deviceIP, primaryErr)
+		}
+		return nil
+	}
+	sharedErr := fmt.Errorf("shared socket: %w", err)
+	if primaryErr != nil {
+		return errors.Join(primaryErr, sharedErr)
+	}
+	return sharedErr
 }
 
 // uptimeHundredths returns device uptime in 1/100-second ticks, matching

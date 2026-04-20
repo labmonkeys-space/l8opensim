@@ -7,6 +7,7 @@ package main
 
 import (
 	"context"
+	"math"
 	"net"
 	"sync"
 	"sync/atomic"
@@ -127,10 +128,12 @@ func TestSyslogScheduler_GlobalCapEnforced(t *testing.T) {
 	for _, f := range firers {
 		total += f.count.Load()
 	}
-	// Allow full burst + one period of refill. cap=20 with burst=20 yields
-	// up to 40 in the first second, but we give 1.5× headroom for scheduler
-	// wake-up latency on slow CI.
-	maxAllowed := uint64(float64(cap)*elapsed.Seconds()*1.5 + float64(cap))
+	// Theoretical max: full burst (cap) + steady-state (cap × elapsed seconds).
+	// With cap=20, burst=20, elapsed≈1s: ~40 fires. We allow 10% timing slack
+	// for scheduler wake-up latency on slow CI. Threshold ~44 catches
+	// regressions of ≥10% over the theoretical cap, vs the old 50 which
+	// silently tolerated ~25%.
+	maxAllowed := uint64(float64(cap)*(elapsed.Seconds()+1.0)*1.1) + 1
 	if total > maxAllowed {
 		t.Errorf("global cap violated: %d fires in %v (max allowed ~%d)", total, elapsed, maxAllowed)
 	}
@@ -192,7 +195,10 @@ func TestSyslogScheduler_DeregisterRemovesDevice(t *testing.T) {
 	go func() { s.Run(ctx); close(done) }()
 
 	// Wait for first fire, then deregister and verify count stabilises.
-	for time.Now().Before(time.Now().Add(time.Second)) {
+	// Capture the deadline once; `time.Now().Before(time.Now().Add(X))` is
+	// always true because both operands re-evaluate each iteration.
+	deadline := time.Now().Add(time.Second)
+	for time.Now().Before(deadline) {
 		if f.count.Load() > 0 {
 			break
 		}
@@ -204,8 +210,11 @@ func TestSyslogScheduler_DeregisterRemovesDevice(t *testing.T) {
 	s.Stop()
 	cancel()
 	<-done
-	if after := f.count.Load(); after > at {
-		t.Errorf("deregistered device still firing: before=%d, after=%d", at, after)
+	// One post-Deregister fire is a legitimate race: the scheduler may have
+	// captured the firer reference under the lock before Deregister acquired
+	// it, then released the lock and called Fire outside. Tolerate +1.
+	if after := f.count.Load(); after > at+1 {
+		t.Errorf("deregistered device still firing: before=%d, after=%d (tolerance +1)", at, after)
 	}
 }
 
@@ -252,6 +261,138 @@ func TestSyslogScheduler_FireErrorDoesNotStopLoop(t *testing.T) {
 	<-done
 	if f.count.Load() < 2 {
 		t.Errorf("expected multiple fires despite errors, got %d", f.count.Load())
+	}
+}
+
+// TestSyslogScheduler_ExponentialInterArrival — spec Requirement "Poisson
+// scheduling and global rate cap" Scenario "Fire intervals follow
+// exponential distribution". We use a single device at 10ms mean and
+// collect ~500 samples (~5s runtime). For an Exp(λ=100/s) distribution:
+//
+//   mean = 1/λ = 10ms
+//   variance = 1/λ² = 100ms²
+//   coefficient of variation (stddev/mean) = 1
+//
+// A periodic scheduler would have CV ≈ 0; a uniform-jittered one ≈ 0.58.
+// Asserting mean within 40% and CV > 0.7 distinguishes exponential from
+// both alternatives while tolerating wall-clock sampling noise.
+func TestSyslogScheduler_ExponentialInterArrival(t *testing.T) {
+	const meanInterval = 10 * time.Millisecond
+	const targetSamples = 500
+	cat := testSyslogCatalog(t)
+	s := NewSyslogScheduler(SyslogSchedulerOptions{
+		Catalog:      cat,
+		MeanInterval: meanInterval,
+		Seed:         12345,
+	})
+	ip := net.IPv4(10, 0, 0, 99)
+	f := &countingSyslogFirer{deviceIP: ip}
+	s.Register(ip, f)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	done := make(chan struct{})
+	go func() { s.Run(ctx); close(done) }()
+
+	deadline := time.Now().Add(15 * time.Second)
+	for time.Now().Before(deadline) {
+		if f.count.Load() >= targetSamples {
+			break
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	s.Stop()
+	cancel()
+	<-done
+
+	f.mu.Lock()
+	times := make([]time.Time, len(f.firedAt))
+	copy(times, f.firedAt)
+	f.mu.Unlock()
+	if len(times) < targetSamples {
+		t.Fatalf("not enough samples: got %d, want %d", len(times), targetSamples)
+	}
+	// Drop the first sample's "warmup" interval (from Register to first fire).
+	intervals := make([]float64, 0, len(times)-1)
+	for i := 1; i < len(times); i++ {
+		intervals = append(intervals, times[i].Sub(times[i-1]).Seconds())
+	}
+	var sum float64
+	for _, d := range intervals {
+		sum += d
+	}
+	mean := sum / float64(len(intervals))
+	var sqsum float64
+	for _, d := range intervals {
+		diff := d - mean
+		sqsum += diff * diff
+	}
+	variance := sqsum / float64(len(intervals))
+	stddev := math.Sqrt(variance)
+	cv := stddev / mean
+
+	expected := meanInterval.Seconds()
+	if mean < expected*0.6 || mean > expected*1.4 {
+		t.Errorf("mean inter-arrival: got %.4fs, want within ±40%% of %.4fs", mean, expected)
+	}
+	// Exponential has CV = 1. Periodic = 0. Uniform jitter ≈ 0.58.
+	// We require CV > 0.7 to rule out the non-exponential alternatives
+	// while allowing for wall-clock sampling noise at small intervals.
+	if cv < 0.7 {
+		t.Errorf("coefficient of variation %.2f suggests non-exponential distribution (want ≈1)", cv)
+	}
+	t.Logf("inter-arrival: mean=%.4fs (target %.4f), CV=%.2f (target 1.0), n=%d",
+		mean, expected, cv, len(intervals))
+}
+
+// TestSyslogScheduler_RejectsSubMillisecondInterval — MeanInterval below
+// 1ms would busy-loop the scheduler when no global cap is set.
+func TestSyslogScheduler_RejectsSubMillisecondInterval(t *testing.T) {
+	cat := testSyslogCatalog(t)
+	defer func() {
+		if r := recover(); r == nil {
+			t.Error("NewSyslogScheduler with sub-1ms interval should panic")
+		}
+	}()
+	_ = NewSyslogScheduler(SyslogSchedulerOptions{
+		Catalog:      cat,
+		MeanInterval: 500 * time.Microsecond,
+	})
+}
+
+// TestSyslogScheduler_StopWithLimiterCap — Stop() must be able to
+// interrupt Run even when it is blocked in limiter.Wait() (which, before
+// the ctx-derivation fix, could hold Run blocked for up to 1/rate seconds).
+func TestSyslogScheduler_StopWithLimiterCap(t *testing.T) {
+	cat := testSyslogCatalog(t)
+	// Very low cap with a bucket already drained by Register's initial
+	// exponential draws — any subsequent limiter.Wait blocks for ≥1s.
+	s := NewSyslogScheduler(SyslogSchedulerOptions{
+		Catalog:            cat,
+		MeanInterval:       time.Millisecond,
+		GlobalCapPerSecond: 1,
+		Seed:               42,
+	})
+	for i := 0; i < 50; i++ {
+		ip := net.IPv4(10, 0, 0, byte(i+1))
+		s.Register(ip, &countingSyslogFirer{deviceIP: ip})
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan struct{})
+	go func() { s.Run(ctx); close(done) }()
+
+	// Give the scheduler time to drain the burst and block on limiter.Wait.
+	time.Sleep(50 * time.Millisecond)
+	stopAt := time.Now()
+	s.Stop()
+	select {
+	case <-done:
+	case <-time.After(500 * time.Millisecond):
+		t.Fatalf("Stop() did not unblock Run within 500ms while limiter was held")
+	}
+	if elapsed := time.Since(stopAt); elapsed > 500*time.Millisecond {
+		t.Errorf("Stop() took %v (want <500ms even under cap)", elapsed)
 	}
 }
 

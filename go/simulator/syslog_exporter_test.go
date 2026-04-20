@@ -233,6 +233,103 @@ func TestSyslogExporter_ImplementsFirer(t *testing.T) {
 	var _ syslogFirer = (*SyslogExporter)(nil)
 }
 
+// TestSyslogExporter_FallbackToSharedConn — spec Requirement "Per-device
+// source IP binding" Scenario "Per-device bind failure falls back with
+// warning". When the per-device conn is absent (never SetConn'd, or
+// SetConn(nil) called), Fire must transmit via the shared socket and
+// still count as Sent.
+func TestSyslogExporter_FallbackToSharedConn(t *testing.T) {
+	cat := testSyslogCatalog(t)
+	entry := cat.ByName["interface-up"]
+
+	collector, collectorAddr := newLocalUDPCollector(t)
+	shared := newTestSharedSocket(t)
+
+	exporter := NewSyslogExporter(SyslogExporterOptions{
+		DeviceIP:   net.IPv4(10, 42, 0, 7),
+		Encoder:    &RFC5424Encoder{},
+		Collector:  collectorAddr,
+		SharedConn: shared,
+		SysName:    "fallback-host",
+	})
+	t.Cleanup(func() { _ = exporter.Close() })
+	// SetConn is intentionally never called — per-device conn stays nil.
+
+	if err := exporter.Fire(entry, nil); err != nil {
+		t.Fatalf("Fire with shared-only conn: %v", err)
+	}
+	payload, _ := readNextDatagram(t, collector, 500*time.Millisecond)
+	if !strings.Contains(string(payload), "fallback-host") {
+		t.Errorf("wire missing expected hostname: %q", string(payload))
+	}
+	if got := exporter.Stats().Sent.Load(); got != 1 {
+		t.Errorf("Sent: got %d, want 1", got)
+	}
+	if got := exporter.Stats().SendFailures.Load(); got != 0 {
+		t.Errorf("SendFailures: got %d, want 0 (fallback must not count as failure)", got)
+	}
+}
+
+// TestSyslogExporter_SetConnClosesOld — replacing the per-device conn
+// via SetConn must close the previous conn to prevent fd leaks on rebind.
+func TestSyslogExporter_SetConnClosesOld(t *testing.T) {
+	_, collectorAddr := newLocalUDPCollector(t)
+	exporter := NewSyslogExporter(SyslogExporterOptions{
+		DeviceIP:  net.IPv4(10, 42, 0, 7),
+		Encoder:   &RFC5424Encoder{},
+		Collector: collectorAddr,
+	})
+	t.Cleanup(func() { _ = exporter.Close() })
+
+	c1, err := net.ListenUDP("udp4", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 0})
+	if err != nil {
+		t.Fatal(err)
+	}
+	exporter.SetConn(c1)
+	c2, err := net.ListenUDP("udp4", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 0})
+	if err != nil {
+		_ = c1.Close()
+		t.Fatal(err)
+	}
+	exporter.SetConn(c2)
+	// c1 must be closed by SetConn — reading from it should now fail.
+	_ = c1.SetReadDeadline(time.Now().Add(50 * time.Millisecond))
+	buf := make([]byte, 16)
+	if _, _, err := c1.ReadFromUDP(buf); err == nil {
+		t.Error("c1 still usable after SetConn replaced it; expected close")
+	}
+	// c2 is still in use by the exporter; Close() will close it.
+}
+
+// TestSyslogExporter_ConstructorPanicsOnNilCollector — programmer-error
+// guard at construction (matches NewSyslogScheduler's panic pattern).
+func TestSyslogExporter_ConstructorPanicsOnNilCollector(t *testing.T) {
+	defer func() {
+		if r := recover(); r == nil {
+			t.Error("expected panic on nil Collector")
+		}
+	}()
+	_ = NewSyslogExporter(SyslogExporterOptions{
+		DeviceIP: net.IPv4(10, 42, 0, 7),
+		Encoder:  &RFC5424Encoder{},
+		// Collector intentionally nil
+	})
+}
+
+// TestSyslogExporter_ConstructorPanicsOnZeroDeviceIP — same guard for DeviceIP.
+func TestSyslogExporter_ConstructorPanicsOnZeroDeviceIP(t *testing.T) {
+	defer func() {
+		if r := recover(); r == nil {
+			t.Error("expected panic on zero DeviceIP")
+		}
+	}()
+	_ = NewSyslogExporter(SyslogExporterOptions{
+		// DeviceIP intentionally omitted
+		Encoder:   &RFC5424Encoder{},
+		Collector: &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 514},
+	})
+}
+
 // TestSyslogExporter_TemplateOverrides — HTTP-style overrides pin the
 // per-fire context fields so on-demand fires can target a specific
 // interface or user.

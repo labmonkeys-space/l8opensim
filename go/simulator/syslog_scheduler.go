@@ -127,8 +127,13 @@ func NewSyslogScheduler(opts SyslogSchedulerOptions) *SyslogScheduler {
 	if opts.Catalog == nil {
 		panic("NewSyslogScheduler: Catalog required")
 	}
-	if opts.MeanInterval <= 0 {
-		panic("NewSyslogScheduler: MeanInterval must be positive")
+	// Sub-millisecond intervals busy-loop the scheduler with no global cap.
+	// 1ms is a generous floor — the 30k-device steady-state with cap=3k tps
+	// (design.md §D2 default operating point) implies mean interval = 10s
+	// per device, so a 1ms floor is well below any realistic production
+	// setting and catches misconfiguration early.
+	if opts.MeanInterval < time.Millisecond {
+		panic("NewSyslogScheduler: MeanInterval must be >= 1ms")
 	}
 	s := &SyslogScheduler{
 		byIP:         make(map[string]*syslogHeapEntry),
@@ -205,6 +210,20 @@ func (s *SyslogScheduler) Deregister(deviceIP net.IP) {
 // wait until its nextFire, Wait() for a limiter token, pop, requeue, fire
 // outside the lock.
 func (s *SyslogScheduler) Run(ctx context.Context) {
+	// Derive a context that also cancels when Stop closes stopCh. Without
+	// this, `limiter.Wait(ctx)` cannot observe Stop — callers would see
+	// Run stay blocked for up to 1/rate seconds after Stop when a global
+	// cap is configured.
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	go func() {
+		select {
+		case <-s.stopCh:
+			cancel()
+		case <-ctx.Done():
+		}
+	}()
+
 	defer func() {
 		if r := recover(); r != nil {
 			log.Printf("syslog scheduler: Run panicked: %v", r)
