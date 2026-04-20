@@ -124,6 +124,9 @@ gh pr create --repo labmonkeys-space/l8opensim --base main
 5. `git commit -s` each commit.
 6. `gh pr create --repo labmonkeys-space/l8opensim --base main`.
 
+**Cutting a release.** Maintainers: see [`RELEASING.md`](RELEASING.md) for the
+tag-driven release workflow and the short post-tag verification checklist.
+
 ## License
 
 Licensed under the Apache License, Version 2.0. See [LICENSE](LICENSE) for

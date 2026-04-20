@@ -1,6 +1,39 @@
+import {execSync} from 'node:child_process';
+import * as fs from 'node:fs';
+import * as path from 'node:path';
 import {themes as prismThemes} from 'prism-react-renderer';
 import type {Config} from '@docusaurus/types';
 import type * as Preset from '@docusaurus/preset-classic';
+
+// Resolved at build time and exposed to the landing page via `customFields`.
+// Precedence: APP_VERSION env (CI override) > latest git tag > 'dev' (shallow
+// clone or pre-tag checkout). Keeping this logic in config avoids shipping a
+// hardcoded version string that drifts from releases. Only stable `vX.Y.Z`
+// tags are ever published (RCs live on the floating `:rc` Docker tag pushed
+// from main by ci.yml, not as git tags), so no pre-release filter is needed.
+function resolveAppVersion(): string {
+  if (process.env.APP_VERSION) return process.env.APP_VERSION;
+  try {
+    return execSync('git describe --tags --abbrev=0', {
+      stdio: ['ignore', 'pipe', 'ignore'],
+    })
+      .toString()
+      .trim();
+  } catch {
+    return 'dev';
+  }
+}
+
+// Parsed from go/go.mod so the landing page tracks the toolchain the binary
+// is actually built against. We surface only MAJOR.MINOR to match the marketing
+// style used elsewhere on the page (e.g. "go 1.26+").
+function resolveGoVersion(): string {
+  const modPath = path.join(__dirname, 'go', 'go.mod');
+  const src = fs.readFileSync(modPath, 'utf8');
+  const match = src.match(/^go\s+(\d+\.\d+)(?:\.\d+)?/m);
+  if (!match) throw new Error(`Could not parse Go version from ${modPath}`);
+  return `Go ${match[1]}`;
+}
 
 const config: Config = {
   title: 'l8opensim',
@@ -52,6 +85,12 @@ const config: Config = {
   i18n: {
     defaultLocale: 'en',
     locales: ['en'],
+  },
+
+  customFields: {
+    appVersion: resolveAppVersion(),
+    license: 'Apache-2.0',
+    goVersion: resolveGoVersion(),
   },
 
   presets: [

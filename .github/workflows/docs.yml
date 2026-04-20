@@ -22,6 +22,17 @@ on:
       - '.nvmrc'
       - '.github/workflows/docs.yml'
       - 'Makefile'
+  # Rebuild the site after a release so the landing-page hero eyebrow
+  # (version/license/Go version — resolved at build time in
+  # docusaurus.config.ts) picks up the newly pushed tag.
+  # No `branches:` filter here: Release runs on tag pushes, where the
+  # upstream workflow's head_branch is the tag ref rather than a branch
+  # name, and a `branches: [main]` filter would silently suppress the
+  # trigger. The job-level `if: conclusion == 'success'` guard below is
+  # sufficient protection.
+  workflow_run:
+    workflows: ['Release']
+    types: [completed]
   workflow_dispatch:
 
 permissions:
@@ -35,6 +46,9 @@ jobs:
   build-and-deploy:
     name: Build & deploy
     runs-on: ubuntu-latest
+    # When triggered by the Release workflow, only proceed if that run
+    # succeeded. On direct pushes and manual dispatches this is trivially true.
+    if: ${{ github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success' }}
 
     steps:
       - name: Checkout
