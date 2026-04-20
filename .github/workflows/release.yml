@@ -88,5 +88,9 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      # Stable tag pushes publish an immutable `:vX.Y.Z` tag plus the floating
+      # `:latest` alias. Release candidates are handled entirely by ci.yml's
+      # `Publish RC image` job (push to main -> `:rc`), so this workflow only
+      # ever sees stable tags.
       - name: Build and push multi-platform image
         run: make docker-push DOCKER_TAGS="ghcr.io/${{ github.repository }}:${{ github.ref_name }} ghcr.io/${{ github.repository }}:latest"

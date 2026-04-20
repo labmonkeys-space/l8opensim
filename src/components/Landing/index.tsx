@@ -1,7 +1,10 @@
 import React, {useState} from 'react';
 import useBaseUrl from '@docusaurus/useBaseUrl';
+import useDocusaurusContext from '@docusaurus/useDocusaurusContext';
 import Terminal from './Terminal';
 import {FEATURES, CATEGORIES, DOCS, STATUS} from './data';
+
+type HeroMeta = {appVersion: string; license: string; goVersion: string};
 
 function Panel({title, meta, children}: {title?: string; meta?: string; children: React.ReactNode}) {
   return (
@@ -95,6 +98,8 @@ function DocLink({to, t, h}: {to: string; t: string; h: string}) {
 
 export default function Landing(): JSX.Element {
   const quickStart = useBaseUrl('/getting-started/quick-start');
+  const {siteConfig} = useDocusaurusContext();
+  const {appVersion, license, goVersion} = siteConfig.customFields as HeroMeta;
 
   return (
     <main className="l8-page">
@@ -104,7 +109,7 @@ export default function Landing(): JSX.Element {
           <div className="l8-hero__grid">
             <div>
               <div className="l8-hero__eyebrow">
-                <span className="l8-dot" /> v0.1.1 · Apache-2.0 · Go 1.26
+                <span className="l8-dot" /> {appVersion} · {license} · {goVersion}
               </div>
               <h1 className="l8-hero__title">
                 A network load target<br />
