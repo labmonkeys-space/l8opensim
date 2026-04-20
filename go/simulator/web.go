@@ -99,6 +99,67 @@ func trapStatusHandler(w http.ResponseWriter, r *http.Request) {
 	manager.WriteTrapStatusJSON(w)
 }
 
+// syslogStatusHandler implements GET /api/v1/syslog/status. Returns a
+// SyslogStatus JSON body (shape documented in syslog_manager.go).
+func syslogStatusHandler(w http.ResponseWriter, r *http.Request) {
+	manager.WriteSyslogStatusJSON(w)
+}
+
+// fireSyslogHandler implements POST /api/v1/devices/{ip}/syslog. Body:
+//
+//	{ "name": "interface-down", "templateOverrides": {"IfIndex": "3"} }
+//
+// Returns 202 Accepted with {} on success. Bypasses the global rate
+// limiter (pre-flight 1.4): on-demand fires are for test-harness use and
+// should not compete with scheduled traffic for tokens.
+// Status code mapping:
+//   - 503 when syslog export is not enabled
+//   - 404 when the device IP is unknown
+//   - 400 when the catalog entry name is unknown or JSON is malformed
+func fireSyslogHandler(w http.ResponseWriter, r *http.Request) {
+	vars := mux.Vars(r)
+	ip := vars["ip"]
+
+	var req struct {
+		Name              string            `json:"name"`
+		TemplateOverrides map[string]string `json:"templateOverrides"`
+	}
+	// Bound the request body so a malicious or misconfigured client can't
+	// force an unbounded allocation on the admin-plane HTTP surface.
+	r.Body = http.MaxBytesReader(w, r.Body, 64<<10)
+	dec := json.NewDecoder(r.Body)
+	// Reject unknown field names so typo'd override keys (e.g.
+	// `tempalteOverrides`) surface as a 400 instead of being silently
+	// dropped and producing confusing "overrides didn't apply" debugging.
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&req); err != nil {
+		sendErrorResponse(w, "Invalid JSON: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+	if req.Name == "" {
+		sendErrorResponse(w, "name is required", http.StatusBadRequest)
+		return
+	}
+
+	if err := manager.FireSyslogOnDevice(ip, req.Name, req.TemplateOverrides); err != nil {
+		switch {
+		case errors.Is(err, ErrSyslogExportDisabled):
+			sendErrorResponse(w, err.Error(), http.StatusServiceUnavailable)
+		case errors.Is(err, ErrSyslogDeviceNotFound):
+			sendErrorResponse(w, err.Error(), http.StatusNotFound)
+		case errors.Is(err, ErrSyslogEntryNotFound):
+			sendErrorResponse(w, err.Error(), http.StatusBadRequest)
+		default:
+			sendErrorResponse(w, err.Error(), http.StatusInternalServerError)
+		}
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusAccepted)
+	_, _ = w.Write([]byte("{}"))
+}
+
 // fireTrapHandler implements POST /api/v1/devices/{ip}/trap. Body:
 //
 //	{ "name": "linkDown", "varbindOverrides": {"IfIndex": "3"} }
@@ -306,6 +367,8 @@ func setupRoutes() *mux.Router {
 	api.HandleFunc("/flows/status", flowStatusHandler).Methods("GET")
 	api.HandleFunc("/traps/status", trapStatusHandler).Methods("GET")
 	api.HandleFunc("/devices/{ip}/trap", fireTrapHandler).Methods("POST")
+	api.HandleFunc("/syslog/status", syslogStatusHandler).Methods("GET")
+	api.HandleFunc("/devices/{ip}/syslog", fireSyslogHandler).Methods("POST")
 	api.HandleFunc("/debug/pprof-memory", pprofMemoryHandler).Methods("GET")
 	api.HandleFunc("/debug/cpu-profile", cpuProfileHandler).Methods("GET")
 

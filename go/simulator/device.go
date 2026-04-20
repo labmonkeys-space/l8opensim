@@ -282,6 +282,14 @@ func (sm *SimulatorManager) CreateDevicesWithOptions(startIP string, count int, 
 				}
 			}
 
+			// Initialize UDP syslog exporter if syslog export is enabled.
+			// Per-device bind failure is non-fatal (no ack path that requires
+			// symmetric source IPs); exporter falls back to the shared socket
+			// with an in-function warning log.
+			if sm.syslogActive.Load() {
+				sm.startDeviceSyslogExporter(device)
+			}
+
 			// Cache the dynamic values using atomic for lock-free access
 			device.cachedSysName.Store(sysNameValue)
 			device.cachedSysLocation.Store(sysLocationValue)
@@ -521,6 +529,11 @@ func (sm *SimulatorManager) createSingleDevice(deviceIndex int, deviceIP net.IP,
 		}
 	}
 
+	// Initialize UDP syslog exporter if syslog export is enabled.
+	if sm.syslogActive.Load() {
+		sm.startDeviceSyslogExporter(device)
+	}
+
 	// Cache the dynamic values using atomic for lock-free access
 	device.cachedSysName.Store(sysNameValue)
 	device.cachedSysLocation.Store(sysLocationValue)
@@ -664,6 +677,14 @@ func (d *DeviceSimulator) Stop() error {
 		d.trapExporter = nil
 	}
 
+	if d.syslogExporter != nil {
+		_ = d.syslogExporter.Close()
+		if manager != nil && manager.syslogScheduler != nil {
+			manager.syslogScheduler.Deregister(d.IP)
+		}
+		d.syslogExporter = nil
+	}
+
 	// Only destroy TUN interface if it's not pre-allocated and not part of bulk deletion
 	// Individual device stops will close the file descriptor but not delete the interface
 	// Bulk deletion handles the actual interface removal
@@ -706,6 +727,10 @@ func (d *DeviceSimulator) stopListenersOnly() {
 	if d.trapExporter != nil {
 		_ = d.trapExporter.Close()
 		d.trapExporter = nil
+	}
+	if d.syslogExporter != nil {
+		_ = d.syslogExporter.Close()
+		d.syslogExporter = nil
 	}
 	if d.tunIface != nil {
 		d.tunIface.destroy() // Close FD only, no ip link delete

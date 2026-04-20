@@ -339,6 +339,10 @@ func (sm *SimulatorManager) Shutdown() error {
 	// shared fallback socket). Safe to call when trap export was never started.
 	sm.StopTrapExport()
 
+	// Stop the syslog subsystem (same shape as trap). Safe to call when
+	// syslog export was never started.
+	sm.StopSyslogExport()
+
 	if sm.useNamespace && sm.netNamespace != nil {
 		// Fast path: when using a namespace, deleting it instantly destroys all
 		// TUN interfaces inside it. No need to delete them one by one.

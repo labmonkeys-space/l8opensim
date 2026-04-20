@@ -121,6 +121,14 @@ func main() {
 		trapSourcePerDevice = flag.Bool("trap-source-per-device", true, "Bind a per-device UDP socket in the opensim ns so trap packets use the device IP as source (required in -trap-mode inform)")
 		trapInformTimeout   = flag.Duration("trap-inform-timeout", 5*time.Second, "Per-retry timeout in INFORM mode (default 5s)")
 		trapInformRetries   = flag.Int("trap-inform-retries", 2, "Maximum retransmissions per INFORM before declaring it failed (default 2)")
+
+		// UDP syslog export flags. See CLAUDE.md "Syslog export" for detail.
+		syslogCollector       = flag.String("syslog-collector", "", "UDP syslog collector address (host:port, e.g. 10.0.0.50:514); enables syslog export when non-empty")
+		syslogFormat          = flag.String("syslog-format", "5424", "Syslog wire format: 5424 (default, structured RFC 5424) or 3164 (BSD RFC 3164)")
+		syslogInterval        = flag.Duration("syslog-interval", 10*time.Second, "Per-device mean firing interval (Poisson-distributed); default 10s")
+		syslogGlobalCap       = flag.Int("syslog-global-cap", 0, "Simulator-wide rate ceiling for syslog fires (0 = unlimited)")
+		syslogCatalog         = flag.String("syslog-catalog", "", "Path to a JSON syslog catalog; overrides the embedded universal 6-entry catalog when set")
+		syslogSourcePerDevice = flag.Bool("syslog-source-per-device", true, "Bind a per-device UDP socket in the opensim ns so syslog packets use the device IP as source (default true). Bind failures fall back to shared socket with a warning (never fatal for syslog)")
 	)
 
 	flag.Parse()
@@ -228,6 +236,27 @@ func main() {
 		}
 		if err := manager.StartTrapExport(cfg); err != nil {
 			log.Fatalf("Failed to initialize trap export: %v", err)
+		}
+	}
+
+	// Enable UDP syslog export if a collector address was provided.
+	// Must run before device creation so per-device SyslogExporters are
+	// wired during startup.
+	if *syslogCollector != "" {
+		format, err := ParseSyslogFormat(*syslogFormat)
+		if err != nil {
+			log.Fatalf("Failed to initialize syslog export: %v", err)
+		}
+		cfg := SyslogConfig{
+			Collector:       *syslogCollector,
+			Format:          format,
+			Interval:        *syslogInterval,
+			GlobalCap:       *syslogGlobalCap,
+			CatalogPath:     *syslogCatalog,
+			SourcePerDevice: *syslogSourcePerDevice,
+		}
+		if err := manager.StartSyslogExport(cfg); err != nil {
+			log.Fatalf("Failed to initialize syslog export: %v", err)
 		}
 	}
 
