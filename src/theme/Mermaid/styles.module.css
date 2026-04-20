@@ -33,8 +33,14 @@
 }
 
 /* Bounded container for the cloned SVG. Uses the theme's surface colour so
-   dark mode produces a dark inner card instead of a brightness-inverted one. */
+   dark mode produces a dark inner card instead of a brightness-inverted one.
+   Width is explicit (not just max-width) so that mermaid's emitted
+   `<svg width="100%">` has a concrete parent width to resolve against. A
+   shrink-to-fit panel here creates a circular dependency the browser
+   collapses to zero — see the comment above `prepareSvgForOverlay` in
+   index.tsx for the full explanation. */
 .inner {
+  width: 95vw;
   max-width: 95vw;
   max-height: 95vh;
   padding: 1.5rem;
