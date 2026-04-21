@@ -547,15 +547,6 @@ func (sm *SimulatorManager) FireTrapOnDevice(ip, trapName string, overrides map[
 	return id, nil
 }
 
-// resolvedCatalogLabel returns the catalogsByType key that CatalogFor
-// resolved for `ip`. Retained as a convenience wrapper around
-// `catalogWithLabelFor`; callers that need both the catalog pointer AND
-// the label should use `catalogWithLabelFor` directly (one RLock).
-func (sm *SimulatorManager) resolvedCatalogLabel(ip string) string {
-	_, label := sm.catalogWithLabelFor(ip)
-	return label
-}
-
 // sortedTrapEntryNames returns the catalog's entry names in stable
 // alphabetical order — useful for deterministic HTTP 400 bodies that
 // tests can assert against.

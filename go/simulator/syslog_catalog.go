@@ -31,7 +31,9 @@ import (
 	"bytes"
 	"embed"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io/fs"
 	"log"
 	"math/rand"
 	"os"
@@ -415,18 +417,21 @@ func ScanPerTypeSyslogCatalogs(universal *SyslogCatalog, resourceDir string) (ma
 	result := make(map[string]*SyslogCatalog)
 	entries, err := os.ReadDir(resourceDir)
 	if err != nil {
-		if os.IsNotExist(err) {
+		if errors.Is(err, fs.ErrNotExist) {
 			log.Printf("syslog catalog scan: resource dir %q not found — per-type overlays disabled",
 				resourceDir)
 			return result, nil
 		}
-		if os.IsPermission(err) {
+		if errors.Is(err, fs.ErrPermission) {
 			log.Printf("syslog catalog scan: permission denied reading %q — per-type overlays disabled",
 				resourceDir)
 			return result, nil
 		}
 		return nil, fmt.Errorf("syslog catalog scan: reading %q: %w", resourceDir, err)
 	}
+	// Mirror the log-once-per-scan pattern on the trap side so a
+	// systematic perms mismatch doesn't spam N lines at startup.
+	permissionLoggedThisScan := false
 	for _, entry := range entries {
 		if !entry.IsDir() {
 			continue
@@ -439,9 +444,10 @@ func ScanPerTypeSyslogCatalogs(universal *SyslogCatalog, resourceDir string) (ma
 		path := filepath.Join(resourceDir, entry.Name(), "syslog.json")
 		info, err := os.Stat(path)
 		if err != nil {
-			if os.IsPermission(err) {
-				log.Printf("syslog catalog scan: permission denied on %q — per-type overlay for %q skipped",
+			if errors.Is(err, fs.ErrPermission) && !permissionLoggedThisScan {
+				log.Printf("syslog catalog scan: permission denied on %q — per-type overlay for %q skipped (further permission errors this scan suppressed)",
 					path, slug)
+				permissionLoggedThisScan = true
 			}
 			continue
 		}

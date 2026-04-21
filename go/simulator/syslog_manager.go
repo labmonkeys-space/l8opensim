@@ -117,13 +117,6 @@ func (sm *SimulatorManager) syslogCatalogWithLabelFor(ip string) (*SyslogCatalog
 	return sm.syslogCatalog, universalCatalogKey
 }
 
-// resolvedSyslogCatalogLabel returns the label resolved for the given IP.
-// Retained as a convenience wrapper around `syslogCatalogWithLabelFor`.
-func (sm *SimulatorManager) resolvedSyslogCatalogLabel(ip string) string {
-	_, label := sm.syslogCatalogWithLabelFor(ip)
-	return label
-}
-
 // sortedSyslogEntryNames returns the catalog's entry names alphabetically.
 func sortedSyslogEntryNames(cat *SyslogCatalog) []string {
 	if cat == nil {

@@ -27,7 +27,9 @@ import (
 	"bytes"
 	"embed"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io/fs"
 	"log"
 	"math/rand"
 	"os"
@@ -221,7 +223,7 @@ func ScanPerTypeTrapCatalogs(universal *Catalog, resourceDir string) (map[string
 	result := make(map[string]*Catalog)
 	entries, err := os.ReadDir(resourceDir)
 	if err != nil {
-		if os.IsNotExist(err) {
+		if errors.Is(err, fs.ErrNotExist) {
 			// Missing resource tree is only a no-op when nothing else
 			// in the simulator cares about it (e.g. fully-embedded
 			// scenarios). Log a warning so operators running out of a
@@ -231,13 +233,18 @@ func ScanPerTypeTrapCatalogs(universal *Catalog, resourceDir string) (map[string
 				resourceDir)
 			return result, nil
 		}
-		if os.IsPermission(err) {
+		if errors.Is(err, fs.ErrPermission) {
 			log.Printf("trap catalog scan: permission denied reading %q — per-type overlays disabled",
 				resourceDir)
 			return result, nil
 		}
 		return nil, fmt.Errorf("trap catalog scan: reading %q: %w", resourceDir, err)
 	}
+	// permissionLoggedThisScan caps the inner permission-denied log to
+	// one line per scan. If an operator has a systematic perms mismatch
+	// (e.g., every resources/<slug>/ owned by another user) the naive
+	// per-entry log would spam 28+ lines at startup per feature.
+	permissionLoggedThisScan := false
 	for _, entry := range entries {
 		if !entry.IsDir() {
 			continue
@@ -255,12 +262,14 @@ func ScanPerTypeTrapCatalogs(universal *Catalog, resourceDir string) (map[string
 		path := filepath.Join(resourceDir, entry.Name(), "traps.json")
 		info, err := os.Stat(path)
 		if err != nil {
-			// Permission-denied is operator-visible — log once so a
+			// Permission-denied is operator-visible — log it so a
 			// misconfigured per-type file doesn't silently fall back
-			// to the universal catalog without any signal.
-			if os.IsPermission(err) {
-				log.Printf("trap catalog scan: permission denied on %q — per-type overlay for %q skipped",
+			// to the universal catalog without any signal. Log once
+			// per scan to avoid spam when the whole tree is locked.
+			if errors.Is(err, fs.ErrPermission) && !permissionLoggedThisScan {
+				log.Printf("trap catalog scan: permission denied on %q — per-type overlay for %q skipped (further permission errors this scan suppressed)",
 					path, slug)
+				permissionLoggedThisScan = true
 			}
 			continue
 		}
