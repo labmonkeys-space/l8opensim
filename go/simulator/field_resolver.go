@@ -214,9 +214,32 @@ func (sm *SimulatorManager) ChassisID(deviceIP string) string {
 	return synthChassisID(ip)
 }
 
-// IfName — see FieldResolver. PR 2 returns the synthesised name
-// verbatim; PR 3 will insert a live lookup against the device's SNMP
-// OID table at `1.3.6.1.2.1.2.2.1.2.<IfIndex>`.
+// IfName — see FieldResolver. Live-lookup path: resolves the device by
+// IP, reads `ifDescr.<ifIndex>` (OID `1.3.6.1.2.1.2.2.1.2.N`) from the
+// device's SNMP OID table, and falls back to `synthIfName` when the
+// OID is absent. The exporter hot path uses `deviceIfNameFn` directly
+// (which also wraps `lookupIfDescr`); this method exists mostly for
+// test injection and future callers that want a single resolver
+// surface.
+//
+// Lookup is O(N) in the device map because `sm.devices` is keyed by
+// device ID, not IP — this is not the exporter hot path, so the cost is
+// acceptable here (see deviceIfNameFn for the hot-path companion).
 func (sm *SimulatorManager) IfName(deviceIP string, ifIndex int) string {
+	if ifIndex <= 0 {
+		return ""
+	}
+	sm.mu.RLock()
+	var device *DeviceSimulator
+	for _, d := range sm.devices {
+		if d.IP.String() == deviceIP {
+			device = d
+			break
+		}
+	}
+	sm.mu.RUnlock()
+	if name := lookupIfDescr(device, ifIndex); name != "" {
+		return name
+	}
 	return synthIfName(ifIndex)
 }

@@ -348,19 +348,47 @@ func (sm *SimulatorManager) startDeviceSyslogExporter(device *DeviceSimulator) {
 
 // deviceIfNameFn returns the ifName for a given ifIndex on the device.
 //
-// For PR3 scope we synthesise a generic Cisco-style name (`GigabitEthernet0/N`)
-// rather than looking up the real ifDescr from the device's SNMP OID table.
-// A follow-up PR can replace this with a real lookup against the device's
-// response cache when per-device-type catalog realism becomes in scope; for
-// the v1 generic catalog the synthesised name is adequate and keeps this
-// change decoupled from the device-simulation internals.
-func deviceIfNameFn(_ *DeviceSimulator) func(int) string {
+// Live-lookup path: reads `ifDescr.<ifIndex>` (OID `1.3.6.1.2.1.2.2.1.2.N`)
+// from the device's SNMP OID table. When present, this yields vendor-
+// flavoured interface names like `TenGigE0/0/0/5` for Cisco IOS-XR or
+// `ge-0/0/5` for Juniper — exactly what vendor catalog realism needs
+// (design.md §D4, closes epic #103 task 3.2). When the OID is absent
+// (e.g. for a device type that doesn't ship an ifTable, or for an
+// ifIndex outside the loaded resource set) the fallback is the pre-PR-3
+// synthesised `GigabitEthernet0/<N>` so old fixtures continue to render.
+//
+// Zero or negative ifIndex returns "" — matches the pre-existing guard
+// and keeps the exporter's default safe for devices with no interfaces.
+func deviceIfNameFn(device *DeviceSimulator) func(int) string {
 	return func(ifIndex int) string {
 		if ifIndex <= 0 {
 			return ""
 		}
-		return fmt.Sprintf("GigabitEthernet0/%d", ifIndex)
+		if name := lookupIfDescr(device, ifIndex); name != "" {
+			return name
+		}
+		return synthIfName(ifIndex)
 	}
+}
+
+// lookupIfDescr returns the device's `ifDescr.<ifIndex>` value from the
+// SNMP OID table, or "" when the OID is absent. Factored out so the
+// `FieldResolver.IfName` path and `deviceIfNameFn` share one lookup.
+//
+// The OID key format is dot-prefixed (e.g. `.1.3.6.1.2.1.2.2.1.2.5`) to
+// match `resources.go` normalisation (all OID keys get a leading dot
+// when loaded). sync.Map read is lock-free and constant-time.
+func lookupIfDescr(device *DeviceSimulator, ifIndex int) string {
+	if device == nil || device.resources == nil || device.resources.oidIndex == nil {
+		return ""
+	}
+	key := fmt.Sprintf(".1.3.6.1.2.1.2.2.1.2.%d", ifIndex)
+	v, ok := device.resources.oidIndex.Load(key)
+	if !ok {
+		return ""
+	}
+	s, _ := v.(string)
+	return s
 }
 
 // GetSyslogStatus returns a JSON-serializable snapshot of the syslog export
