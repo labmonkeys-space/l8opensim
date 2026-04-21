@@ -156,7 +156,7 @@ func TestSNMPv2cEncoder_EncodeTrap_RoundTrip(t *testing.T) {
 		{OID: "1.3.6.1.2.1.2.2.1.7.7", Type: TrapVTInteger, Value: "2"},
 		{OID: "1.3.6.1.2.1.2.2.1.8.7", Type: TrapVTInteger, Value: "2"},
 	}
-	n, err := enc.EncodeTrap("public", 12345, "1.3.6.1.6.3.1.1.5.3", 1234567, varbinds, buf)
+	n, err := enc.EncodeTrap("public", 12345, "1.3.6.1.6.3.1.1.5.3", "", 1234567, varbinds, buf)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -217,7 +217,7 @@ func TestSNMPv2cEncoder_EncodeTrap_RoundTrip(t *testing.T) {
 func TestSNMPv2cEncoder_EncodeInform_HasInformTag(t *testing.T) {
 	enc := SNMPv2cEncoder{}
 	buf := make([]byte, 1500)
-	n, err := enc.EncodeInform("public", 42, "1.3.6.1.6.3.1.1.5.4", 100, nil, buf)
+	n, err := enc.EncodeInform("public", 42, "1.3.6.1.6.3.1.1.5.4", "", 100, nil, buf)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -269,7 +269,7 @@ func TestSNMPv2cEncoder_ParseAck_RejectsNonGetResponse(t *testing.T) {
 	// Build a TRAP instead of GetResponse and feed it to ParseAck.
 	enc := SNMPv2cEncoder{}
 	buf := make([]byte, 1500)
-	n, _ := enc.EncodeTrap("public", 1, "1.2.3", 100, nil, buf)
+	n, _ := enc.EncodeTrap("public", 1, "1.2.3", "", 100, nil, buf)
 	_, _, err := enc.ParseAck(buf[:n])
 	if err == nil {
 		t.Fatal("ParseAck should reject a TRAP-tagged packet")
@@ -300,7 +300,7 @@ func TestSNMPv2cEncoder_RequestIDDistinct_10k(t *testing.T) {
 	buf := make([]byte, 1500)
 	seen := make(map[uint32]struct{}, 10000)
 	for i := uint32(1); i <= 10000; i++ {
-		n, err := enc.EncodeTrap("c", i, "1.2.3", 0, nil, buf)
+		n, err := enc.EncodeTrap("c", i, "1.2.3", "", 0, nil, buf)
 		if err != nil {
 			t.Fatalf("encode %d: %v", i, err)
 		}
@@ -330,7 +330,7 @@ func TestSNMPv2cEncoder_AllVarbindTypes(t *testing.T) {
 	buf := make([]byte, 1500)
 	for _, tc := range cases {
 		t.Run(string(tc.Type), func(t *testing.T) {
-			n, err := enc.EncodeTrap("public", 1, "1.2.3", 0, []Varbind{tc}, buf)
+			n, err := enc.EncodeTrap("public", 1, "1.2.3", "", 0, []Varbind{tc}, buf)
 			if err != nil {
 				t.Fatalf("encode %s: %v", tc.Type, err)
 			}
@@ -353,7 +353,7 @@ func TestSNMPv2cEncoder_RejectsInvalidVarbindValues(t *testing.T) {
 	}
 	for _, vb := range bad {
 		t.Run(string(vb.Type)+"_"+vb.Value, func(t *testing.T) {
-			_, err := enc.EncodeTrap("c", 1, "1.2.3", 0, []Varbind{vb}, buf)
+			_, err := enc.EncodeTrap("c", 1, "1.2.3", "", 0, []Varbind{vb}, buf)
 			if err == nil {
 				t.Fatalf("want error for bad %s value %q, got nil", vb.Type, vb.Value)
 			}
@@ -373,7 +373,7 @@ func TestSNMPv2cEncoder_ByteIdentity(t *testing.T) {
 		{OID: "1.3.6.1.2.1.2.2.1.7.3", Type: TrapVTInteger, Value: "2"},
 		{OID: "1.3.6.1.2.1.2.2.1.8.3", Type: TrapVTInteger, Value: "2"},
 	}
-	n, err := enc.EncodeTrap("public", 42, "1.3.6.1.6.3.1.1.5.3", 12345678, varbinds, buf)
+	n, err := enc.EncodeTrap("public", 42, "1.3.6.1.6.3.1.1.5.3", "", 12345678, varbinds, buf)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -410,6 +410,80 @@ var testPinRegistry = map[string]string{
 	// varbinds will trip this. If the change is intentional, update the
 	// pin — otherwise investigate the regression.
 	"trap_v2c_byte_identity": "c8cebe20015fc9060e33997c31c74899",
+	// Pinned on first-run of TestSNMPv2cEncoder_EnterpriseVarbind_ByteIdentity.
+	// Covers the wire layout when snmpTrapEnterprise is set on the catalog
+	// entry and the encoder emits the optional third mandatory-prepended
+	// varbind. The empty-enterprise path is already pinned above.
+	"trap_v2c_byte_identity_with_enterprise": "fd35e3de4511176b54845a00d226059a",
+}
+
+// TestSNMPv2cEncoder_EnterpriseVarbind_Emitted confirms that a non-empty
+// enterpriseOID causes the encoder to emit an additional snmpTrapEnterprise.0
+// varbind (OID 1.3.6.1.6.3.1.1.4.3.0) after the two mandatory varbinds.
+func TestSNMPv2cEncoder_EnterpriseVarbind_Emitted(t *testing.T) {
+	enc := SNMPv2cEncoder{}
+	buf := make([]byte, 1500)
+	n, err := enc.EncodeTrap("public", 1, "1.3.6.1.6.3.1.1.5.3", "1.3.6.1.4.1.9.1", 0, nil, buf)
+	if err != nil {
+		t.Fatal(err)
+	}
+	decoded := decodeV2cNotification(t, buf[:n])
+	if got := len(decoded.Varbinds); got != 3 {
+		t.Fatalf("varbind count: got %d, want 3 (sysUpTime + snmpTrapOID + snmpTrapEnterprise)", got)
+	}
+	// decodeOID in the test harness prepends a literal "." — match the
+	// convention used by the other decoder-oracle assertions in this file.
+	if decoded.Varbinds[2].OID != "."+oidSnmpTrapEnterprise0 {
+		t.Errorf("varbind[2].OID: got %s, want .%s", decoded.Varbinds[2].OID, oidSnmpTrapEnterprise0)
+	}
+	if decoded.Varbinds[2].TypeTag != ASN1_OBJECT_ID {
+		t.Errorf("varbind[2].TypeTag: got 0x%02x, want 0x%02x (OID)", decoded.Varbinds[2].TypeTag, ASN1_OBJECT_ID)
+	}
+	if got := decodeOID(decoded.Varbinds[2].RawValue); got != ".1.3.6.1.4.1.9.1" {
+		t.Errorf("varbind[2] enterprise OID value: got %s, want .1.3.6.1.4.1.9.1", got)
+	}
+}
+
+// TestSNMPv2cEncoder_EnterpriseVarbind_Skipped confirms that an empty
+// enterpriseOID produces exactly 2 varbinds (sysUpTime + snmpTrapOID) — the
+// backward-compatible behaviour for catalogs authored before the field existed.
+func TestSNMPv2cEncoder_EnterpriseVarbind_Skipped(t *testing.T) {
+	enc := SNMPv2cEncoder{}
+	buf := make([]byte, 1500)
+	n, err := enc.EncodeTrap("public", 1, "1.3.6.1.6.3.1.1.5.3", "", 0, nil, buf)
+	if err != nil {
+		t.Fatal(err)
+	}
+	decoded := decodeV2cNotification(t, buf[:n])
+	if got := len(decoded.Varbinds); got != 2 {
+		t.Fatalf("varbind count with empty enterpriseOID: got %d, want 2", got)
+	}
+}
+
+// TestSNMPv2cEncoder_EnterpriseVarbind_ByteIdentity pins the MD5 of a canonical
+// TRAP encode WITH snmpTrapEnterprise.0 set. This is a second byte-identity
+// test (the first, TestSNMPv2cEncoder_ByteIdentity, covers the no-enterprise
+// path). Any change to the enterprise emission layout (position, encoding)
+// trips this hash.
+func TestSNMPv2cEncoder_EnterpriseVarbind_ByteIdentity(t *testing.T) {
+	enc := SNMPv2cEncoder{}
+	buf := make([]byte, 1500)
+	varbinds := []Varbind{
+		{OID: "1.3.6.1.2.1.2.2.1.1.3", Type: TrapVTInteger, Value: "3"},
+		{OID: "1.3.6.1.2.1.2.2.1.7.3", Type: TrapVTInteger, Value: "2"},
+		{OID: "1.3.6.1.2.1.2.2.1.8.3", Type: TrapVTInteger, Value: "2"},
+	}
+	n, err := enc.EncodeTrap("public", 42, "1.3.6.1.6.3.1.1.5.3", "1.3.6.1.4.1.9.1", 12345678, varbinds, buf)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sum := md5.Sum(buf[:n])
+	got := hex.EncodeToString(sum[:])
+	want := firstRunPin(t, "trap_v2c_byte_identity_with_enterprise", got)
+	if got != want {
+		t.Errorf("TRAP byte identity (with enterprise) changed:\n got  %s\n want %s\n"+
+			"If intentional, update the pin in testPinRegistry.", got, want)
+	}
 }
 
 // buildAckDatagram constructs a minimal SNMPv2c GetResponse-PDU with the
@@ -441,7 +515,7 @@ func buildAckDatagram(t *testing.T, community string, reqID uint32, errorStatus 
 func TestDecodeV2cNotification_ValidShape(t *testing.T) {
 	enc := SNMPv2cEncoder{}
 	buf := make([]byte, 1500)
-	n, _ := enc.EncodeTrap("x", 1, "1.2", 0, nil, buf)
+	n, _ := enc.EncodeTrap("x", 1, "1.2", "", 0, nil, buf)
 	dec := decodeV2cNotification(t, buf[:n])
 	if fmt.Sprintf("%d/%d", dec.Version, dec.RequestID) != "1/1" {
 		t.Fatal("decoder sanity failed")

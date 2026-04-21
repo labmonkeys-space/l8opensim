@@ -61,6 +61,8 @@ func TestLoadCatalogFromFile_ReservedOIDRejected(t *testing.T) {
 		{"sysUpTime no prefix", "1.3.6.1.2.1.1.3.0"},
 		{"snmpTrapOID with dot prefix", ".1.3.6.1.6.3.1.1.4.1.0"},
 		{"snmpTrapOID no prefix", "1.3.6.1.6.3.1.1.4.1.0"},
+		{"snmpTrapEnterprise with dot prefix", ".1.3.6.1.6.3.1.1.4.3.0"},
+		{"snmpTrapEnterprise no prefix", "1.3.6.1.6.3.1.1.4.3.0"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -78,6 +80,88 @@ func TestLoadCatalogFromFile_ReservedOIDRejected(t *testing.T) {
 				t.Errorf("error should mention 'reserved': %v", err)
 			}
 		})
+	}
+}
+
+// TestLoadCatalogFromFile_EnterpriseField_Valid confirms an entry with a
+// legitimate snmpTrapEnterprise OID loads correctly and stores it on the
+// parsed CatalogEntry.
+func TestLoadCatalogFromFile_EnterpriseField_Valid(t *testing.T) {
+	body := `{"traps":[{"name":"x","snmpTrapOID":"1.3.6.1.6.3.1.1.5.3","snmpTrapEnterprise":"1.3.6.1.4.1.9.1","varbinds":[]}]}`
+	path := filepath.Join(t.TempDir(), "c.json")
+	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cat, err := LoadCatalogFromFile(path)
+	if err != nil {
+		t.Fatalf("unexpected load error: %v", err)
+	}
+	if got := cat.Entries[0].SnmpTrapEnterprise; got != "1.3.6.1.4.1.9.1" {
+		t.Errorf("SnmpTrapEnterprise: got %q, want %q", got, "1.3.6.1.4.1.9.1")
+	}
+}
+
+// TestLoadCatalogFromFile_EnterpriseField_StripsLeadingDot exercises the
+// same TrimPrefix normalisation used for snmpTrapOID.
+func TestLoadCatalogFromFile_EnterpriseField_StripsLeadingDot(t *testing.T) {
+	body := `{"traps":[{"name":"x","snmpTrapOID":"1.3.6.1.6.3.1.1.5.3","snmpTrapEnterprise":".1.3.6.1.4.1.9.1","varbinds":[]}]}`
+	path := filepath.Join(t.TempDir(), "c.json")
+	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cat, err := LoadCatalogFromFile(path)
+	if err != nil {
+		t.Fatalf("unexpected load error: %v", err)
+	}
+	if got := cat.Entries[0].SnmpTrapEnterprise; got != "1.3.6.1.4.1.9.1" {
+		t.Errorf("SnmpTrapEnterprise not dot-stripped: got %q, want %q", got, "1.3.6.1.4.1.9.1")
+	}
+}
+
+// TestLoadCatalogFromFile_EnterpriseField_RejectsReserved makes sure the
+// entry-level snmpTrapEnterprise field itself cannot hold one of the three
+// reserved OIDs (sysUpTime.0, snmpTrapOID.0, snmpTrapEnterprise.0).
+func TestLoadCatalogFromFile_EnterpriseField_RejectsReserved(t *testing.T) {
+	cases := []string{
+		"1.3.6.1.2.1.1.3.0",
+		"1.3.6.1.6.3.1.1.4.1.0",
+		"1.3.6.1.6.3.1.1.4.3.0",
+	}
+	for _, oid := range cases {
+		t.Run(oid, func(t *testing.T) {
+			body := `{"traps":[{"name":"x","snmpTrapOID":"1.2.3","snmpTrapEnterprise":"` +
+				oid + `","varbinds":[]}]}`
+			path := filepath.Join(t.TempDir(), "c.json")
+			if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			_, err := LoadCatalogFromFile(path)
+			if err == nil {
+				t.Fatal("expected reserved-OID rejection, got nil")
+			}
+			if !strings.Contains(err.Error(), "reserved") {
+				t.Errorf("error should mention 'reserved': %v", err)
+			}
+		})
+	}
+}
+
+// TestLoadCatalogFromFile_EnterpriseField_DefaultEmpty confirms that an
+// entry without the snmpTrapEnterprise field produces an empty string on
+// the parsed entry — backward-compatibility anchor for pre-issue-#100
+// catalogs.
+func TestLoadCatalogFromFile_EnterpriseField_DefaultEmpty(t *testing.T) {
+	body := `{"traps":[{"name":"x","snmpTrapOID":"1.3.6.1.6.3.1.1.5.3","varbinds":[]}]}`
+	path := filepath.Join(t.TempDir(), "c.json")
+	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cat, err := LoadCatalogFromFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := cat.Entries[0].SnmpTrapEnterprise; got != "" {
+		t.Errorf("SnmpTrapEnterprise: got %q, want empty (field absent in JSON)", got)
 	}
 }
 

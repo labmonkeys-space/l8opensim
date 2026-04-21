@@ -40,10 +40,14 @@ var embeddedCatalogFS embed.FS
 const embeddedCatalogPath = "resources/_common/traps.json"
 
 // Reserved OIDs that the encoder prepends automatically to every trap.
-// Catalog authors MUST NOT include them in body varbinds (design.md §D10).
+// Catalog authors MUST NOT include them in body varbinds.
+// - `sysUpTime.0` and `snmpTrapOID.0` are prepended unconditionally (design.md §D10).
+// - `snmpTrapEnterprise.0` is prepended when the catalog entry sets the
+//   optional `snmpTrapEnterprise` field (follow-up issue #100).
 const (
-	oidSysUpTime0    = "1.3.6.1.2.1.1.3.0"
-	oidSnmpTrapOID0  = "1.3.6.1.6.3.1.1.4.1.0"
+	oidSysUpTime0          = "1.3.6.1.2.1.1.3.0"
+	oidSnmpTrapOID0        = "1.3.6.1.6.3.1.1.4.1.0"
+	oidSnmpTrapEnterprise0 = "1.3.6.1.6.3.1.1.4.3.0"
 )
 
 // allowedTemplateFields enumerates the four template fields the catalog
@@ -81,10 +85,11 @@ type trapVarbindJSON struct {
 
 // catalogEntryJSON is the on-disk shape of one trap catalog entry.
 type catalogEntryJSON struct {
-	Name        string            `json:"name"`
-	SnmpTrapOID string            `json:"snmpTrapOID"`
-	Weight      int               `json:"weight"`
-	Varbinds    []trapVarbindJSON `json:"varbinds"`
+	Name               string            `json:"name"`
+	SnmpTrapOID        string            `json:"snmpTrapOID"`
+	SnmpTrapEnterprise string            `json:"snmpTrapEnterprise,omitempty"`
+	Weight             int               `json:"weight"`
+	Varbinds           []trapVarbindJSON `json:"varbinds"`
 }
 
 // trapCatalogJSON is the on-disk shape of the whole catalog file.
@@ -107,11 +112,19 @@ type VarbindTemplate struct {
 
 // CatalogEntry is one parsed trap in the catalog. Weight defaults to 1 when
 // omitted from JSON; Pick is weight-biased random selection.
+//
+// SnmpTrapEnterprise is the OPTIONAL value for the `snmpTrapEnterprise.0`
+// varbind (OID 1.3.6.1.6.3.1.1.4.3.0) from SNMPv2-MIB §10. When non-empty,
+// the encoder auto-prepends this varbind after the two mandatory
+// (`sysUpTime.0`, `snmpTrapOID.0`) and before the body varbinds. Empty
+// means the varbind is not emitted — backward-compatible with catalogs
+// authored before this field existed.
 type CatalogEntry struct {
-	Name        string
-	SnmpTrapOID string
-	Weight      int
-	Varbinds    []VarbindTemplate
+	Name               string
+	SnmpTrapOID        string
+	SnmpTrapEnterprise string
+	Weight             int
+	Varbinds           []VarbindTemplate
 }
 
 // Catalog is the whole parsed trap catalog plus cached weight metadata for Pick.
@@ -223,10 +236,24 @@ func compileEntry(raw catalogEntryJSON, source string, idx int) (*CatalogEntry, 
 	}
 
 	entry := &CatalogEntry{
-		Name:        raw.Name,
-		SnmpTrapOID: strings.TrimPrefix(raw.SnmpTrapOID, "."),
-		Weight:      weight,
-		Varbinds:    make([]VarbindTemplate, 0, len(raw.Varbinds)),
+		Name:               raw.Name,
+		SnmpTrapOID:        strings.TrimPrefix(raw.SnmpTrapOID, "."),
+		SnmpTrapEnterprise: strings.TrimPrefix(raw.SnmpTrapEnterprise, "."),
+		Weight:             weight,
+		Varbinds:           make([]VarbindTemplate, 0, len(raw.Varbinds)),
+	}
+	// The optional snmpTrapEnterprise.0 value must not collide with OIDs
+	// the encoder auto-prepends. snmpTrapOID.0 / sysUpTime.0 as an
+	// enterprise value would be nonsensical; snmpTrapEnterprise.0 itself
+	// is the OID of the varbind, not its value.
+	if entry.SnmpTrapEnterprise != "" {
+		switch entry.SnmpTrapEnterprise {
+		case oidSysUpTime0, oidSnmpTrapOID0, oidSnmpTrapEnterprise0:
+			return nil, fmt.Errorf("trap catalog: %s entry %q: snmpTrapEnterprise value %s "+
+				"is a reserved OID — the field should hold an enterprise OID reflecting "+
+				"the notification type, typically the parent of snmpTrapOID",
+				source, raw.Name, raw.SnmpTrapEnterprise)
+		}
 	}
 	for j, vb := range raw.Varbinds {
 		if err := validateVarbindOID(vb.OID, raw.Name, j); err != nil {
@@ -273,17 +300,26 @@ func compileEntry(raw catalogEntryJSON, source string, idx int) (*CatalogEntry, 
 	return entry, nil
 }
 
-// validateVarbindOID rejects the two reserved OIDs that the encoder prepends
+// validateVarbindOID rejects the reserved OIDs that the encoder prepends
 // automatically. Accepts templates (anything containing "{{") as a pass — the
 // reserved OIDs are literal strings, so a template'd OID cannot collide.
+//
+// snmpTrapEnterprise.0 is rejected in body varbinds because it has its own
+// top-level catalog field (`snmpTrapEnterprise`); including it in body
+// varbinds would produce a duplicate on the wire.
 func validateVarbindOID(raw, entryName string, idx int) error {
 	if strings.Contains(raw, "{{") {
 		return nil
 	}
 	norm := strings.TrimPrefix(raw, ".")
-	if norm == oidSysUpTime0 || norm == oidSnmpTrapOID0 {
+	switch norm {
+	case oidSysUpTime0, oidSnmpTrapOID0:
 		return fmt.Errorf("trap catalog: entry %q varbind %d: OID %s is reserved "+
 			"(sysUpTime.0 and snmpTrapOID.0 are prepended automatically by the encoder)",
+			entryName, idx, raw)
+	case oidSnmpTrapEnterprise0:
+		return fmt.Errorf("trap catalog: entry %q varbind %d: OID %s is reserved — "+
+			"use the entry-level `snmpTrapEnterprise` field instead of a body varbind",
 			entryName, idx, raw)
 	}
 	return nil
