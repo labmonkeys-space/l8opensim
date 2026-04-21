@@ -236,17 +236,21 @@ func compileEntry(raw catalogEntryJSON, source string, idx int) (*CatalogEntry, 
 	}
 
 	entry := &CatalogEntry{
-		Name:               raw.Name,
-		SnmpTrapOID:        strings.TrimPrefix(raw.SnmpTrapOID, "."),
-		SnmpTrapEnterprise: strings.TrimPrefix(raw.SnmpTrapEnterprise, "."),
-		Weight:             weight,
-		Varbinds:           make([]VarbindTemplate, 0, len(raw.Varbinds)),
+		Name:        raw.Name,
+		SnmpTrapOID: strings.TrimPrefix(raw.SnmpTrapOID, "."),
+		Weight:      weight,
+		Varbinds:    make([]VarbindTemplate, 0, len(raw.Varbinds)),
 	}
-	// The optional snmpTrapEnterprise.0 value must not collide with OIDs
-	// the encoder auto-prepends. snmpTrapOID.0 / sysUpTime.0 as an
-	// enterprise value would be nonsensical; snmpTrapEnterprise.0 itself
-	// is the OID of the varbind, not its value.
-	if entry.SnmpTrapEnterprise != "" {
+	// The optional snmpTrapEnterprise.0 value must be a well-formed dotted-
+	// decimal OID and must not collide with OIDs the encoder auto-prepends.
+	// Format check runs first so the operator sees a specific message about
+	// the format gap (".", whitespace, single-arc, trailing-dot, etc.) rather
+	// than a reserved-OID error that never fires for malformed input.
+	if raw.SnmpTrapEnterprise != "" {
+		entry.SnmpTrapEnterprise = strings.TrimPrefix(raw.SnmpTrapEnterprise, ".")
+		if err := validateDottedOID(entry.SnmpTrapEnterprise, raw.Name, "snmpTrapEnterprise"); err != nil {
+			return nil, fmt.Errorf("trap catalog: %s %w", source, err)
+		}
 		switch entry.SnmpTrapEnterprise {
 		case oidSysUpTime0, oidSnmpTrapOID0, oidSnmpTrapEnterprise0:
 			return nil, fmt.Errorf("trap catalog: %s entry %q: snmpTrapEnterprise value %s "+
@@ -321,6 +325,47 @@ func validateVarbindOID(raw, entryName string, idx int) error {
 		return fmt.Errorf("trap catalog: entry %q varbind %d: OID %s is reserved — "+
 			"use the entry-level `snmpTrapEnterprise` field instead of a body varbind",
 			entryName, idx, raw)
+	}
+	return nil
+}
+
+// maxDottedOIDLen caps the length of top-level literal OID fields (currently
+// only snmpTrapEnterprise). Well under the UDP MTU budget and comfortably
+// larger than any real enterprise OID.
+const maxDottedOIDLen = 256
+
+// validateDottedOID rejects malformed literal dotted-decimal OIDs:
+// empty strings, strings over maxDottedOIDLen, single-arc, trailing dot,
+// empty arcs (consecutive dots), and non-numeric characters. Used on
+// literal-OID fields (snmpTrapEnterprise); body varbinds use a template
+// grammar and go through validateVarbindOID instead.
+func validateDottedOID(oid, entryName, field string) error {
+	if oid == "" {
+		return fmt.Errorf("entry %q %s: OID is empty", entryName, field)
+	}
+	if len(oid) > maxDottedOIDLen {
+		return fmt.Errorf("entry %q %s: OID length %d exceeds max %d",
+			entryName, field, len(oid), maxDottedOIDLen)
+	}
+	if strings.HasSuffix(oid, ".") {
+		return fmt.Errorf("entry %q %s: OID %q has trailing dot", entryName, field, oid)
+	}
+	arcs := strings.Split(oid, ".")
+	if len(arcs) < 2 {
+		return fmt.Errorf("entry %q %s: OID %q must have at least two arcs",
+			entryName, field, oid)
+	}
+	for _, arc := range arcs {
+		if arc == "" {
+			return fmt.Errorf("entry %q %s: OID %q has an empty arc",
+				entryName, field, oid)
+		}
+		for _, r := range arc {
+			if r < '0' || r > '9' {
+				return fmt.Errorf("entry %q %s: OID %q contains non-numeric character %q",
+					entryName, field, oid, r)
+			}
+		}
 	}
 	return nil
 }

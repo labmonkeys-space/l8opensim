@@ -116,9 +116,12 @@ func encodeV2cNotification(pduTag byte, community string, reqID uint32, trapOID,
 	//   1. sysUpTime.0 (TimeTicks)
 	//   2. snmpTrapOID.0 (OID = trapOID)
 	//   3. snmpTrapEnterprise.0 (OID = enterpriseOID) — only when non-empty.
-	//      SNMPv2-MIB §10 places this additional-info varbind after the two
-	//      mandatory ones and before catalog body varbinds; convention
-	//      across net-snmp / pysnmp / SNMP4J matches.
+	//      RFC 3584 §4.1 (the SNMPv1↔v2c proxy translation spec) places
+	//      snmpTrapEnterprise.0 as the third element of variable-bindings,
+	//      after sysUpTime.0 and snmpTrapOID.0 and before any additional
+	//      varbinds. SNMPv2-MIB §10 makes this additional-info varbind
+	//      optional on native v2c notifications; when catalog authors set it
+	//      we emit it in the same position RFC 3584 pins.
 	//   N. body varbinds
 	vbContents := make([]byte, 0, 64+len(varbinds)*32)
 	vbContents = append(vbContents, encodeVarbindTimeTicks(oidSysUpTime0, uptimeHundredths)...)

@@ -419,11 +419,13 @@ var testPinRegistry = map[string]string{
 
 // TestSNMPv2cEncoder_EnterpriseVarbind_Emitted confirms that a non-empty
 // enterpriseOID causes the encoder to emit an additional snmpTrapEnterprise.0
-// varbind (OID 1.3.6.1.6.3.1.1.4.3.0) after the two mandatory varbinds.
+// varbind (OID 1.3.6.1.6.3.1.1.4.3.0) after the two mandatory varbinds and
+// pins the positional contract: slot 0 = sysUpTime.0, slot 1 = snmpTrapOID.0,
+// slot 2 = snmpTrapEnterprise.0.
 func TestSNMPv2cEncoder_EnterpriseVarbind_Emitted(t *testing.T) {
 	enc := SNMPv2cEncoder{}
 	buf := make([]byte, 1500)
-	n, err := enc.EncodeTrap("public", 1, "1.3.6.1.6.3.1.1.5.3", "1.3.6.1.4.1.9.1", 0, nil, buf)
+	n, err := enc.EncodeTrap("public", 1, "1.3.6.1.6.3.1.1.5.3", "1.3.6.1.4.1.9.1", 4242, nil, buf)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -431,8 +433,26 @@ func TestSNMPv2cEncoder_EnterpriseVarbind_Emitted(t *testing.T) {
 	if got := len(decoded.Varbinds); got != 3 {
 		t.Fatalf("varbind count: got %d, want 3 (sysUpTime + snmpTrapOID + snmpTrapEnterprise)", got)
 	}
-	// decodeOID in the test harness prepends a literal "." — match the
-	// convention used by the other decoder-oracle assertions in this file.
+	// Slot 0: sysUpTime.0 TimeTicks = 4242 — pin position, not just presence.
+	if decoded.Varbinds[0].OID != "."+oidSysUpTime0 {
+		t.Errorf("varbind[0].OID: got %s, want .%s", decoded.Varbinds[0].OID, oidSysUpTime0)
+	}
+	if decoded.Varbinds[0].TypeTag != ASN1_TIMETICKS {
+		t.Errorf("varbind[0].TypeTag: got 0x%02x, want 0x%02x (TimeTicks)",
+			decoded.Varbinds[0].TypeTag, ASN1_TIMETICKS)
+	}
+	if got := parseUintBE(decoded.Varbinds[0].RawValue); got != 4242 {
+		t.Errorf("varbind[0] value: got %d, want 4242", got)
+	}
+	// Slot 1: snmpTrapOID.0 value = trapOID argument.
+	if decoded.Varbinds[1].OID != "."+oidSnmpTrapOID0 {
+		t.Errorf("varbind[1].OID: got %s, want .%s", decoded.Varbinds[1].OID, oidSnmpTrapOID0)
+	}
+	if got := decodeOID(decoded.Varbinds[1].RawValue); got != ".1.3.6.1.6.3.1.1.5.3" {
+		t.Errorf("varbind[1] snmpTrapOID value: got %s, want .1.3.6.1.6.3.1.1.5.3", got)
+	}
+	// Slot 2: snmpTrapEnterprise.0. decodeOID prepends a literal "." — match
+	// the convention used by the other decoder-oracle assertions in this file.
 	if decoded.Varbinds[2].OID != "."+oidSnmpTrapEnterprise0 {
 		t.Errorf("varbind[2].OID: got %s, want .%s", decoded.Varbinds[2].OID, oidSnmpTrapEnterprise0)
 	}
@@ -441,6 +461,39 @@ func TestSNMPv2cEncoder_EnterpriseVarbind_Emitted(t *testing.T) {
 	}
 	if got := decodeOID(decoded.Varbinds[2].RawValue); got != ".1.3.6.1.4.1.9.1" {
 		t.Errorf("varbind[2] enterprise OID value: got %s, want .1.3.6.1.4.1.9.1", got)
+	}
+}
+
+// TestSNMPv2cEncoder_EnterpriseVarbind_WithBodyVarbinds covers the composition
+// case: enterprise prepended varbind PLUS catalog body varbinds. Asserts the
+// body varbinds land at positions 3..N+2 (not clobbered by or commingled with
+// the enterprise slot).
+func TestSNMPv2cEncoder_EnterpriseVarbind_WithBodyVarbinds(t *testing.T) {
+	enc := SNMPv2cEncoder{}
+	buf := make([]byte, 1500)
+	body := []Varbind{
+		{OID: "1.3.6.1.2.1.2.2.1.1.3", Type: TrapVTInteger, Value: "3"},
+		{OID: "1.3.6.1.2.1.2.2.1.7.3", Type: TrapVTInteger, Value: "2"},
+	}
+	n, err := enc.EncodeTrap("public", 1, "1.3.6.1.6.3.1.1.5.3", "1.3.6.1.4.1.9.1", 0, body, buf)
+	if err != nil {
+		t.Fatal(err)
+	}
+	decoded := decodeV2cNotification(t, buf[:n])
+	if got := len(decoded.Varbinds); got != 5 {
+		t.Fatalf("varbind count: got %d, want 5 (sysUpTime + snmpTrapOID + enterprise + 2 body)", got)
+	}
+	if decoded.Varbinds[2].OID != "."+oidSnmpTrapEnterprise0 {
+		t.Errorf("varbind[2].OID: got %s, want .%s (enterprise must stay at slot 2 when body varbinds follow)",
+			decoded.Varbinds[2].OID, oidSnmpTrapEnterprise0)
+	}
+	if decoded.Varbinds[3].OID != ".1.3.6.1.2.1.2.2.1.1.3" {
+		t.Errorf("varbind[3].OID: got %s, want .1.3.6.1.2.1.2.2.1.1.3 (first body varbind)",
+			decoded.Varbinds[3].OID)
+	}
+	if decoded.Varbinds[4].OID != ".1.3.6.1.2.1.2.2.1.7.3" {
+		t.Errorf("varbind[4].OID: got %s, want .1.3.6.1.2.1.2.2.1.7.3 (second body varbind)",
+			decoded.Varbinds[4].OID)
 	}
 }
 

@@ -120,12 +120,17 @@ func TestLoadCatalogFromFile_EnterpriseField_StripsLeadingDot(t *testing.T) {
 
 // TestLoadCatalogFromFile_EnterpriseField_RejectsReserved makes sure the
 // entry-level snmpTrapEnterprise field itself cannot hold one of the three
-// reserved OIDs (sysUpTime.0, snmpTrapOID.0, snmpTrapEnterprise.0).
+// reserved OIDs (sysUpTime.0, snmpTrapOID.0, snmpTrapEnterprise.0), in both
+// no-prefix and leading-dot forms — the leading-dot variant is the evasion
+// path (TrimPrefix happens before the reserved-OID comparison).
 func TestLoadCatalogFromFile_EnterpriseField_RejectsReserved(t *testing.T) {
 	cases := []string{
 		"1.3.6.1.2.1.1.3.0",
 		"1.3.6.1.6.3.1.1.4.1.0",
 		"1.3.6.1.6.3.1.1.4.3.0",
+		".1.3.6.1.2.1.1.3.0",
+		".1.3.6.1.6.3.1.1.4.1.0",
+		".1.3.6.1.6.3.1.1.4.3.0",
 	}
 	for _, oid := range cases {
 		t.Run(oid, func(t *testing.T) {
@@ -143,6 +148,66 @@ func TestLoadCatalogFromFile_EnterpriseField_RejectsReserved(t *testing.T) {
 				t.Errorf("error should mention 'reserved': %v", err)
 			}
 		})
+	}
+}
+
+// TestLoadCatalogFromFile_EnterpriseField_RejectsMalformed exercises the
+// dotted-OID format validator: single-dot / single-arc / trailing-dot /
+// embedded empty arc / non-numeric / whitespace-only inputs must all be
+// rejected at catalog load rather than silently producing broken wire bytes.
+func TestLoadCatalogFromFile_EnterpriseField_RejectsMalformed(t *testing.T) {
+	cases := []struct {
+		name string
+		oid  string
+	}{
+		{"single_dot", "."},
+		{"whitespace_only", "   "},
+		{"single_arc", "12345"},
+		{"trailing_dot", "1.3.6.1.4.1.9.1."},
+		{"empty_arc_middle", "1.3..6"},
+		{"non_numeric_character", "1.3.6.1.4.1.abc"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			body := `{"traps":[{"name":"x","snmpTrapOID":"1.2.3","snmpTrapEnterprise":"` +
+				tc.oid + `","varbinds":[]}]}`
+			path := filepath.Join(t.TempDir(), "c.json")
+			if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			_, err := LoadCatalogFromFile(path)
+			if err == nil {
+				t.Fatalf("expected malformed-OID rejection for %q, got nil", tc.oid)
+			}
+			if !strings.Contains(err.Error(), "snmpTrapEnterprise") {
+				t.Errorf("error should name the field: %v", err)
+			}
+		})
+	}
+}
+
+// TestLoadCatalogFromFile_EnterpriseField_RejectsOverLength pins the
+// maxDottedOIDLen cap. A 257-char OID must be rejected even though it's
+// otherwise well-formed digits-and-dots — bounds the enterprise varbind's
+// contribution to the UDP MTU budget.
+func TestLoadCatalogFromFile_EnterpriseField_RejectsOverLength(t *testing.T) {
+	// Build an OID of length 257: "1" + (".1" * 128) = 1 + 256 = 257 chars.
+	oid := "1" + strings.Repeat(".1", 128)
+	if len(oid) != 257 {
+		t.Fatalf("setup: want len 257, got %d", len(oid))
+	}
+	body := `{"traps":[{"name":"x","snmpTrapOID":"1.2.3","snmpTrapEnterprise":"` +
+		oid + `","varbinds":[]}]}`
+	path := filepath.Join(t.TempDir(), "c.json")
+	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	_, err := LoadCatalogFromFile(path)
+	if err == nil {
+		t.Fatal("expected over-length rejection, got nil")
+	}
+	if !strings.Contains(err.Error(), "exceeds max") {
+		t.Errorf("error should mention the length cap: %v", err)
 	}
 }
 
@@ -317,5 +382,73 @@ func TestCatalogEntry_Resolve_Fast(t *testing.T) {
 		if _, err := entry.Resolve(ctx, nil); err != nil {
 			t.Fatal(err)
 		}
+	}
+}
+
+// TestCatalog_To_Wire_IntegrationWithEnterprise exercises the full pipeline:
+// catalog JSON with snmpTrapEnterprise + body varbinds → LoadCatalogFromFile
+// → Resolve → EncodeTrap → BER decode. Confirms the enterprise OID survives
+// from catalog source to the wire in the correct position (slot 2, after
+// sysUpTime.0 and snmpTrapOID.0) alongside a template-resolved body varbind.
+func TestCatalog_To_Wire_IntegrationWithEnterprise(t *testing.T) {
+	body := `{"traps":[{
+		"name": "enterpriseLink",
+		"snmpTrapOID": "1.3.6.1.6.3.1.1.5.3",
+		"snmpTrapEnterprise": "1.3.6.1.4.1.9.1",
+		"varbinds": [
+			{"oid":"1.3.6.1.2.1.2.2.1.1.{{.IfIndex}}","type":"integer","value":"{{.IfIndex}}"}
+		]
+	}]}`
+	path := filepath.Join(t.TempDir(), "c.json")
+	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cat, err := LoadCatalogFromFile(path)
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	entry := cat.ByName["enterpriseLink"]
+	if entry == nil {
+		t.Fatal("enterpriseLink entry missing after load")
+	}
+	ctx := TemplateCtx{IfIndex: 5, Uptime: 100, Now: 1700000000, DeviceIP: "10.42.0.1"}
+	vbs, err := entry.Resolve(ctx, nil)
+	if err != nil {
+		t.Fatalf("resolve: %v", err)
+	}
+
+	enc := SNMPv2cEncoder{}
+	buf := make([]byte, 1500)
+	n, err := enc.EncodeTrap("public", 7, entry.SnmpTrapOID, entry.SnmpTrapEnterprise, 100, vbs, buf)
+	if err != nil {
+		t.Fatalf("encode: %v", err)
+	}
+
+	dec := decodeV2cNotification(t, buf[:n])
+	if len(dec.Varbinds) != 4 {
+		t.Fatalf("varbind count: got %d, want 4 (sysUpTime + snmpTrapOID + enterprise + body)",
+			len(dec.Varbinds))
+	}
+	// Slot 0: sysUpTime.0
+	if dec.Varbinds[0].OID != "."+oidSysUpTime0 {
+		t.Errorf("vb[0].OID: got %s, want .%s", dec.Varbinds[0].OID, oidSysUpTime0)
+	}
+	// Slot 1: snmpTrapOID.0 value = catalog's snmpTrapOID
+	if dec.Varbinds[1].OID != "."+oidSnmpTrapOID0 {
+		t.Errorf("vb[1].OID: got %s, want .%s", dec.Varbinds[1].OID, oidSnmpTrapOID0)
+	}
+	if got := decodeOID(dec.Varbinds[1].RawValue); got != ".1.3.6.1.6.3.1.1.5.3" {
+		t.Errorf("vb[1] snmpTrapOID value: got %s, want .1.3.6.1.6.3.1.1.5.3", got)
+	}
+	// Slot 2: snmpTrapEnterprise.0 value = catalog's snmpTrapEnterprise
+	if dec.Varbinds[2].OID != "."+oidSnmpTrapEnterprise0 {
+		t.Errorf("vb[2].OID: got %s, want .%s", dec.Varbinds[2].OID, oidSnmpTrapEnterprise0)
+	}
+	if got := decodeOID(dec.Varbinds[2].RawValue); got != ".1.3.6.1.4.1.9.1" {
+		t.Errorf("vb[2] enterprise OID value: got %s, want .1.3.6.1.4.1.9.1", got)
+	}
+	// Slot 3: body varbind with IfIndex=5 resolved into both OID and value
+	if dec.Varbinds[3].OID != ".1.3.6.1.2.1.2.2.1.1.5" {
+		t.Errorf("vb[3].OID: got %s, want .1.3.6.1.2.1.2.2.1.1.5 (IfIndex=5)", dec.Varbinds[3].OID)
 	}
 }
