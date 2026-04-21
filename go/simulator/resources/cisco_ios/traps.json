@@ -1,21 +1,21 @@
 {
-  "comment": "Per-device-type trap catalog for Cisco IOS devices. Overlays the universal catalog (extends=true default): universal linkDown/linkUp/coldStart/warmStart/authenticationFailure carry through; Cisco-specific entries are added alongside. All entries use Class-1-only template vocabulary (no PeerIP/User/etc — deferred to follow-up epic). OIDs sourced from SMIv2 MIBs shipped with IOS; the ciscoConfigManEvent / ciscoEnvMon / cefc* families are the notifications OpenNMS UEI matchers most commonly key on.",
+  "comment": "Per-device-type trap catalog for Cisco IOS devices. Overlays the universal catalog (extends=true default): universal linkDown/linkUp/coldStart/warmStart/authenticationFailure carry through; Cisco-specific entries are added alongside. All entries use Class-1-only template vocabulary (no PeerIP/User/etc — deferred to follow-up epic). OIDs sourced from SMIv2 MIBs shipped with IOS; the ciscoConfigManEvent / ciscoEnvMon / cefc* families are the notifications OpenNMS UEI matchers most commonly key on. snmpTrapEnterprise values point at the MIB module root (e.g. 1.3.6.1.4.1.9.9.43 for ciscoConfigManMIB) per RFC 3584 §4.1 v1↔v2c proxy convention.",
   "traps": [
     {
       "name": "ciscoConfigManEvent",
       "snmpTrapOID": "1.3.6.1.4.1.9.9.43.2.0.1",
-      "snmpTrapEnterprise": "1.3.6.1.4.1.9.9.43.2",
+      "snmpTrapEnterprise": "1.3.6.1.4.1.9.9.43",
       "weight": 20,
       "varbinds": [
-        { "oid": "1.3.6.1.4.1.9.9.43.1.1.6.1.3.{{.Uptime}}", "type": "integer", "value": "1" },
-        { "oid": "1.3.6.1.4.1.9.9.43.1.1.6.1.4.{{.Uptime}}", "type": "integer", "value": "2" },
-        { "oid": "1.3.6.1.4.1.9.9.43.1.1.6.1.5.{{.Uptime}}", "type": "integer", "value": "3" }
+        { "oid": "1.3.6.1.4.1.9.9.43.1.1.6.1.3.1", "type": "integer", "value": "1" },
+        { "oid": "1.3.6.1.4.1.9.9.43.1.1.6.1.4.1", "type": "integer", "value": "2" },
+        { "oid": "1.3.6.1.4.1.9.9.43.1.1.6.1.5.1", "type": "integer", "value": "3" }
       ]
     },
     {
       "name": "ciscoEnvMonSupplyStatusChangeNotif",
-      "snmpTrapOID": "1.3.6.1.4.1.9.9.13.3.0.5",
-      "snmpTrapEnterprise": "1.3.6.1.4.1.9.9.13.3",
+      "snmpTrapOID": "1.3.6.1.4.1.9.9.13.3.0.9",
+      "snmpTrapEnterprise": "1.3.6.1.4.1.9.9.13",
       "weight": 10,
       "varbinds": [
         { "oid": "1.3.6.1.4.1.9.9.13.1.5.1.2.1", "type": "octet-string", "value": "PWR-{{.Serial}}" },
@@ -25,18 +25,18 @@
     {
       "name": "ciscoEnvMonTemperatureNotification",
       "snmpTrapOID": "1.3.6.1.4.1.9.9.13.3.0.3",
-      "snmpTrapEnterprise": "1.3.6.1.4.1.9.9.13.3",
+      "snmpTrapEnterprise": "1.3.6.1.4.1.9.9.13",
       "weight": 10,
       "varbinds": [
-        { "oid": "1.3.6.1.4.1.9.9.13.1.3.1.2.1", "type": "octet-string", "value": "Chassis-{{.ChassisID}}" },
-        { "oid": "1.3.6.1.4.1.9.9.13.1.3.1.3.1", "type": "gauge32", "value": "42" },
+        { "oid": "1.3.6.1.4.1.9.9.13.1.3.1.2.1", "type": "octet-string", "value": "chassis inlet" },
+        { "oid": "1.3.6.1.4.1.9.9.13.1.3.1.3.1", "type": "gauge32", "value": "75" },
         { "oid": "1.3.6.1.4.1.9.9.13.1.3.1.6.1", "type": "integer", "value": "2" }
       ]
     },
     {
       "name": "cefcModuleStatusChange",
       "snmpTrapOID": "1.3.6.1.4.1.9.9.117.2.0.1",
-      "snmpTrapEnterprise": "1.3.6.1.4.1.9.9.117.2",
+      "snmpTrapEnterprise": "1.3.6.1.4.1.9.9.117",
       "weight": 10,
       "varbinds": [
         { "oid": "1.3.6.1.4.1.9.9.117.1.2.1.1.2.1", "type": "integer", "value": "2" },
@@ -45,8 +45,8 @@
     },
     {
       "name": "cefcFanTrayStatusChangeNotif",
-      "snmpTrapOID": "1.3.6.1.4.1.9.9.117.2.0.3",
-      "snmpTrapEnterprise": "1.3.6.1.4.1.9.9.117.2",
+      "snmpTrapOID": "1.3.6.1.4.1.9.9.117.2.0.6",
+      "snmpTrapEnterprise": "1.3.6.1.4.1.9.9.117",
       "weight": 8,
       "varbinds": [
         { "oid": "1.3.6.1.4.1.9.9.117.1.4.1.1.1.1", "type": "integer", "value": "1" }
@@ -55,7 +55,7 @@
     {
       "name": "ciscoEntSensorThresholdNotification",
       "snmpTrapOID": "1.3.6.1.4.1.9.9.91.2.0.1",
-      "snmpTrapEnterprise": "1.3.6.1.4.1.9.9.91.2",
+      "snmpTrapEnterprise": "1.3.6.1.4.1.9.9.91",
       "weight": 8,
       "varbinds": [
         { "oid": "1.3.6.1.4.1.9.9.91.1.2.1.1.4.1.1", "type": "integer", "value": "1" },
@@ -64,8 +64,8 @@
     },
     {
       "name": "ciscoFlashDeviceChangeTrap",
-      "snmpTrapOID": "1.3.6.1.4.1.9.9.10.1.3.0.1",
-      "snmpTrapEnterprise": "1.3.6.1.4.1.9.9.10.1.3",
+      "snmpTrapOID": "1.3.6.1.4.1.9.9.10.1.3.0.3",
+      "snmpTrapEnterprise": "1.3.6.1.4.1.9.9.10",
       "weight": 4,
       "varbinds": [
         { "oid": "1.3.6.1.4.1.9.9.10.1.1.2.1.1.2.1", "type": "integer", "value": "1" }

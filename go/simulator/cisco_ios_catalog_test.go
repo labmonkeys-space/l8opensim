@@ -77,8 +77,8 @@ func TestCiscoIos_SyslogCatalogLoads(t *testing.T) {
 	if cisco == nil {
 		t.Fatal("cisco_ios per-type syslog catalog missing from scan result")
 	}
-	if got := len(cisco.Entries); got != 13 {
-		t.Errorf("merged cisco_ios syslog entries: got %d, want 13 (universal 6 + cisco 7)", got)
+	if got := len(cisco.Entries); got != 14 {
+		t.Errorf("merged cisco_ios syslog entries: got %d, want 14 (universal 6 + cisco 8)", got)
 	}
 	for _, name := range []string{"interface-up", "interface-down", "auth-success", "auth-failure", "config-change", "system-restart"} {
 		if _, ok := cisco.ByName[name]; !ok {
@@ -88,7 +88,8 @@ func TestCiscoIos_SyslogCatalogLoads(t *testing.T) {
 	ciscoEntries := []string{
 		"cisco-link-updown-up",
 		"cisco-link-updown-down",
-		"cisco-lineproto-updown",
+		"cisco-lineproto-updown-up",
+		"cisco-lineproto-updown-down",
 		"cisco-sys-config",
 		"cisco-snmp-coldstart",
 		"cisco-sys-restart",
@@ -146,7 +147,9 @@ func TestCiscoIos_TrapCatalog_ResolveEndToEnd(t *testing.T) {
 		t.Errorf("envMonSupply varbind[0].Value: got %q, want it to contain PWR-SN0A2A0001", vbs[0].Value)
 	}
 
-	// ciscoEnvMonTemperatureNotification uses `{{.ChassisID}}`.
+	// ciscoEnvMonTemperatureNotification emits sensor descr, value, state.
+	// Temp value 75°C with state=2 (warning) — the realistic pairing per
+	// the MIB's ciscoEnvMonState enum.
 	tempEntry := cisco.ByName["ciscoEnvMonTemperatureNotification"]
 	if tempEntry == nil {
 		t.Fatal("ciscoEnvMonTemperatureNotification missing")
@@ -155,8 +158,17 @@ func TestCiscoIos_TrapCatalog_ResolveEndToEnd(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(vbs) == 0 || !strings.Contains(vbs[0].Value, "02:42:0a:2a:00:01") {
-		t.Errorf("temperature varbind[0].Value: got %q, want it to contain chassis ID 02:42:0a:2a:00:01", vbs[0].Value)
+	if len(vbs) < 3 {
+		t.Fatalf("temperature entry: got %d varbinds, want 3", len(vbs))
+	}
+	if vbs[0].Value != "chassis inlet" {
+		t.Errorf("temperature descr: got %q, want %q", vbs[0].Value, "chassis inlet")
+	}
+	if vbs[1].Value != "75" {
+		t.Errorf("temperature value: got %q, want 75", vbs[1].Value)
+	}
+	if vbs[2].Value != "2" {
+		t.Errorf("temperature state: got %q, want 2 (warning)", vbs[2].Value)
 	}
 
 	// cefcModuleStatusChange uses `{{.Uptime}}` in a timeticks varbind.
@@ -236,15 +248,15 @@ func TestCiscoIos_SyslogCatalog_ResolveEndToEnd(t *testing.T) {
 		t.Errorf("coldstart message should contain SysName=rtr-dc-01: got %q", resolved.Message)
 	}
 
-	// Structured-data on cisco-link-updown-down should carry ifName + model.
-	var hasIfName, hasModel bool
-	for _, sd := range resolved.StructuredData {
-		if sd.Key == "host" && sd.Value == "rtr-dc-01" {
-			hasIfName = true
-		}
+	// Structured-data on cisco-link-updown-down should carry ifIndex +
+	// ifName + model (the three keys declared in the catalog entry).
+	// Re-resolve link-down so we assert against its SD pairs, not the
+	// coldstart result snapshot above.
+	resolved, err = linkDown.Resolve(ctx, nil)
+	if err != nil {
+		t.Fatal(err)
 	}
-	// Re-fetch the link-down resolve for SD assertions.
-	resolved, _ = linkDown.Resolve(ctx, nil)
+	var hasIfName, hasModel bool
 	for _, sd := range resolved.StructuredData {
 		if sd.Key == "ifName" && sd.Value == "FastEthernet1/0/5" {
 			hasIfName = true

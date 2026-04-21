@@ -30,8 +30,8 @@
       "template": "%LINK-3-UPDOWN: Interface {{.IfName}}, changed state to down"
     },
     {
-      "name": "cisco-lineproto-updown",
-      "weight": 20,
+      "name": "cisco-lineproto-updown-up",
+      "weight": 10,
       "facility": "local7",
       "severity": "notice",
       "appName": "IOS",
@@ -41,6 +41,19 @@
         "ifName": "{{.IfName}}"
       },
       "template": "%LINEPROTO-5-UPDOWN: Line protocol on Interface {{.IfName}}, changed state to up"
+    },
+    {
+      "name": "cisco-lineproto-updown-down",
+      "weight": 10,
+      "facility": "local7",
+      "severity": "error",
+      "appName": "IOS",
+      "msgId": "LINEPROTO-5-UPDOWN",
+      "structuredData": {
+        "ifIndex": "{{.IfIndex}}",
+        "ifName": "{{.IfName}}"
+      },
+      "template": "%LINEPROTO-5-UPDOWN: Line protocol on Interface {{.IfName}}, changed state to down"
     },
     {
       "name": "cisco-sys-config",
