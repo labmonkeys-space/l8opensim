@@ -1,0 +1,109 @@
+{
+  "comment": "Per-device-type syslog catalog for Cisco IOS devices. Overlays the universal catalog (extends=true default): universal interface-up/interface-down/auth-* entries carry through; Cisco-format entries are added alongside. All entries use Class-1-only template vocabulary (no User/SourceIP/RuleName — deferred to follow-up epic). Message bodies match the %FACILITY-SEVERITY-MNEMONIC: form IOS emits verbatim so OpenNMS syslogd UEI matchers tuned for Cisco strings fire correctly.",
+  "entries": [
+    {
+      "name": "cisco-link-updown-up",
+      "weight": 25,
+      "facility": "local7",
+      "severity": "notice",
+      "appName": "IOS",
+      "msgId": "LINK-3-UPDOWN",
+      "structuredData": {
+        "ifIndex": "{{.IfIndex}}",
+        "ifName": "{{.IfName}}",
+        "model": "{{.Model}}"
+      },
+      "template": "%LINK-3-UPDOWN: Interface {{.IfName}}, changed state to up"
+    },
+    {
+      "name": "cisco-link-updown-down",
+      "weight": 25,
+      "facility": "local7",
+      "severity": "error",
+      "appName": "IOS",
+      "msgId": "LINK-3-UPDOWN",
+      "structuredData": {
+        "ifIndex": "{{.IfIndex}}",
+        "ifName": "{{.IfName}}",
+        "model": "{{.Model}}"
+      },
+      "template": "%LINK-3-UPDOWN: Interface {{.IfName}}, changed state to down"
+    },
+    {
+      "name": "cisco-lineproto-updown-up",
+      "weight": 10,
+      "facility": "local7",
+      "severity": "notice",
+      "appName": "IOS",
+      "msgId": "LINEPROTO-5-UPDOWN",
+      "structuredData": {
+        "ifIndex": "{{.IfIndex}}",
+        "ifName": "{{.IfName}}"
+      },
+      "template": "%LINEPROTO-5-UPDOWN: Line protocol on Interface {{.IfName}}, changed state to up"
+    },
+    {
+      "name": "cisco-lineproto-updown-down",
+      "weight": 10,
+      "facility": "local7",
+      "severity": "error",
+      "appName": "IOS",
+      "msgId": "LINEPROTO-5-UPDOWN",
+      "structuredData": {
+        "ifIndex": "{{.IfIndex}}",
+        "ifName": "{{.IfName}}"
+      },
+      "template": "%LINEPROTO-5-UPDOWN: Line protocol on Interface {{.IfName}}, changed state to down"
+    },
+    {
+      "name": "cisco-sys-config",
+      "weight": 10,
+      "facility": "local7",
+      "severity": "notice",
+      "appName": "IOS",
+      "msgId": "SYS-5-CONFIG_I",
+      "structuredData": {
+        "host": "{{.SysName}}"
+      },
+      "template": "%SYS-5-CONFIG_I: Configured from console"
+    },
+    {
+      "name": "cisco-snmp-coldstart",
+      "weight": 5,
+      "facility": "local7",
+      "severity": "notice",
+      "appName": "IOS",
+      "msgId": "SNMP-5-COLDSTART",
+      "structuredData": {
+        "host": "{{.SysName}}",
+        "serial": "{{.Serial}}"
+      },
+      "template": "%SNMP-5-COLDSTART: SNMP agent on host {{.SysName}} is undergoing a cold start"
+    },
+    {
+      "name": "cisco-sys-restart",
+      "weight": 5,
+      "facility": "local7",
+      "severity": "notice",
+      "appName": "IOS",
+      "msgId": "SYS-5-RESTART",
+      "structuredData": {
+        "host": "{{.SysName}}",
+        "model": "{{.Model}}"
+      },
+      "template": "%SYS-5-RESTART: System restarted -- {{.Model}} (serial {{.Serial}}, chassis {{.ChassisID}})"
+    },
+    {
+      "name": "cisco-envmon-temp-ok",
+      "weight": 8,
+      "facility": "local7",
+      "severity": "notice",
+      "appName": "IOS",
+      "msgId": "ENVMON-5-TEMP_OK",
+      "structuredData": {
+        "host": "{{.SysName}}"
+      },
+      "template": "%ENVMON-5-TEMP_OK: Temperature condition returning to OK"
+    }
+  ]
+}
