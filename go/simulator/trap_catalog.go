@@ -31,6 +31,7 @@ import (
 	"log"
 	"math/rand"
 	"os"
+	"path/filepath"
 	"strings"
 	"text/template"
 )
@@ -230,6 +231,11 @@ func ScanPerTypeTrapCatalogs(universal *Catalog, resourceDir string) (map[string
 				resourceDir)
 			return result, nil
 		}
+		if os.IsPermission(err) {
+			log.Printf("trap catalog scan: permission denied reading %q — per-type overlays disabled",
+				resourceDir)
+			return result, nil
+		}
 		return nil, fmt.Errorf("trap catalog scan: reading %q: %w", resourceDir, err)
 	}
 	for _, entry := range entries {
@@ -246,9 +252,19 @@ func ScanPerTypeTrapCatalogs(universal *Catalog, resourceDir string) (map[string
 		if strings.HasPrefix(slug, "_") {
 			continue
 		}
-		path := resourceDir + "/" + entry.Name() + "/traps.json"
+		path := filepath.Join(resourceDir, entry.Name(), "traps.json")
 		info, err := os.Stat(path)
-		if err != nil || info.IsDir() {
+		if err != nil {
+			// Permission-denied is operator-visible — log once so a
+			// misconfigured per-type file doesn't silently fall back
+			// to the universal catalog without any signal.
+			if os.IsPermission(err) {
+				log.Printf("trap catalog scan: permission denied on %q — per-type overlay for %q skipped",
+					path, slug)
+			}
+			continue
+		}
+		if info.IsDir() {
 			continue
 		}
 		perType, err := LoadCatalogFromFile(path)

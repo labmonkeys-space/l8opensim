@@ -61,10 +61,14 @@ type SyslogStatus struct {
 }
 
 // Sentinel errors returned by FireSyslogOnDevice for HTTP status mapping.
+// See ErrTrapCatalogUnavailable for the rationale behind the
+// "catalog unavailable" sentinel — mirror it here so the syslog handler
+// can return 500 (not 503) when the manager is in a broken invariant.
 var (
-	ErrSyslogExportDisabled = fmt.Errorf("syslog export disabled")
-	ErrSyslogDeviceNotFound = fmt.Errorf("device not found")
-	ErrSyslogEntryNotFound  = fmt.Errorf("syslog catalog entry not found")
+	ErrSyslogExportDisabled     = fmt.Errorf("syslog export disabled")
+	ErrSyslogDeviceNotFound     = fmt.Errorf("device not found")
+	ErrSyslogEntryNotFound      = fmt.Errorf("syslog catalog entry not found")
+	ErrSyslogCatalogUnavailable = fmt.Errorf("syslog catalog unavailable (manager state broken)")
 )
 
 // SyslogEntryNotFoundError is returned by FireSyslogOnDevice when the
@@ -93,20 +97,31 @@ func syslogCatalogSource(slug, catalogFlagPath string) string {
 	return fmt.Sprintf("file:%s/%s/syslog.json", trapCatalogResourceDir, slug)
 }
 
-// resolvedSyslogCatalogLabel returns the catalogsByType key resolved for
-// the given IP — either a device-type slug or "_universal".
-func (sm *SimulatorManager) resolvedSyslogCatalogLabel(ip string) string {
+// syslogCatalogWithLabelFor mirrors `catalogWithLabelFor` on the trap
+// side — returns both the resolved catalog and its label under a single
+// RLock so the 400-error path can't split-brain between them.
+func (sm *SimulatorManager) syslogCatalogWithLabelFor(ip string) (*SyslogCatalog, string) {
 	sm.mu.RLock()
 	defer sm.mu.RUnlock()
 	if sm.syslogCatalogsByType == nil {
-		return universalCatalogKey
+		return sm.syslogCatalog, universalCatalogKey
 	}
 	if slug, ok := sm.deviceTypesByIP[ip]; ok {
-		if _, found := sm.syslogCatalogsByType[slug]; found {
-			return slug
+		if cat, found := sm.syslogCatalogsByType[slug]; found {
+			return cat, slug
 		}
 	}
-	return universalCatalogKey
+	if cat := sm.syslogCatalogsByType[universalCatalogKey]; cat != nil {
+		return cat, universalCatalogKey
+	}
+	return sm.syslogCatalog, universalCatalogKey
+}
+
+// resolvedSyslogCatalogLabel returns the label resolved for the given IP.
+// Retained as a convenience wrapper around `syslogCatalogWithLabelFor`.
+func (sm *SimulatorManager) resolvedSyslogCatalogLabel(ip string) string {
+	_, label := sm.syslogCatalogWithLabelFor(ip)
+	return label
 }
 
 // sortedSyslogEntryNames returns the catalog's entry names alphabetically.
@@ -464,15 +479,17 @@ func (sm *SimulatorManager) FireSyslogOnDevice(ip, entryName string, overrides m
 	if device == nil {
 		return fmt.Errorf("%w: %q", ErrSyslogDeviceNotFound, ip)
 	}
-	cat := sm.SyslogCatalogFor(ip)
+	// One RLock for catalog + label — see catalogWithLabelFor on the
+	// trap side for rationale.
+	cat, catLabel := sm.syslogCatalogWithLabelFor(ip)
 	if cat == nil {
-		return fmt.Errorf("%w: no catalog resolved for %s", ErrSyslogExportDisabled, ip)
+		return fmt.Errorf("%w: catalog resolution failed for %s", ErrSyslogCatalogUnavailable, ip)
 	}
 	entry, ok := cat.ByName[entryName]
 	if !ok {
 		return &SyslogEntryNotFoundError{
 			Name:    entryName,
-			Catalog: sm.resolvedSyslogCatalogLabel(ip),
+			Catalog: catLabel,
 			Entries: sortedSyslogEntryNames(cat),
 		}
 	}
@@ -499,21 +516,7 @@ func (sm *SimulatorManager) WriteSyslogStatusJSON(w http.ResponseWriter) {
 // → syslogCatalogsByType["_universal"] (the universal). Symmetric with
 // `CatalogFor` on the trap side.
 func (sm *SimulatorManager) SyslogCatalogFor(ip string) *SyslogCatalog {
-	sm.mu.RLock()
-	defer sm.mu.RUnlock()
-	if sm.syslogCatalogsByType == nil {
-		return sm.syslogCatalog
-	}
-	if slug, ok := sm.deviceTypesByIP[ip]; ok {
-		if cat, found := sm.syslogCatalogsByType[slug]; found {
-			return cat
-		}
-	}
-	// See CatalogFor above — mirror the prefer-universal-then-legacy
-	// fallback so non-nil is guaranteed while any catalog is live.
-	if cat := sm.syslogCatalogsByType[universalCatalogKey]; cat != nil {
-		return cat
-	}
-	return sm.syslogCatalog
+	cat, _ := sm.syslogCatalogWithLabelFor(ip)
+	return cat
 }
 

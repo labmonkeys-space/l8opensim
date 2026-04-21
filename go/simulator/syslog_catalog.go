@@ -35,6 +35,7 @@ import (
 	"log"
 	"math/rand"
 	"os"
+	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
@@ -419,6 +420,11 @@ func ScanPerTypeSyslogCatalogs(universal *SyslogCatalog, resourceDir string) (ma
 				resourceDir)
 			return result, nil
 		}
+		if os.IsPermission(err) {
+			log.Printf("syslog catalog scan: permission denied reading %q — per-type overlays disabled",
+				resourceDir)
+			return result, nil
+		}
 		return nil, fmt.Errorf("syslog catalog scan: reading %q: %w", resourceDir, err)
 	}
 	for _, entry := range entries {
@@ -430,9 +436,16 @@ func ScanPerTypeSyslogCatalogs(universal *SyslogCatalog, resourceDir string) (ma
 		if strings.HasPrefix(slug, "_") {
 			continue
 		}
-		path := resourceDir + "/" + entry.Name() + "/syslog.json"
+		path := filepath.Join(resourceDir, entry.Name(), "syslog.json")
 		info, err := os.Stat(path)
-		if err != nil || info.IsDir() {
+		if err != nil {
+			if os.IsPermission(err) {
+				log.Printf("syslog catalog scan: permission denied on %q — per-type overlay for %q skipped",
+					path, slug)
+			}
+			continue
+		}
+		if info.IsDir() {
 			continue
 		}
 		perType, err := LoadSyslogCatalogFromFile(path)
