@@ -252,9 +252,9 @@ func (e *TrapExporter) Fire(entry *CatalogEntry, overrides map[string]string) ui
 
 	var n int
 	if e.mode == TrapModeInform {
-		n, err = e.encoder.EncodeInform(e.community, reqID, entry.SnmpTrapOID, ctx.Uptime, varbinds, buf)
+		n, err = e.encoder.EncodeInform(e.community, reqID, entry.SnmpTrapOID, entry.SnmpTrapEnterprise, ctx.Uptime, varbinds, buf)
 	} else {
-		n, err = e.encoder.EncodeTrap(e.community, reqID, entry.SnmpTrapOID, ctx.Uptime, varbinds, buf)
+		n, err = e.encoder.EncodeTrap(e.community, reqID, entry.SnmpTrapOID, entry.SnmpTrapEnterprise, ctx.Uptime, varbinds, buf)
 	}
 	if err != nil {
 		log.Printf("trap: encode %s for %s: %v", entry.Name, e.deviceIP, err)

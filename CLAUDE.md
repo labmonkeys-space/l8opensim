@@ -107,7 +107,8 @@ The `FlowEncoder` interface has a `MaxRecordSize() int` extension point: fixed-s
 - Override with `-trap-catalog <path>` (complete replacement, not merge).
 - Universal catalog ships 5 entries: `coldStart`, `warmStart`, `linkDown`, `linkUp`, `authenticationFailure` (RFC 3418). Weights: linkDown=40, linkUp=40, authenticationFailure=10, coldStart=5, warmStart=5.
 - Template vocabulary is restricted to `{{.IfIndex}}`, `{{.Uptime}}`, `{{.Now}}`, `{{.DeviceIP}}`. Unknown fields are rejected at catalog load.
-- The two mandatory SNMPv2-Trap varbinds (`sysUpTime.0`, `snmpTrapOID.0`) are prepended automatically by the encoder — catalog authors supply only body varbinds; entries that list either reserved OID explicitly are rejected.
+- The two mandatory SNMPv2-Trap varbinds (`sysUpTime.0`, `snmpTrapOID.0`) are prepended automatically by the encoder — catalog authors supply only body varbinds; entries that list either reserved OID (or `snmpTrapEnterprise.0`) as a body varbind are rejected.
+- Optional top-level `snmpTrapEnterprise` field (string, dotted OID) per entry. When set, the encoder emits an additional `snmpTrapEnterprise.0` varbind (OID `1.3.6.1.6.3.1.1.4.3.0`) after the two mandatory ones — useful for v1↔v2c cross-compatibility on collectors that expect the enterprise OID per SNMPv2-MIB §10. Catalog-loader rejects reserved OIDs (`sysUpTime.0`, `snmpTrapOID.0`, `snmpTrapEnterprise.0`) as enterprise values. Omit the field to keep the backward-compatible 2-varbind prefix.
 
 **Trap operational notes:**
 - INFORM mode (`-trap-mode inform`) requires `-trap-source-per-device=true` (the default) so the per-device UDP socket can demux acks without a global request-id table. Startup fails with a clear error if the operator explicitly sets the flag false.

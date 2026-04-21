@@ -40,10 +40,14 @@ var embeddedCatalogFS embed.FS
 const embeddedCatalogPath = "resources/_common/traps.json"
 
 // Reserved OIDs that the encoder prepends automatically to every trap.
-// Catalog authors MUST NOT include them in body varbinds (design.md §D10).
+// Catalog authors MUST NOT include them in body varbinds.
+// - `sysUpTime.0` and `snmpTrapOID.0` are prepended unconditionally (design.md §D10).
+// - `snmpTrapEnterprise.0` is prepended when the catalog entry sets the
+//   optional `snmpTrapEnterprise` field (follow-up issue #100).
 const (
-	oidSysUpTime0    = "1.3.6.1.2.1.1.3.0"
-	oidSnmpTrapOID0  = "1.3.6.1.6.3.1.1.4.1.0"
+	oidSysUpTime0          = "1.3.6.1.2.1.1.3.0"
+	oidSnmpTrapOID0        = "1.3.6.1.6.3.1.1.4.1.0"
+	oidSnmpTrapEnterprise0 = "1.3.6.1.6.3.1.1.4.3.0"
 )
 
 // allowedTemplateFields enumerates the four template fields the catalog
@@ -81,10 +85,11 @@ type trapVarbindJSON struct {
 
 // catalogEntryJSON is the on-disk shape of one trap catalog entry.
 type catalogEntryJSON struct {
-	Name        string            `json:"name"`
-	SnmpTrapOID string            `json:"snmpTrapOID"`
-	Weight      int               `json:"weight"`
-	Varbinds    []trapVarbindJSON `json:"varbinds"`
+	Name               string            `json:"name"`
+	SnmpTrapOID        string            `json:"snmpTrapOID"`
+	SnmpTrapEnterprise string            `json:"snmpTrapEnterprise,omitempty"`
+	Weight             int               `json:"weight"`
+	Varbinds           []trapVarbindJSON `json:"varbinds"`
 }
 
 // trapCatalogJSON is the on-disk shape of the whole catalog file.
@@ -107,11 +112,19 @@ type VarbindTemplate struct {
 
 // CatalogEntry is one parsed trap in the catalog. Weight defaults to 1 when
 // omitted from JSON; Pick is weight-biased random selection.
+//
+// SnmpTrapEnterprise is the OPTIONAL value for the `snmpTrapEnterprise.0`
+// varbind (OID 1.3.6.1.6.3.1.1.4.3.0) from SNMPv2-MIB §10. When non-empty,
+// the encoder auto-prepends this varbind after the two mandatory
+// (`sysUpTime.0`, `snmpTrapOID.0`) and before the body varbinds. Empty
+// means the varbind is not emitted — backward-compatible with catalogs
+// authored before this field existed.
 type CatalogEntry struct {
-	Name        string
-	SnmpTrapOID string
-	Weight      int
-	Varbinds    []VarbindTemplate
+	Name               string
+	SnmpTrapOID        string
+	SnmpTrapEnterprise string
+	Weight             int
+	Varbinds           []VarbindTemplate
 }
 
 // Catalog is the whole parsed trap catalog plus cached weight metadata for Pick.
@@ -228,6 +241,24 @@ func compileEntry(raw catalogEntryJSON, source string, idx int) (*CatalogEntry, 
 		Weight:      weight,
 		Varbinds:    make([]VarbindTemplate, 0, len(raw.Varbinds)),
 	}
+	// The optional snmpTrapEnterprise.0 value must be a well-formed dotted-
+	// decimal OID and must not collide with OIDs the encoder auto-prepends.
+	// Format check runs first so the operator sees a specific message about
+	// the format gap (".", whitespace, single-arc, trailing-dot, etc.) rather
+	// than a reserved-OID error that never fires for malformed input.
+	if raw.SnmpTrapEnterprise != "" {
+		entry.SnmpTrapEnterprise = strings.TrimPrefix(raw.SnmpTrapEnterprise, ".")
+		if err := validateDottedOID(entry.SnmpTrapEnterprise, raw.Name, "snmpTrapEnterprise"); err != nil {
+			return nil, fmt.Errorf("trap catalog: %s %w", source, err)
+		}
+		switch entry.SnmpTrapEnterprise {
+		case oidSysUpTime0, oidSnmpTrapOID0, oidSnmpTrapEnterprise0:
+			return nil, fmt.Errorf("trap catalog: %s entry %q: snmpTrapEnterprise value %s "+
+				"is a reserved OID — the field should hold an enterprise OID reflecting "+
+				"the notification type, typically the parent of snmpTrapOID",
+				source, raw.Name, raw.SnmpTrapEnterprise)
+		}
+	}
 	for j, vb := range raw.Varbinds {
 		if err := validateVarbindOID(vb.OID, raw.Name, j); err != nil {
 			return nil, err
@@ -273,18 +304,68 @@ func compileEntry(raw catalogEntryJSON, source string, idx int) (*CatalogEntry, 
 	return entry, nil
 }
 
-// validateVarbindOID rejects the two reserved OIDs that the encoder prepends
+// validateVarbindOID rejects the reserved OIDs that the encoder prepends
 // automatically. Accepts templates (anything containing "{{") as a pass — the
 // reserved OIDs are literal strings, so a template'd OID cannot collide.
+//
+// snmpTrapEnterprise.0 is rejected in body varbinds because it has its own
+// top-level catalog field (`snmpTrapEnterprise`); including it in body
+// varbinds would produce a duplicate on the wire.
 func validateVarbindOID(raw, entryName string, idx int) error {
 	if strings.Contains(raw, "{{") {
 		return nil
 	}
 	norm := strings.TrimPrefix(raw, ".")
-	if norm == oidSysUpTime0 || norm == oidSnmpTrapOID0 {
+	switch norm {
+	case oidSysUpTime0, oidSnmpTrapOID0:
 		return fmt.Errorf("trap catalog: entry %q varbind %d: OID %s is reserved "+
 			"(sysUpTime.0 and snmpTrapOID.0 are prepended automatically by the encoder)",
 			entryName, idx, raw)
+	case oidSnmpTrapEnterprise0:
+		return fmt.Errorf("trap catalog: entry %q varbind %d: OID %s is reserved — "+
+			"use the entry-level `snmpTrapEnterprise` field instead of a body varbind",
+			entryName, idx, raw)
+	}
+	return nil
+}
+
+// maxDottedOIDLen caps the length of top-level literal OID fields (currently
+// only snmpTrapEnterprise). Well under the UDP MTU budget and comfortably
+// larger than any real enterprise OID.
+const maxDottedOIDLen = 256
+
+// validateDottedOID rejects malformed literal dotted-decimal OIDs:
+// empty strings, strings over maxDottedOIDLen, single-arc, trailing dot,
+// empty arcs (consecutive dots), and non-numeric characters. Used on
+// literal-OID fields (snmpTrapEnterprise); body varbinds use a template
+// grammar and go through validateVarbindOID instead.
+func validateDottedOID(oid, entryName, field string) error {
+	if oid == "" {
+		return fmt.Errorf("entry %q %s: OID is empty", entryName, field)
+	}
+	if len(oid) > maxDottedOIDLen {
+		return fmt.Errorf("entry %q %s: OID length %d exceeds max %d",
+			entryName, field, len(oid), maxDottedOIDLen)
+	}
+	if strings.HasSuffix(oid, ".") {
+		return fmt.Errorf("entry %q %s: OID %q has trailing dot", entryName, field, oid)
+	}
+	arcs := strings.Split(oid, ".")
+	if len(arcs) < 2 {
+		return fmt.Errorf("entry %q %s: OID %q must have at least two arcs",
+			entryName, field, oid)
+	}
+	for _, arc := range arcs {
+		if arc == "" {
+			return fmt.Errorf("entry %q %s: OID %q has an empty arc",
+				entryName, field, oid)
+		}
+		for _, r := range arc {
+			if r < '0' || r > '9' {
+				return fmt.Errorf("entry %q %s: OID %q contains non-numeric character %q",
+					entryName, field, oid, r)
+			}
+		}
 	}
 	return nil
 }

@@ -58,15 +58,19 @@ import (
 type TrapEncoder interface {
 	// EncodeTrap writes an SNMPv2-Trap-PDU wrapped in an SNMPv2c message into
 	// buf and returns the byte length written. trapOID is the dotted-decimal
-	// OID that becomes snmpTrapOID.0 in the PDU. varbinds are the body
-	// varbinds; the encoder prepends sysUpTime.0 and snmpTrapOID.0 itself.
-	EncodeTrap(community string, reqID uint32, trapOID string,
+	// OID that becomes snmpTrapOID.0 in the PDU. enterpriseOID, when non-
+	// empty, causes the encoder to emit an additional `snmpTrapEnterprise.0`
+	// varbind (OID 1.3.6.1.6.3.1.1.4.3.0) with that OID as its value — per
+	// SNMPv2-MIB §10 this OPTIONAL varbind aids v1↔v2c cross-compatibility
+	// handling on the receiving side. varbinds are the catalog-body varbinds;
+	// the encoder prepends sysUpTime.0 and snmpTrapOID.0 unconditionally.
+	EncodeTrap(community string, reqID uint32, trapOID, enterpriseOID string,
 		uptimeHundredths uint32, varbinds []Varbind, buf []byte) (int, error)
 
 	// EncodeInform is identical to EncodeTrap but uses the InformRequest-PDU
 	// tag (0xA6). The receiving collector replies with a GetResponse-PDU
 	// (0xA2) that ParseAck decodes.
-	EncodeInform(community string, reqID uint32, trapOID string,
+	EncodeInform(community string, reqID uint32, trapOID, enterpriseOID string,
 		uptimeHundredths uint32, varbinds []Varbind, buf []byte) (int, error)
 
 	// ParseAck decodes a collector-side acknowledgement datagram. Returns the
@@ -81,15 +85,15 @@ type TrapEncoder interface {
 type SNMPv2cEncoder struct{}
 
 // EncodeTrap — see TrapEncoder.
-func (SNMPv2cEncoder) EncodeTrap(community string, reqID uint32, trapOID string,
+func (SNMPv2cEncoder) EncodeTrap(community string, reqID uint32, trapOID, enterpriseOID string,
 	uptimeHundredths uint32, varbinds []Varbind, buf []byte) (int, error) {
-	return encodeV2cNotification(ASN1_TRAP_V2C, community, reqID, trapOID, uptimeHundredths, varbinds, buf)
+	return encodeV2cNotification(ASN1_TRAP_V2C, community, reqID, trapOID, enterpriseOID, uptimeHundredths, varbinds, buf)
 }
 
 // EncodeInform — see TrapEncoder.
-func (SNMPv2cEncoder) EncodeInform(community string, reqID uint32, trapOID string,
+func (SNMPv2cEncoder) EncodeInform(community string, reqID uint32, trapOID, enterpriseOID string,
 	uptimeHundredths uint32, varbinds []Varbind, buf []byte) (int, error) {
-	return encodeV2cNotification(ASN1_INFORM_REQUEST, community, reqID, trapOID, uptimeHundredths, varbinds, buf)
+	return encodeV2cNotification(ASN1_INFORM_REQUEST, community, reqID, trapOID, enterpriseOID, uptimeHundredths, varbinds, buf)
 }
 
 // ParseAck — see TrapEncoder.
@@ -99,7 +103,7 @@ func (SNMPv2cEncoder) ParseAck(pkt []byte) (uint32, bool, error) {
 
 // encodeV2cNotification is the shared body of EncodeTrap and EncodeInform; the
 // only difference between TRAP and INFORM on the wire is the PDU tag byte.
-func encodeV2cNotification(pduTag byte, community string, reqID uint32, trapOID string,
+func encodeV2cNotification(pduTag byte, community string, reqID uint32, trapOID, enterpriseOID string,
 	uptimeHundredths uint32, varbinds []Varbind, buf []byte) (int, error) {
 	// Build the PDU inner SEQUENCE contents:
 	//   request-id / error-status / error-index / variable-bindings
@@ -111,10 +115,20 @@ func encodeV2cNotification(pduTag byte, community string, reqID uint32, trapOID 
 	// variable-bindings SEQUENCE:
 	//   1. sysUpTime.0 (TimeTicks)
 	//   2. snmpTrapOID.0 (OID = trapOID)
-	//   3..N. body varbinds
+	//   3. snmpTrapEnterprise.0 (OID = enterpriseOID) — only when non-empty.
+	//      RFC 3584 §4.1 (the SNMPv1↔v2c proxy translation spec) places
+	//      snmpTrapEnterprise.0 as the third element of variable-bindings,
+	//      after sysUpTime.0 and snmpTrapOID.0 and before any additional
+	//      varbinds. SNMPv2-MIB §10 makes this additional-info varbind
+	//      optional on native v2c notifications; when catalog authors set it
+	//      we emit it in the same position RFC 3584 pins.
+	//   N. body varbinds
 	vbContents := make([]byte, 0, 64+len(varbinds)*32)
 	vbContents = append(vbContents, encodeVarbindTimeTicks(oidSysUpTime0, uptimeHundredths)...)
 	vbContents = append(vbContents, encodeVarbindOID(oidSnmpTrapOID0, trapOID)...)
+	if enterpriseOID != "" {
+		vbContents = append(vbContents, encodeVarbindOID(oidSnmpTrapEnterprise0, enterpriseOID)...)
+	}
 	for i, vb := range varbinds {
 		enc, err := encodeVarbindTyped(vb)
 		if err != nil {
