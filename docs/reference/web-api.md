@@ -19,8 +19,10 @@ management web UI at `/`.
 | `/api/v1/status` | GET | Manager status. |
 | `/api/v1/system-stats` | GET | System stats (file descriptors, memory). |
 | `/api/v1/flows/status` | GET | Flow export status and cumulative counters. |
-| `/api/v1/traps/status` | GET | SNMP trap export status and INFORM counters. |
+| `/api/v1/traps/status` | GET | SNMP trap export status, INFORM counters, and per-type catalog map. |
 | `/api/v1/devices/{ip}/trap` | POST | Fire a named catalog trap on a specific device. |
+| `/api/v1/syslog/status` | GET | UDP syslog export status, counters, and per-type catalog map. |
+| `/api/v1/devices/{ip}/syslog` | POST | Fire a named catalog syslog message on a specific device. |
 | `/health` | GET | Health check endpoint. |
 
 ## Create devices
@@ -177,12 +179,20 @@ response shape):
   "informs_failed": 33,
   "informs_dropped": 0,
   "rate_limiter_tokens_available": 94,
-  "devices_exporting": 100
+  "devices_exporting": 100,
+  "catalogs_by_type": {
+    "_universal":    {"entries": 5,  "source": "embedded"},
+    "cisco_ios":     {"entries": 12, "source": "file:resources/cisco_ios/traps.json"},
+    "juniper_mx240": {"entries": 12, "source": "file:resources/juniper_mx240/traps.json"}
+  }
 }
 ```
 
-In TRAP mode the four `informs_*` fields are omitted. When trap export is
-disabled the response is:
+`catalogs_by_type` keys are device-type slugs (plus the reserved
+`_universal` entry for the fallback catalog). `source` is
+`"embedded"`, `"file:<path>"`, or `"override:<path>"` when
+`-trap-catalog` was supplied. In TRAP mode the four `informs_*`
+fields are omitted. When trap export is disabled the response is:
 
 ```json
 {"enabled": false, "sent": 0, "devices_exporting": 0}
@@ -208,21 +218,79 @@ Request body:
 
 | Field | Type | Required | Meaning |
 |-------|------|----------|---------|
-| `name` | string | yes | Catalog entry name (e.g. `linkDown`, `linkUp`, `coldStart`). |
-| `varbindOverrides` | object | no | Map of template-field → string-value overrides. Only fields from the catalog template vocabulary are accepted (`IfIndex`, `Uptime`, `Now`, `DeviceIP`). |
+| `name` | string | yes | Catalog entry name (e.g. `linkDown`, `ciscoConfigManEvent`). Must match an entry in the **device's resolved catalog** (per-type overlay if present, universal otherwise) — not the universal catalog globally. |
+| `varbindOverrides` | object | no | Map of template-field → string-value overrides. Only fields from the nine-field unified vocabulary are accepted (`IfIndex`, `IfName`, `Uptime`, `Now`, `DeviceIP`, `SysName`, `Model`, `Serial`, `ChassisID`). |
 
 Response:
 
 | Status | Body | When |
 |--------|------|------|
 | `202 Accepted` | `{"requestId": <uint32>}` | Trap has been enqueued. In INFORM mode the `requestId` is the INFORM PDU's `request-id`. |
-| `400 Bad Request` | error JSON | Malformed JSON body, missing/empty `name`, or unknown catalog entry. |
+| `400 Bad Request` | `{"error": "...", "catalog": "<slug>", "availableEntries": [...]}` | Unknown catalog entry for this device. The enriched body reports which catalog the device resolved to (`cisco_ios`, `_universal`, etc.) and lists its entries alphabetically so a scripted caller can fix its call without a separate discovery endpoint. For malformed JSON or missing `name`, the legacy envelope form `{"success": false, "message": "..."}` applies. |
 | `404 Not Found` | error JSON | Unknown device IP. |
-| `500 Internal Server Error` | error JSON | Template resolve or write failure (`Fire` returned 0). |
+| `500 Internal Server Error` | error JSON | Template resolve error, catalog resolution returned nil despite feature active (pathological manager state), or write failure. |
 | `503 Service Unavailable` | error JSON | Trap export is disabled. |
 
 The endpoint does not block waiting for an INFORM ack — use
 `/api/v1/traps/status` to observe INFORM lifecycle counters.
+
+## Syslog export status
+
+```bash
+curl http://localhost:8080/api/v1/syslog/status
+```
+
+When syslog export is enabled:
+
+```json
+{
+  "enabled": true,
+  "format": "5424",
+  "collector": "192.168.1.10:514",
+  "sent": 18240,
+  "send_failures": 12,
+  "rate_limiter_tokens_available": 380,
+  "devices_exporting": 100,
+  "catalogs_by_type": {
+    "_universal":    {"entries": 6,  "source": "embedded"},
+    "cisco_ios":     {"entries": 14, "source": "file:resources/cisco_ios/syslog.json"},
+    "juniper_mx240": {"entries": 13, "source": "file:resources/juniper_mx240/syslog.json"}
+  }
+}
+```
+
+`format` is `"5424"` or `"3164"`. `catalogs_by_type` follows the same
+shape as the trap endpoint. `rate_limiter_tokens_available` is present
+only when `-syslog-global-cap` is set. When disabled the response is
+`{"enabled": false}`.
+
+See [UDP syslog export (operator guide)](../ops/syslog-export.md) and
+[UDP syslog reference](syslog-export.md) for the full feature details.
+
+## Fire a syslog message on demand
+
+```bash
+curl -X POST http://localhost:8080/api/v1/devices/192.168.100.1/syslog \
+  -H "Content-Type: application/json" \
+  -d '{"name":"interface-down","templateOverrides":{"IfIndex":"3"}}'
+```
+
+Request body:
+
+| Field | Type | Required | Meaning |
+|-------|------|----------|---------|
+| `name` | string | yes | Catalog entry name. Same device's-catalog resolution rule as the trap endpoint. |
+| `templateOverrides` | object | no | Nine-field unified vocabulary (same set as `varbindOverrides` on the trap side). |
+
+Response:
+
+| Status | Body | When |
+|--------|------|------|
+| `202 Accepted` | `{}` | Message emitted. On-demand fires **do not** consume global rate-cap tokens. |
+| `400 Bad Request` | `{"error": "...", "catalog": "<slug>", "availableEntries": [...]}` | Unknown catalog entry for this device. Same enriched-error shape as the trap endpoint. |
+| `404 Not Found` | error JSON | Unknown device IP. |
+| `500 Internal Server Error` | error JSON | Pathological catalog-resolution-nil state. |
+| `503 Service Unavailable` | error JSON | Syslog export is disabled. |
 
 ## Device interaction
 

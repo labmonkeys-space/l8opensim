@@ -25,6 +25,7 @@ const sidebars: SidebarsConfig = {
         'ops/network-namespace',
         'ops/flow-export',
         'ops/snmp-traps',
+        'ops/syslog-export',
         'ops/troubleshooting',
       ],
     },
@@ -42,6 +43,7 @@ const sidebars: SidebarsConfig = {
         'reference/device-types',
         'reference/snmp',
         'reference/snmp-traps',
+        'reference/syslog-export',
         'reference/flow-export',
         'reference/resource-files',
         {

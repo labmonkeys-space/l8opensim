@@ -87,11 +87,26 @@ prerequisites and `snmptrapd` smoke-test, and
 | `-trap-mode` | `trap` \| `inform` | `trap` | Notification mode. TRAP is fire-and-forget; INFORM is acknowledged and retried. |
 | `-trap-interval` | duration | `30s` | Per-device mean firing interval (Poisson-distributed, not periodic). |
 | `-trap-global-cap` | int (tps) | `0` | Simulator-wide rate ceiling across fires + INFORM retries. `0` is unlimited. |
-| `-trap-catalog` | string | — | Path to a JSON catalog; empty uses the embedded universal 5-trap catalog. |
+| `-trap-catalog` | string | — | Path to a JSON catalog; empty uses the embedded universal 5-trap catalog + per-type overlays from `resources/<slug>/traps.json`. Setting this flag **disables per-type overlays** — the file becomes the sole catalog for every device. |
 | `-trap-community` | string | `public` | SNMPv2c community string. |
 | `-trap-source-per-device` | bool | `true` | Use each device's IP as the UDP source address. **Required** when `-trap-mode inform`. |
 | `-trap-inform-timeout` | duration | `5s` | Per-retry timeout in INFORM mode. |
 | `-trap-inform-retries` | int | `2` | Maximum retransmissions per INFORM before it's declared failed. |
+
+## UDP syslog export flags
+
+See [UDP syslog export (operator guide)](../ops/syslog-export.md) for
+prerequisites and `netcat` smoke-test, and
+[UDP syslog reference](syslog-export.md) for wire format and catalog JSON.
+
+| Flag | Type | Default | Purpose |
+|------|------|---------|---------|
+| `-syslog-collector` | string | — | Enable syslog export to this UDP collector (e.g. `192.168.1.10:514`). Empty disables the feature. |
+| `-syslog-format` | `5424` \| `3164` | `5424` | Wire format. RFC 5424 is structured (recommended); RFC 3164 is legacy BSD. One format per process — they don't mix on a single UDP socket. |
+| `-syslog-interval` | duration | `10s` | Per-device mean firing interval (Poisson-distributed, not periodic). |
+| `-syslog-global-cap` | int (rate) | `0` | Simulator-wide rate ceiling across scheduled fires. On-demand HTTP fires bypass the cap. `0` is unlimited. |
+| `-syslog-catalog` | string | — | Path to a JSON catalog; empty uses the embedded universal 6-entry catalog + per-type overlays from `resources/<slug>/syslog.json`. Setting this flag **disables per-type overlays** — the file becomes the sole catalog for every device. |
+| `-syslog-source-per-device` | bool | `true` | Use each device's IP as the UDP source address. Per-device bind failures are non-fatal (unlike INFORM mode on the trap side) — the exporter falls back to the shared socket with a warning. |
 
 ## Examples
 
