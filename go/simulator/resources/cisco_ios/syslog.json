@@ -65,7 +65,7 @@
       "structuredData": {
         "host": "{{.SysName}}"
       },
-      "template": "%SYS-5-CONFIG_I: Configured from console by console"
+      "template": "%SYS-5-CONFIG_I: Configured from console"
     },
     {
       "name": "cisco-snmp-coldstart",
