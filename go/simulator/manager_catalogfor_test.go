@@ -20,7 +20,7 @@ func TestManager_CatalogFor_PerTypeMatch(t *testing.T) {
 	ciscoOverlay := mustParseTrapCatalog(t, `{"traps":[{"name":"ciscoOnly","snmpTrapOID":"1.3.6.1.4.1.9.1","varbinds":[]}]}`)
 	ciscoMerged := universal.MergeOverlay(ciscoOverlay)
 	sm.trapCatalogsByType = map[string]*Catalog{
-		fallbackCatalogKey: universal,
+		universalCatalogKey: universal,
 		"cisco_ios":        ciscoMerged,
 	}
 
@@ -34,7 +34,7 @@ func TestManager_CatalogFor_PerTypeMatch(t *testing.T) {
 }
 
 // TestManager_CatalogFor_FallbackForUnknownType confirms IPs whose type
-// has no per-type catalog fall through to _fallback.
+// has no per-type catalog fall through to _universal.
 func TestManager_CatalogFor_FallbackForUnknownType(t *testing.T) {
 	sm := &SimulatorManager{
 		deviceTypesByIP: map[string]string{"10.42.0.2": "netapp_ontap"},
@@ -43,7 +43,7 @@ func TestManager_CatalogFor_FallbackForUnknownType(t *testing.T) {
 	ciscoOverlay := mustParseTrapCatalog(t, `{"traps":[{"name":"ciscoOnly","snmpTrapOID":"1.3.6.1.4.1.9.1","varbinds":[]}]}`)
 	ciscoMerged := universal.MergeOverlay(ciscoOverlay)
 	sm.trapCatalogsByType = map[string]*Catalog{
-		fallbackCatalogKey: universal,
+		universalCatalogKey: universal,
 		"cisco_ios":        ciscoMerged,
 	}
 
@@ -69,11 +69,11 @@ func TestManager_CatalogFor_UnknownIPFallsThrough(t *testing.T) {
 	}
 	universal := mustLoadEmbeddedCatalog(t)
 	sm.trapCatalogsByType = map[string]*Catalog{
-		fallbackCatalogKey: universal,
+		universalCatalogKey: universal,
 	}
 	cat := sm.CatalogFor("10.99.99.99")
 	if cat == nil {
-		t.Fatal("CatalogFor returned nil for unknown IP; expected _fallback")
+		t.Fatal("CatalogFor returned nil for unknown IP; expected _universal")
 	}
 	if len(cat.Entries) == 0 {
 		t.Error("fallback catalog should be non-empty")
@@ -82,15 +82,15 @@ func TestManager_CatalogFor_UnknownIPFallsThrough(t *testing.T) {
 
 // TestManager_CatalogFor_OverrideFlagDisablesPerType pins the behaviour
 // that `-trap-catalog path` means: catalogsByType contains only
-// `_fallback`, so every device resolves to the single override file
+// `_universal`, so every device resolves to the single override file
 // regardless of device type.
 func TestManager_CatalogFor_OverrideFlagDisablesPerType(t *testing.T) {
 	override := mustParseTrapCatalog(t, `{"traps":[{"name":"overrideOnly","snmpTrapOID":"1.2.3","varbinds":[]}]}`)
 	sm := &SimulatorManager{
 		deviceTypesByIP: map[string]string{"10.42.0.1": "cisco_ios"},
-		// Override path: only _fallback is populated, no per-type keys.
+		// Override path: only _universal is populated, no per-type keys.
 		trapCatalogsByType: map[string]*Catalog{
-			fallbackCatalogKey: override,
+			universalCatalogKey: override,
 		},
 	}
 	cat := sm.CatalogFor("10.42.0.1")
@@ -114,7 +114,7 @@ func TestManager_SyslogCatalogFor_PerTypeMatch(t *testing.T) {
 	jnxOverlay := mustParseSyslogCatalog(t, `{"entries":[{"name":"jnx-only","facility":"local7","severity":"warning","appName":"JNX","template":"x"}]}`)
 	jnxMerged := universal.MergeOverlay(jnxOverlay)
 	sm.syslogCatalogsByType = map[string]*SyslogCatalog{
-		fallbackCatalogKey: universal,
+		universalCatalogKey: universal,
 		"juniper_mx240":    jnxMerged,
 	}
 

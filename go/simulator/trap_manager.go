@@ -151,7 +151,7 @@ func (sm *SimulatorManager) StartTrapExport(cfg TrapConfig) error {
 	// the flag preserves today's full-replacement contract: every device
 	// uses the single file supplied.
 	catalogsByType := map[string]*Catalog{
-		fallbackCatalogKey: catalog,
+		universalCatalogKey: catalog,
 	}
 	if cfg.CatalogPath == "" {
 		perType, scanErr := ScanPerTypeTrapCatalogs(catalog, trapCatalogResourceDir)
@@ -257,6 +257,11 @@ func (sm *SimulatorManager) StopTrapExport() {
 	sm.mu.Lock()
 	sm.trapScheduler = nil
 	sm.trapConn = nil
+	// Clear per-type catalog state so a subsequent StartTrapExport
+	// rebuilds it from scratch rather than inheriting stale overlays.
+	sm.trapCatalog = nil
+	sm.trapCatalogsByType = nil
+	sm.trapCatalogPath = ""
 	sm.mu.Unlock()
 }
 
@@ -420,7 +425,7 @@ func (sm *SimulatorManager) FindDeviceByIP(ip string) *DeviceSimulator {
 
 // CatalogFor returns the trap catalog to use for the device with the given
 // IP. Resolution order: device-IP → type-slug → `trapCatalogsByType[slug]`
-// → `trapCatalogsByType["_fallback"]` (the universal). Safe for concurrent
+// → `trapCatalogsByType["_universal"]` (the universal). Safe for concurrent
 // use; the hot path is O(1) (two map reads). Returns nil only when trap
 // export has never been initialised.
 func (sm *SimulatorManager) CatalogFor(ip string) *Catalog {
@@ -434,12 +439,23 @@ func (sm *SimulatorManager) CatalogFor(ip string) *Catalog {
 			return cat
 		}
 	}
-	return sm.trapCatalogsByType[fallbackCatalogKey]
+	// Prefer the catalogsByType universal entry; fall back to the legacy
+	// `trapCatalog` pointer only if someone mutated catalogsByType without
+	// re-seeding the universal key. A non-nil return when any catalog
+	// surface is initialised protects the scheduler hot path from silent
+	// no-op fires and simplifies `FireTrapOnDevice` error semantics.
+	if cat := sm.trapCatalogsByType[universalCatalogKey]; cat != nil {
+		return cat
+	}
+	return sm.trapCatalog
 }
 
-// fallbackCatalogKey is the reserved slug used in trapCatalogsByType and
-// syslogCatalogsByType for the universal (non-per-type) catalog.
-const fallbackCatalogKey = "_fallback"
+// universalCatalogKey is the reserved slug used in trapCatalogsByType and
+// syslogCatalogsByType for the universal (non-per-type) catalog. The
+// constant value appears verbatim in observability output
+// (GET /api/v1/traps/status, POST 400 error bodies) so the name is
+// operator-facing, not just an internal detail.
+const universalCatalogKey = "_universal"
 
 // trapCatalogResourceDir is the root of the per-device-type resource tree.
 // Must match the path used by the SNMP/SSH/REST resource loader in
@@ -456,7 +472,7 @@ func trapCatalogSource(slug, catalogFlagPath string) string {
 	if catalogFlagPath != "" {
 		return "override:" + catalogFlagPath
 	}
-	if slug == fallbackCatalogKey {
+	if slug == universalCatalogKey {
 		return "embedded"
 	}
 	return fmt.Sprintf("file:%s/%s/traps.json", trapCatalogResourceDir, slug)
@@ -509,21 +525,21 @@ func (sm *SimulatorManager) FireTrapOnDevice(ip, trapName string, overrides map[
 }
 
 // resolvedCatalogLabel returns the catalogsByType key that CatalogFor
-// resolved for `ip` — either a device-type slug or "_fallback". Used only
-// for HTTP error bodies, so a miss (unknown IP) maps to "_fallback" for a
+// resolved for `ip` — either a device-type slug or "_universal". Used only
+// for HTTP error bodies, so a miss (unknown IP) maps to "_universal" for a
 // sensible message.
 func (sm *SimulatorManager) resolvedCatalogLabel(ip string) string {
 	sm.mu.RLock()
 	defer sm.mu.RUnlock()
 	if sm.trapCatalogsByType == nil {
-		return fallbackCatalogKey
+		return universalCatalogKey
 	}
 	if slug, ok := sm.deviceTypesByIP[ip]; ok {
 		if _, found := sm.trapCatalogsByType[slug]; found {
 			return slug
 		}
 	}
-	return fallbackCatalogKey
+	return universalCatalogKey
 }
 
 // sortedTrapEntryNames returns the catalog's entry names in stable

@@ -272,6 +272,15 @@ func (sm *SimulatorManager) CreateDevicesWithOptions(startIP string, count int, 
 				sm.registerSFlowCounterSources(device)
 			}
 
+			// Register device type BEFORE starting exporters. startDevice*Exporter
+			// calls scheduler.Register which puts the device on the fire heap;
+			// any fire that lands before deviceTypesByIP is populated would
+			// resolve via CatalogFor → miss → fall through to _universal,
+			// silently skipping any per-type overlay for the first fires.
+			sm.mu.Lock()
+			sm.deviceTypesByIP[currentIP.String()] = resourceDirName(deviceResourceFile)
+			sm.mu.Unlock()
+
 			// Initialize SNMP trap exporter if trap export is enabled.
 			// In INFORM mode a per-device bind failure is fatal for this
 			// device (but not for the simulator as a whole — we log and
@@ -312,11 +321,12 @@ func (sm *SimulatorManager) CreateDevicesWithOptions(startIP string, count int, 
 				continue
 			}
 
-			// Add device to map with a write lock
+			// Add device to map with a write lock. deviceTypesByIP was
+			// populated earlier (before exporter registration) to avoid a
+			// fire-timing race; repeated write here is idempotent.
 			sm.mu.Lock()
 			sm.devices[deviceID] = device
 			sm.deviceIPs[currentIP.String()] = struct{}{}
-			sm.deviceTypesByIP[currentIP.String()] = resourceDirName(deviceResourceFile)
 			sm.incrementIP()
 			sm.mu.Unlock()
 
@@ -523,6 +533,12 @@ func (sm *SimulatorManager) createSingleDevice(deviceIndex int, deviceIP net.IP,
 		sm.registerSFlowCounterSources(device)
 	}
 
+	// Register device type BEFORE starting exporters so scheduler fires
+	// resolve the correct per-type catalog from the first pick onward.
+	sm.mu.Lock()
+	sm.deviceTypesByIP[deviceIP.String()] = resourceDirName(resourceFile)
+	sm.mu.Unlock()
+
 	// Initialize SNMP trap exporter if trap export is enabled.
 	if sm.trapActive.Load() {
 		if err := sm.startDeviceTrapExporter(device); err != nil {
@@ -554,11 +570,11 @@ func (sm *SimulatorManager) createSingleDevice(deviceIndex int, deviceIP net.IP,
 		return false
 	}
 
-	// Add device to map with a write lock
+	// Add device to map with a write lock. deviceTypesByIP was populated
+	// earlier (before exporter registration) to avoid a fire-timing race.
 	sm.mu.Lock()
 	sm.devices[deviceID] = device
 	sm.deviceIPs[deviceIP.String()] = struct{}{}
-	sm.deviceTypesByIP[deviceIP.String()] = resourceDirName(resourceFile)
 	sm.mu.Unlock()
 
 	return true

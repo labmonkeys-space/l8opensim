@@ -386,8 +386,13 @@ func (sm *SimulatorManager) shutdownFast() {
 		device.stopListenersOnly()
 	}
 
-	// Clear maps
+	// Clear maps. The IP-keyed companion maps are cleared alongside
+	// `devices` so that a subsequent Startup cycle starts from a clean
+	// slate (previously these were leaked, letting stale IP→slug mappings
+	// bleed into the next run and mis-resolving per-type catalogs).
 	sm.devices = make(map[string]*DeviceSimulator)
+	sm.deviceIPs = make(map[string]struct{})
+	sm.deviceTypesByIP = make(map[string]string)
 	sm.tunPoolMutex.Lock()
 	// Close pre-allocated TUN FDs
 	for _, tunIface := range sm.tunInterfacePool {

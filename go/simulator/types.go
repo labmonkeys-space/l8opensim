@@ -214,7 +214,7 @@ type SimulatorManager struct {
 	// See trap_manager.go for lifecycle and trap_exporter.go for per-device state.
 	//
 	// trapCatalogsByType is the per-device-type overlay map populated at
-	// startup. Key `_fallback` holds the universal catalog; other keys are
+	// startup. Key `_universal` holds the universal catalog; other keys are
 	// device-type slugs (e.g., "cisco_ios"). `trapCatalog` remains as a
 	// legacy alias for the fallback, preserved for test compatibility.
 	trapActive          atomic.Bool

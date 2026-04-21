@@ -32,6 +32,7 @@ import (
 	"embed"
 	"encoding/json"
 	"fmt"
+	"log"
 	"math/rand"
 	"os"
 	"sort"
@@ -361,7 +362,9 @@ func (c *SyslogCatalog) MergeOverlay(overlay *SyslogCatalog) *SyslogCatalog {
 		for _, e := range out.Entries {
 			out.ByName[e.Name] = e
 		}
-		_ = out.recomputeWeights()
+		if err := out.recomputeWeights(); err != nil {
+			log.Printf("syslog catalog: MergeOverlay(empty overlay) produced invalid weights: %v", err)
+		}
 		return out
 	}
 	merged := &SyslogCatalog{
@@ -385,7 +388,9 @@ func (c *SyslogCatalog) MergeOverlay(overlay *SyslogCatalog) *SyslogCatalog {
 		merged.Entries = append(merged.Entries, e)
 		merged.ByName[e.Name] = e
 	}
-	_ = merged.recomputeWeights()
+	if err := merged.recomputeWeights(); err != nil {
+		log.Printf("syslog catalog: MergeOverlay produced invalid weights: %v", err)
+	}
 	return merged
 }
 
@@ -398,6 +403,8 @@ func ScanPerTypeSyslogCatalogs(universal *SyslogCatalog, resourceDir string) (ma
 	entries, err := os.ReadDir(resourceDir)
 	if err != nil {
 		if os.IsNotExist(err) {
+			log.Printf("syslog catalog scan: resource dir %q not found — per-type overlays disabled",
+				resourceDir)
 			return result, nil
 		}
 		return nil, fmt.Errorf("syslog catalog scan: reading %q: %w", resourceDir, err)
@@ -406,18 +413,19 @@ func ScanPerTypeSyslogCatalogs(universal *SyslogCatalog, resourceDir string) (ma
 		if !entry.IsDir() {
 			continue
 		}
-		slug := entry.Name()
+		// Lowercase to match resourceDirName (used by deviceTypesByIP).
+		slug := strings.ToLower(entry.Name())
 		if strings.HasPrefix(slug, "_") {
 			continue
 		}
-		path := resourceDir + "/" + slug + "/syslog.json"
+		path := resourceDir + "/" + entry.Name() + "/syslog.json"
 		info, err := os.Stat(path)
 		if err != nil || info.IsDir() {
 			continue
 		}
 		perType, err := LoadSyslogCatalogFromFile(path)
 		if err != nil {
-			return nil, err
+			return nil, fmt.Errorf("per-type syslog catalog %q: %w", slug, err)
 		}
 		if perType.Extends {
 			result[slug] = universal.MergeOverlay(perType)

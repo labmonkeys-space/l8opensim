@@ -28,6 +28,7 @@ import (
 	"embed"
 	"encoding/json"
 	"fmt"
+	"log"
 	"math/rand"
 	"os"
 	"strings"
@@ -201,6 +202,13 @@ func ScanPerTypeTrapCatalogs(universal *Catalog, resourceDir string) (map[string
 	entries, err := os.ReadDir(resourceDir)
 	if err != nil {
 		if os.IsNotExist(err) {
+			// Missing resource tree is only a no-op when nothing else
+			// in the simulator cares about it (e.g. fully-embedded
+			// scenarios). Log a warning so operators running out of a
+			// directory that expected `resources/` aren't left
+			// wondering why per-type overlays never load.
+			log.Printf("trap catalog scan: resource dir %q not found — per-type overlays disabled",
+				resourceDir)
 			return result, nil
 		}
 		return nil, fmt.Errorf("trap catalog scan: reading %q: %w", resourceDir, err)
@@ -209,20 +217,24 @@ func ScanPerTypeTrapCatalogs(universal *Catalog, resourceDir string) (map[string
 		if !entry.IsDir() {
 			continue
 		}
-		slug := entry.Name()
+		// Normalise to lowercase so the catalog key matches what
+		// `resourceDirName` (used by deviceTypesByIP) produces. The
+		// repo ships lowercase dir names today but we don't want a
+		// mixed-case addition to silently miss the overlay.
+		slug := strings.ToLower(entry.Name())
 		// Skip the reserved _common dir — its content is embedded via go:embed
 		// and must not be reloaded from disk as a per-type overlay.
 		if strings.HasPrefix(slug, "_") {
 			continue
 		}
-		path := resourceDir + "/" + slug + "/traps.json"
+		path := resourceDir + "/" + entry.Name() + "/traps.json"
 		info, err := os.Stat(path)
 		if err != nil || info.IsDir() {
 			continue
 		}
 		perType, err := LoadCatalogFromFile(path)
 		if err != nil {
-			return nil, err
+			return nil, fmt.Errorf("per-type trap catalog %q: %w", slug, err)
 		}
 		if perType.Extends {
 			result[slug] = universal.MergeOverlay(perType)
@@ -311,7 +323,13 @@ func (c *Catalog) MergeOverlay(overlay *Catalog) *Catalog {
 		for _, e := range out.Entries {
 			out.ByName[e.Name] = e
 		}
-		_ = out.recomputeWeights()
+		if err := out.recomputeWeights(); err != nil {
+			// The base catalog (`c`) already passed parseCatalog's
+			// weight check, so this is essentially impossible. Log
+			// defensively rather than silently emit a dud catalog
+			// that would trip Pick on division-by-zero.
+			log.Printf("trap catalog: MergeOverlay(empty overlay) produced invalid weights: %v", err)
+		}
 		return out
 	}
 
@@ -338,7 +356,15 @@ func (c *Catalog) MergeOverlay(overlay *Catalog) *Catalog {
 		merged.Entries = append(merged.Entries, e)
 		merged.ByName[e.Name] = e
 	}
-	_ = merged.recomputeWeights()
+	if err := merged.recomputeWeights(); err != nil {
+		// A merged total-weight of zero means Pick would infinitely
+		// select nothing (or panic on rand.Intn(0)). Both base and
+		// overlay passed load-time validation individually, so this
+		// can only happen with pathological same-name overrides that
+		// replace every positive-weight entry with zero-weight ones.
+		// Surface it rather than ship a silently broken catalog.
+		log.Printf("trap catalog: MergeOverlay produced invalid weights: %v", err)
+	}
 	return merged
 }
 

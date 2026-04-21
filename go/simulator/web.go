@@ -149,6 +149,11 @@ func fireSyslogHandler(w http.ResponseWriter, r *http.Request) {
 		case errors.Is(err, ErrSyslogDeviceNotFound):
 			sendErrorResponse(w, err.Error(), http.StatusNotFound)
 		case errors.As(err, &entryErr):
+			// Enriched 400: the device's resolved catalog and its
+			// entries list so operators can self-service.
+			// FireSyslogOnDevice always wraps unknown-entry failures
+			// in *SyslogEntryNotFoundError, so this arm handles every
+			// ErrSyslogEntryNotFound case.
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusBadRequest)
 			_ = json.NewEncoder(w).Encode(map[string]interface{}{
@@ -156,8 +161,6 @@ func fireSyslogHandler(w http.ResponseWriter, r *http.Request) {
 				"catalog":          entryErr.Catalog,
 				"availableEntries": entryErr.Entries,
 			})
-		case errors.Is(err, ErrSyslogEntryNotFound):
-			sendErrorResponse(w, err.Error(), http.StatusBadRequest)
 		default:
 			sendErrorResponse(w, err.Error(), http.StatusInternalServerError)
 		}
@@ -205,8 +208,10 @@ func fireTrapHandler(w http.ResponseWriter, r *http.Request) {
 			sendErrorResponse(w, err.Error(), http.StatusNotFound)
 		case errors.As(err, &entryErr):
 			// 400 with available entries so operators can self-service
-			// when they target the wrong catalog (e.g., Cisco entry name
-			// on a Juniper device).
+			// when they target the wrong catalog (e.g., Cisco entry
+			// name on a Juniper device). FireTrapOnDevice always wraps
+			// ErrTrapEntryNotFound in *TrapEntryNotFoundError, so this
+			// arm handles every unknown-entry case.
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusBadRequest)
 			_ = json.NewEncoder(w).Encode(map[string]interface{}{
@@ -214,8 +219,6 @@ func fireTrapHandler(w http.ResponseWriter, r *http.Request) {
 				"catalog":          entryErr.Catalog,
 				"availableEntries": entryErr.Entries,
 			})
-		case errors.Is(err, ErrTrapEntryNotFound):
-			sendErrorResponse(w, err.Error(), http.StatusBadRequest)
 		default:
 			sendErrorResponse(w, err.Error(), http.StatusInternalServerError)
 		}

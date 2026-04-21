@@ -87,26 +87,26 @@ func syslogCatalogSource(slug, catalogFlagPath string) string {
 	if catalogFlagPath != "" {
 		return "override:" + catalogFlagPath
 	}
-	if slug == fallbackCatalogKey {
+	if slug == universalCatalogKey {
 		return "embedded"
 	}
 	return fmt.Sprintf("file:%s/%s/syslog.json", trapCatalogResourceDir, slug)
 }
 
 // resolvedSyslogCatalogLabel returns the catalogsByType key resolved for
-// the given IP — either a device-type slug or "_fallback".
+// the given IP — either a device-type slug or "_universal".
 func (sm *SimulatorManager) resolvedSyslogCatalogLabel(ip string) string {
 	sm.mu.RLock()
 	defer sm.mu.RUnlock()
 	if sm.syslogCatalogsByType == nil {
-		return fallbackCatalogKey
+		return universalCatalogKey
 	}
 	if slug, ok := sm.deviceTypesByIP[ip]; ok {
 		if _, found := sm.syslogCatalogsByType[slug]; found {
 			return slug
 		}
 	}
-	return fallbackCatalogKey
+	return universalCatalogKey
 }
 
 // sortedSyslogEntryNames returns the catalog's entry names alphabetically.
@@ -173,7 +173,7 @@ func (sm *SimulatorManager) StartSyslogExport(cfg SyslogConfig) error {
 
 	// Per-device-type overlay scan. Skipped when `-syslog-catalog` is set.
 	catalogsByType := map[string]*SyslogCatalog{
-		fallbackCatalogKey: catalog,
+		universalCatalogKey: catalog,
 	}
 	if cfg.CatalogPath == "" {
 		perType, scanErr := ScanPerTypeSyslogCatalogs(catalog, trapCatalogResourceDir)
@@ -279,6 +279,11 @@ func (sm *SimulatorManager) StopSyslogExport() {
 	sm.mu.Lock()
 	sm.syslogScheduler = nil
 	sm.syslogConn = nil
+	// Clear per-type catalog state so a subsequent StartSyslogExport
+	// rebuilds it from scratch rather than inheriting stale overlays.
+	sm.syslogCatalog = nil
+	sm.syslogCatalogsByType = nil
+	sm.syslogCatalogPath = ""
 	sm.mu.Unlock()
 }
 
@@ -459,7 +464,7 @@ func (sm *SimulatorManager) WriteSyslogStatusJSON(w http.ResponseWriter) {
 
 // SyslogCatalogFor returns the syslog catalog to use for the device with the
 // given IP. Resolution order: device-IP → type-slug → syslogCatalogsByType
-// → syslogCatalogsByType["_fallback"] (the universal). Symmetric with
+// → syslogCatalogsByType["_universal"] (the universal). Symmetric with
 // `CatalogFor` on the trap side.
 func (sm *SimulatorManager) SyslogCatalogFor(ip string) *SyslogCatalog {
 	sm.mu.RLock()
@@ -472,6 +477,11 @@ func (sm *SimulatorManager) SyslogCatalogFor(ip string) *SyslogCatalog {
 			return cat
 		}
 	}
-	return sm.syslogCatalogsByType[fallbackCatalogKey]
+	// See CatalogFor above — mirror the prefer-universal-then-legacy
+	// fallback so non-nil is guaranteed while any catalog is live.
+	if cat := sm.syslogCatalogsByType[universalCatalogKey]; cat != nil {
+		return cat
+	}
+	return sm.syslogCatalog
 }
 

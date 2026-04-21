@@ -307,10 +307,15 @@ func (s *SyslogScheduler) Run(ctx context.Context) {
 		heap.Push(&s.heap, entry)
 		s.byIP[key] = entry
 
-		// Pick a catalog entry under the lock (rnd is not concurrent-safe).
-		// Catalog resolved per-fire via the manager-supplied callback so
-		// per-device-type overlays take effect.
-		cat := s.catalogFor(entry.deviceIP)
+		// Snapshot IP and release before the manager callback to avoid
+		// holding s.mu across sm.mu.RLock (same reasoning as trap
+		// scheduler — decouples lock domains).
+		deviceIP := entry.deviceIP
+		s.mu.Unlock()
+
+		cat := s.catalogFor(deviceIP)
+
+		s.mu.Lock()
 		var catEntry *SyslogCatalogEntry
 		if cat != nil {
 			catEntry = cat.Pick(s.rnd)

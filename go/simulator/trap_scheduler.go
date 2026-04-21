@@ -89,7 +89,7 @@ func (h *trapHeap) Pop() interface{} {
 // The scheduler does not own the catalog directly — it resolves a catalog
 // per-fire via `catalogFor(deviceIP)`, which the manager implements over
 // `trapCatalogsByType`. This keeps per-type catalog lifecycle on the
-// manager, where `_fallback` resolution and future per-type metrics live.
+// manager, where `_universal` resolution and future per-type metrics live.
 type TrapScheduler struct {
 	mu           sync.Mutex
 	heap         trapHeap
@@ -303,10 +303,18 @@ func (s *TrapScheduler) Run(ctx context.Context) {
 		heap.Push(&s.heap, entry)
 		s.byIP[key] = entry
 
-		// Pick a catalog entry under the lock (rnd is not concurrent-safe).
-		// The catalog is resolved per fire via the manager-supplied
-		// callback so per-device-type overlays take effect.
-		cat := s.catalogFor(entry.deviceIP)
+		// Snapshot IP under the lock so we can release before calling
+		// the manager callback (which takes sm.mu.RLock). Holding s.mu
+		// across the callback creates an A→B/B→A lock-order hazard with
+		// any code path that later takes sm.mu.Lock and then touches the
+		// scheduler; decoupling removes the invariant's fragility.
+		deviceIP := entry.deviceIP
+		s.mu.Unlock()
+
+		cat := s.catalogFor(deviceIP)
+
+		// Pick requires the lock because rnd is not concurrent-safe.
+		s.mu.Lock()
 		var trapEntry *CatalogEntry
 		if cat != nil {
 			trapEntry = cat.Pick(s.rnd)
