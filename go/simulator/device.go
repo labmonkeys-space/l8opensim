@@ -316,6 +316,7 @@ func (sm *SimulatorManager) CreateDevicesWithOptions(startIP string, count int, 
 			sm.mu.Lock()
 			sm.devices[deviceID] = device
 			sm.deviceIPs[currentIP.String()] = struct{}{}
+			sm.deviceTypesByIP[currentIP.String()] = resourceDirName(deviceResourceFile)
 			sm.incrementIP()
 			sm.mu.Unlock()
 
@@ -557,6 +558,7 @@ func (sm *SimulatorManager) createSingleDevice(deviceIndex int, deviceIP net.IP,
 	sm.mu.Lock()
 	sm.devices[deviceID] = device
 	sm.deviceIPs[deviceIP.String()] = struct{}{}
+	sm.deviceTypesByIP[deviceIP.String()] = resourceDirName(resourceFile)
 	sm.mu.Unlock()
 
 	return true

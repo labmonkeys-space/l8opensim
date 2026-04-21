@@ -30,6 +30,7 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"sort"
 	"time"
 
 	"golang.org/x/time/rate"
@@ -49,13 +50,14 @@ type SyslogConfig struct {
 // SyslogStatus is the JSON body returned by GET /api/v1/syslog/status. Field
 // shape matches spec Requirement "Syslog status HTTP endpoint".
 type SyslogStatus struct {
-	Enabled                    bool   `json:"enabled"`
-	Format                     string `json:"format,omitempty"`
-	Collector                  string `json:"collector,omitempty"`
-	Sent                       uint64 `json:"sent"`
-	SendFailures               uint64 `json:"send_failures"`
-	RateLimiterTokensAvailable int    `json:"rate_limiter_tokens_available,omitempty"`
-	DevicesExporting           int    `json:"devices_exporting"`
+	Enabled                    bool                         `json:"enabled"`
+	Format                     string                       `json:"format,omitempty"`
+	Collector                  string                       `json:"collector,omitempty"`
+	Sent                       uint64                       `json:"sent"`
+	SendFailures               uint64                       `json:"send_failures"`
+	RateLimiterTokensAvailable int                          `json:"rate_limiter_tokens_available,omitempty"`
+	DevicesExporting           int                          `json:"devices_exporting"`
+	CatalogsByType             map[string]CatalogSourceInfo `json:"catalogs_by_type,omitempty"`
 }
 
 // Sentinel errors returned by FireSyslogOnDevice for HTTP status mapping.
@@ -64,6 +66,61 @@ var (
 	ErrSyslogDeviceNotFound = fmt.Errorf("device not found")
 	ErrSyslogEntryNotFound  = fmt.Errorf("syslog catalog entry not found")
 )
+
+// SyslogEntryNotFoundError is returned by FireSyslogOnDevice when the
+// catalog entry name is unknown for the device's resolved catalog. Shape
+// mirrors TrapEntryNotFoundError.
+type SyslogEntryNotFoundError struct {
+	Name    string
+	Catalog string
+	Entries []string
+}
+
+func (e *SyslogEntryNotFoundError) Error() string {
+	return fmt.Sprintf("%s: %q (catalog: %s)", ErrSyslogEntryNotFound.Error(), e.Name, e.Catalog)
+}
+func (e *SyslogEntryNotFoundError) Unwrap() error { return ErrSyslogEntryNotFound }
+
+// syslogCatalogSource returns the `source` string for a CatalogSourceInfo
+// on the syslog side (mirror of trapCatalogSource).
+func syslogCatalogSource(slug, catalogFlagPath string) string {
+	if catalogFlagPath != "" {
+		return "override:" + catalogFlagPath
+	}
+	if slug == fallbackCatalogKey {
+		return "embedded"
+	}
+	return fmt.Sprintf("file:%s/%s/syslog.json", trapCatalogResourceDir, slug)
+}
+
+// resolvedSyslogCatalogLabel returns the catalogsByType key resolved for
+// the given IP — either a device-type slug or "_fallback".
+func (sm *SimulatorManager) resolvedSyslogCatalogLabel(ip string) string {
+	sm.mu.RLock()
+	defer sm.mu.RUnlock()
+	if sm.syslogCatalogsByType == nil {
+		return fallbackCatalogKey
+	}
+	if slug, ok := sm.deviceTypesByIP[ip]; ok {
+		if _, found := sm.syslogCatalogsByType[slug]; found {
+			return slug
+		}
+	}
+	return fallbackCatalogKey
+}
+
+// sortedSyslogEntryNames returns the catalog's entry names alphabetically.
+func sortedSyslogEntryNames(cat *SyslogCatalog) []string {
+	if cat == nil {
+		return nil
+	}
+	out := make([]string, 0, len(cat.Entries))
+	for _, e := range cat.Entries {
+		out = append(out, e.Name)
+	}
+	sort.Strings(out)
+	return out
+}
 
 // StartSyslogExport validates cfg, loads the catalog, creates the shared
 // scheduler, and starts the scheduler goroutine. Partial state on failure
@@ -114,6 +171,20 @@ func (sm *SimulatorManager) StartSyslogExport(cfg SyslogConfig) error {
 		return err
 	}
 
+	// Per-device-type overlay scan. Skipped when `-syslog-catalog` is set.
+	catalogsByType := map[string]*SyslogCatalog{
+		fallbackCatalogKey: catalog,
+	}
+	if cfg.CatalogPath == "" {
+		perType, scanErr := ScanPerTypeSyslogCatalogs(catalog, trapCatalogResourceDir)
+		if scanErr != nil {
+			return fmt.Errorf("syslog export: scanning per-type catalogs: %w", scanErr)
+		}
+		for slug, c := range perType {
+			catalogsByType[slug] = c
+		}
+	}
+
 	// Shared fallback socket: used when per-device binding is off or fails.
 	conn, err := net.ListenUDP("udp4", &net.UDPAddr{})
 	if err != nil {
@@ -126,13 +197,14 @@ func (sm *SimulatorManager) StartSyslogExport(cfg SyslogConfig) error {
 	}
 
 	scheduler := NewSyslogScheduler(SyslogSchedulerOptions{
-		Catalog:            catalog,
+		CatalogFor:         func(ip net.IP) *SyslogCatalog { return sm.SyslogCatalogFor(ip.String()) },
 		MeanInterval:       cfg.Interval,
 		GlobalCapPerSecond: cfg.GlobalCap,
 	})
 
 	sm.mu.Lock()
 	sm.syslogCatalog = catalog
+	sm.syslogCatalogsByType = catalogsByType
 	sm.syslogScheduler = scheduler
 	sm.syslogEncoder = encoder
 	sm.syslogLimiter = limiter
@@ -296,6 +368,15 @@ func (sm *SimulatorManager) GetSyslogStatus() SyslogStatus {
 		Collector: sm.syslogCollectorStr,
 	}
 	limiter := sm.syslogLimiter
+	if len(sm.syslogCatalogsByType) > 0 {
+		status.CatalogsByType = make(map[string]CatalogSourceInfo, len(sm.syslogCatalogsByType))
+		for slug, cat := range sm.syslogCatalogsByType {
+			status.CatalogsByType[slug] = CatalogSourceInfo{
+				Entries: len(cat.Entries),
+				Source:  syslogCatalogSource(slug, sm.syslogCatalogPath),
+			}
+		}
+	}
 
 	var sent, failures uint64
 	devicesExporting := 0
@@ -342,17 +423,21 @@ func (sm *SimulatorManager) FireSyslogOnDevice(ip, entryName string, overrides m
 	if !sm.syslogActive.Load() {
 		return ErrSyslogExportDisabled
 	}
-	sm.mu.RLock()
-	cat := sm.syslogCatalog
-	sm.mu.RUnlock()
-
-	entry, ok := cat.ByName[entryName]
-	if !ok {
-		return fmt.Errorf("%w: %q", ErrSyslogEntryNotFound, entryName)
-	}
 	device := sm.FindDeviceByIP(ip)
 	if device == nil {
 		return fmt.Errorf("%w: %q", ErrSyslogDeviceNotFound, ip)
+	}
+	cat := sm.SyslogCatalogFor(ip)
+	if cat == nil {
+		return fmt.Errorf("%w: no catalog resolved for %s", ErrSyslogExportDisabled, ip)
+	}
+	entry, ok := cat.ByName[entryName]
+	if !ok {
+		return &SyslogEntryNotFoundError{
+			Name:    entryName,
+			Catalog: sm.resolvedSyslogCatalogLabel(ip),
+			Entries: sortedSyslogEntryNames(cat),
+		}
 	}
 	// Snapshot the exporter pointer under d.mu so a concurrent Stop can't
 	// nil it between the guard check and the Fire call (TOCTOU).
@@ -370,5 +455,23 @@ func (sm *SimulatorManager) FireSyslogOnDevice(ip, entryName string, overrides m
 func (sm *SimulatorManager) WriteSyslogStatusJSON(w http.ResponseWriter) {
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(sm.GetSyslogStatus())
+}
+
+// SyslogCatalogFor returns the syslog catalog to use for the device with the
+// given IP. Resolution order: device-IP → type-slug → syslogCatalogsByType
+// → syslogCatalogsByType["_fallback"] (the universal). Symmetric with
+// `CatalogFor` on the trap side.
+func (sm *SimulatorManager) SyslogCatalogFor(ip string) *SyslogCatalog {
+	sm.mu.RLock()
+	defer sm.mu.RUnlock()
+	if sm.syslogCatalogsByType == nil {
+		return sm.syslogCatalog
+	}
+	if slug, ok := sm.deviceTypesByIP[ip]; ok {
+		if cat, found := sm.syslogCatalogsByType[slug]; found {
+			return cat
+		}
+	}
+	return sm.syslogCatalogsByType[fallbackCatalogKey]
 }
 

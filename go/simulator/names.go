@@ -22,6 +22,19 @@ import (
 	"strings"
 )
 
+// resourceDirName turns a resource filename (e.g. "cisco_catalyst_9500.json")
+// into the per-device-type directory name as it appears on disk under
+// `resources/` (e.g. "cisco_catalyst_9500"). Underscores are preserved — this
+// is the key used for per-type catalog overlays (trap / syslog) and must
+// match the resource-tree layout exactly. Returns "" for empty input.
+func resourceDirName(resourceFile string) string {
+	if resourceFile == "" {
+		return ""
+	}
+	name := strings.ToLower(filepath.Base(resourceFile))
+	return strings.TrimSuffix(name, ".json")
+}
+
 // slugifyDeviceType turns a resource filename (e.g. "cisco_catalyst_9500.json")
 // into a lowercase, URL-/hostname-safe slug (e.g. "cisco-catalyst-9500").
 // Any character outside [a-z0-9-] becomes '-', consecutive hyphens collapse,
