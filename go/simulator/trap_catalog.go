@@ -51,14 +51,27 @@ const (
 	oidSnmpTrapEnterprise0 = "1.3.6.1.6.3.1.1.4.3.0"
 )
 
-// allowedTemplateFields enumerates the four template fields the catalog
-// grammar supports. Any other {{.Name}} reference in OID or value strings
-// is rejected at load time.
+// allowedTemplateFields enumerates the nine-field unified template
+// vocabulary shared between trap and syslog catalogs. Any other
+// {{.Name}} reference in OID or value strings is rejected at catalog
+// load time.
+//
+// Class 1 device-context fields (SysName, Model, Serial, ChassisID,
+// IfName) are populated per fire from FieldResolver; the remaining
+// four are per-fire scalars from the scheduler/exporter.
+//
+// Class 2 random-per-fire fields (PeerIP, User, SourceIP, RuleName, …)
+// are explicitly deferred to a future change and remain rejected.
 var allowedTemplateFields = map[string]struct{}{
-	"IfIndex":  {},
-	"Uptime":   {},
-	"Now":      {},
-	"DeviceIP": {},
+	"IfIndex":   {},
+	"IfName":    {},
+	"Uptime":    {},
+	"Now":       {},
+	"DeviceIP":  {},
+	"SysName":   {},
+	"Model":     {},
+	"Serial":    {},
+	"ChassisID": {},
 }
 
 // TrapVarbindType identifies the ASN.1 application type used when encoding
@@ -149,12 +162,18 @@ type Catalog struct {
 }
 
 // TemplateCtx is the data handed to text/template when Resolve evaluates
-// per-fire. Exactly matches the four fields in allowedTemplateFields.
+// per-fire. Matches the nine-field vocabulary in allowedTemplateFields.
+// Shared field set with SyslogTemplateCtx (design.md §D3 — unified vocab).
 type TemplateCtx struct {
-	IfIndex  int
-	Uptime   uint32 // 1/100s ticks since device start
-	Now      int64  // Unix epoch seconds
-	DeviceIP string // dotted-quad
+	IfIndex   int
+	IfName    string // ifDescr.<IfIndex> or synthesised `GigabitEthernet0/<N>`
+	Uptime    uint32 // 1/100s ticks since device start
+	Now       int64  // Unix epoch seconds
+	DeviceIP  string // dotted-quad
+	SysName   string // device's sysName.0
+	Model     string // human-readable model from slug → label
+	Serial    string // `SN<hex>` synthesised from device IP
+	ChassisID string // MAC-style chassis ID synthesised from device IP
 }
 
 // Varbind is one resolved (templates evaluated) varbind ready for the encoder.
@@ -553,7 +572,7 @@ func validateTemplateFields(s, entryName string, vbIdx int, which string) error 
 		}
 		if _, ok := allowedTemplateFields[field]; !ok {
 			return fmt.Errorf("trap catalog: entry %q varbind %d %s: unknown template field "+
-				"%q (allowed: IfIndex, Uptime, Now, DeviceIP)",
+				"%q (allowed: IfIndex, IfName, Uptime, Now, DeviceIP, SysName, Model, Serial, ChassisID)",
 				entryName, vbIdx, which, field)
 		}
 		rest = rest[open+close+2:]
@@ -608,6 +627,21 @@ func (e *CatalogEntry) Resolve(ctx TemplateCtx, overrides map[string]string) ([]
 		}
 		if v, ok := overrides["DeviceIP"]; ok {
 			ctx.DeviceIP = v
+		}
+		if v, ok := overrides["IfName"]; ok {
+			ctx.IfName = v
+		}
+		if v, ok := overrides["SysName"]; ok {
+			ctx.SysName = v
+		}
+		if v, ok := overrides["Model"]; ok {
+			ctx.Model = v
+		}
+		if v, ok := overrides["Serial"]; ok {
+			ctx.Serial = v
+		}
+		if v, ok := overrides["ChassisID"]; ok {
+			ctx.ChassisID = v
 		}
 		for k := range overrides {
 			if _, ok := allowedTemplateFields[k]; !ok {

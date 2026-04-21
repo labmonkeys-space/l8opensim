@@ -309,12 +309,16 @@ func (sm *SimulatorManager) startDeviceSyslogExporter(device *DeviceSimulator) {
 	// changes to `device.sysName` — if ever introduced — would not be
 	// reflected in emitted syslog messages until the exporter is rebuilt.
 	sm.mu.RLock()
+	deviceIPStr := device.IP.String()
 	opts := SyslogExporterOptions{
 		DeviceIP:   device.IP,
 		Encoder:    sm.syslogEncoder,
 		Collector:  sm.syslogCollectorAddr,
 		SharedConn: sm.syslogConn,
 		SysName:    device.sysName,
+		Model:      modelLabelForSlug(sm.deviceTypesByIP[deviceIPStr]),
+		Serial:     synthSerial(device.IP),
+		ChassisID:  synthChassisID(device.IP),
 		IfIndexFn:  deviceIfIndexFn(device),
 		IfNameFn:   deviceIfNameFn(device),
 	}

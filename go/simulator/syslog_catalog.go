@@ -52,16 +52,24 @@ const embeddedSyslogCatalogPath = "resources/_common/syslog.json"
 // Ethernet MTU for IP + UDP headers and any small collector-side framing.
 const maxSyslogMessageBytes = 1400
 
-// allowedSyslogTemplateFields enumerates the six template fields the catalog
-// grammar supports (design.md §D4). Any other {{.Name}} reference in
-// `template` or `hostname` strings is rejected at load time.
+// allowedSyslogTemplateFields enumerates the nine-field unified template
+// vocabulary shared with the trap subsystem (design.md §D3 unified vocab
+// decision). Any other {{.Name}} reference in `template` / `hostname` /
+// `structuredData` value strings is rejected at catalog load time.
+//
+// Class 1 device-context fields (SysName, Model, Serial, ChassisID,
+// IfName) are populated per fire from FieldResolver; the existing four
+// are per-fire scalars from the scheduler/exporter.
 var allowedSyslogTemplateFields = map[string]struct{}{
-	"DeviceIP": {},
-	"SysName":  {},
-	"IfIndex":  {},
-	"IfName":   {},
-	"Now":      {},
-	"Uptime":   {},
+	"DeviceIP":  {},
+	"SysName":   {},
+	"IfIndex":   {},
+	"IfName":    {},
+	"Now":       {},
+	"Uptime":    {},
+	"Model":     {},
+	"Serial":    {},
+	"ChassisID": {},
 }
 
 // SyslogFacility is an RFC 5424 facility value (0..23). We store the numeric
@@ -245,15 +253,19 @@ type SyslogCatalog struct {
 	totalWeight int
 }
 
-// SyslogTemplateCtx is the data passed to text/template at fire time (design
-// §D4). Must match `allowedSyslogTemplateFields` exactly.
+// SyslogTemplateCtx is the data passed to text/template at fire time.
+// Matches the nine-field unified vocabulary in
+// `allowedSyslogTemplateFields` exactly.
 type SyslogTemplateCtx struct {
-	DeviceIP string
-	SysName  string
-	IfIndex  int
-	IfName   string
-	Now      int64  // Unix epoch seconds
-	Uptime   uint32 // 1/100s ticks since device start
+	DeviceIP  string
+	SysName   string
+	IfIndex   int
+	IfName    string
+	Now       int64  // Unix epoch seconds
+	Uptime    uint32 // 1/100s ticks since device start
+	Model     string // human-readable model from slug → label
+	Serial    string // `SN<hex>` synthesised from device IP
+	ChassisID string // MAC-style chassis ID synthesised from device IP
 }
 
 // SyslogResolved is a catalog entry rendered against a concrete context. It
@@ -595,7 +607,7 @@ func validateSyslogTemplateFields(s, entryName, which string) error {
 		}
 		if _, ok := allowedSyslogTemplateFields[field]; !ok {
 			return fmt.Errorf("syslog catalog: entry %q %s: unknown template field %q "+
-				"(allowed: DeviceIP, SysName, IfIndex, IfName, Now, Uptime)",
+				"(allowed: DeviceIP, SysName, IfIndex, IfName, Now, Uptime, Model, Serial, ChassisID)",
 				entryName, which, field)
 		}
 		rest = rest[open+closeIdx+2:]
@@ -610,12 +622,15 @@ func validateSyslogTemplateFields(s, entryName, which string) error {
 // detail the encoder performs.
 func validateSyslogEntrySize(entry *SyslogCatalogEntry, source string) error {
 	worst := SyslogTemplateCtx{
-		DeviceIP: "255.255.255.255",
-		SysName:  strings.Repeat("H", 64),
-		IfIndex:  65535,
-		IfName:   strings.Repeat("X", 32),
-		Now:      9999999999,
-		Uptime:   0xFFFFFFFF,
+		DeviceIP:  "255.255.255.255",
+		SysName:   strings.Repeat("H", 64),
+		IfIndex:   65535,
+		IfName:    strings.Repeat("X", 32),
+		Now:       9999999999,
+		Uptime:    0xFFFFFFFF,
+		Model:     strings.Repeat("M", 48), // longest realistic: "NVIDIA DGX A100" → 15 chars; 48 is a comfortable upper bound
+		Serial:    "SNFFFFFFFF",             // max-width synthesised format
+		ChassisID: "02:42:ff:ff:ff:ff",      // max-width synthesised format
 	}
 	resolved, err := entry.resolveAgainst(worst, nil)
 	if err != nil {
@@ -696,6 +711,15 @@ func (e *SyslogCatalogEntry) Resolve(ctx SyslogTemplateCtx, overrides map[string
 				return SyslogResolved{}, err
 			}
 			ctx.Uptime = uint32(n)
+		}
+		if v, ok := overrides["Model"]; ok {
+			ctx.Model = v
+		}
+		if v, ok := overrides["Serial"]; ok {
+			ctx.Serial = v
+		}
+		if v, ok := overrides["ChassisID"]; ok {
+			ctx.ChassisID = v
 		}
 		for k := range overrides {
 			if _, ok := allowedSyslogTemplateFields[k]; !ok {

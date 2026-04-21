@@ -74,6 +74,14 @@ type SyslogExporter struct {
 	// injected by the caller so the exporter never touches the SNMP stack.
 	sysName string
 
+	// model / serial / chassisID are Class 1 device-context fields
+	// captured at construction (stable for the device's lifetime).
+	// Consumed by `{{.Model}}` / `{{.Serial}}` / `{{.ChassisID}}`
+	// templates from the unified vocabulary.
+	model     string
+	serial    string
+	chassisID string
+
 	// ifIndexFn / ifNameFn return template-context values per fire.
 	// ifIndexFn may be nil — in that case IfIndex = 0. ifNameFn receives
 	// the index returned by ifIndexFn and yields the matching interface
@@ -94,8 +102,14 @@ type SyslogExporterOptions struct {
 	Collector  *net.UDPAddr
 	SharedConn *net.UDPConn // fallback; may be nil
 	SysName    string       // device's sysName.0 value — empty falls back to DeviceIP at encode time
-	IfIndexFn  func() int
-	IfNameFn   func(ifIndex int) string
+	// Class 1 device-context fields. Constant for the device's lifetime;
+	// consumed by `{{.Model}}` / `{{.Serial}}` / `{{.ChassisID}}` in the
+	// unified template vocabulary.
+	Model     string
+	Serial    string
+	ChassisID string
+	IfIndexFn func() int
+	IfNameFn  func(ifIndex int) string
 }
 
 // NewSyslogExporter builds a SyslogExporter. The per-device conn is not
@@ -129,6 +143,9 @@ func NewSyslogExporter(opts SyslogExporterOptions) *SyslogExporter {
 		collector:  opts.Collector,
 		sharedConn: opts.SharedConn,
 		sysName:    opts.SysName,
+		model:      opts.Model,
+		serial:     opts.Serial,
+		chassisID:  opts.ChassisID,
 		ifIndexFn:  opts.IfIndexFn,
 		ifNameFn:   opts.IfNameFn,
 		startTime:  time.Now(),
@@ -171,12 +188,15 @@ func (e *SyslogExporter) Fire(entry *SyslogCatalogEntry, overrides map[string]st
 
 	ifIndex := e.ifIndexFn()
 	ctx := SyslogTemplateCtx{
-		DeviceIP: e.deviceIP.String(),
-		SysName:  e.sysName,
-		IfIndex:  ifIndex,
-		IfName:   e.ifNameFn(ifIndex),
-		Now:      time.Now().Unix(),
-		Uptime:   e.uptimeHundredths(),
+		DeviceIP:  e.deviceIP.String(),
+		SysName:   e.sysName,
+		IfIndex:   ifIndex,
+		IfName:    e.ifNameFn(ifIndex),
+		Now:       time.Now().Unix(),
+		Uptime:    e.uptimeHundredths(),
+		Model:     e.model,
+		Serial:    e.serial,
+		ChassisID: e.chassisID,
 	}
 	resolved, err := entry.Resolve(ctx, overrides)
 	if err != nil {
