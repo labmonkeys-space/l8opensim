@@ -278,6 +278,10 @@ func (sm *SimulatorManager) startDeviceTrapExporter(device *DeviceSimulator) err
 	}
 	sm.mu.RLock()
 	mode := sm.trapMode
+	deviceIPStr := device.IP.String()
+	// Class 1 device-context fields are captured once here because they
+	// are stable for the device's lifetime. IfName varies with IfIndex
+	// and stays a per-fire callback.
 	opts := TrapExporterOptions{
 		DeviceIP:      device.IP,
 		Community:     sm.trapCommunity,
@@ -289,6 +293,11 @@ func (sm *SimulatorManager) startDeviceTrapExporter(device *DeviceSimulator) err
 		InformTimeout: sm.trapInformTimeout,
 		InformRetries: sm.trapInformRetries,
 		IfIndexFn:     deviceIfIndexFn(device),
+		IfNameFn:      deviceIfNameFn(device),
+		SysName:       device.sysName,
+		Model:         modelLabelForSlug(sm.deviceTypesByIP[deviceIPStr]),
+		Serial:        synthSerial(device.IP),
+		ChassisID:     synthChassisID(device.IP),
 	}
 	sourcePerDevice := sm.trapSourcePerDevice
 	scheduler := sm.trapScheduler

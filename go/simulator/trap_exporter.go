@@ -115,8 +115,16 @@ type TrapExporter struct {
 
 	stats *TrapStats
 
-	// Template context sources
+	// Template context sources. Class 1 device-context fields (SysName,
+	// Model, Serial, ChassisID) are captured once at exporter construction
+	// because they're stable for the device's lifetime; IfName varies with
+	// IfIndex so it uses a callback (PR 3 swaps synthesis for live lookup).
 	ifIndexFn func() int // returns a random ifIndex from the device's set
+	ifNameFn  func(ifIndex int) string // returns ifName for a drawn ifIndex
+	sysName   string
+	model     string
+	serial    string
+	chassisID string
 
 	// Lifecycle
 	closing  atomic.Bool
@@ -142,6 +150,19 @@ type TrapExporterOptions struct {
 	// nil a stub returning 1 is used (acceptable for devices without
 	// simulated interfaces, and for tests).
 	IfIndexFn func() int
+
+	// IfNameFn returns the interface name for a given ifIndex, used by
+	// `{{.IfName}}` template resolution. If nil a synthesised
+	// `GigabitEthernet0/<N>` is used.
+	IfNameFn func(ifIndex int) string
+
+	// Class 1 device-context fields captured at exporter construction.
+	// Constant for the device's lifetime; consumed by `{{.SysName}}`,
+	// `{{.Model}}`, `{{.Serial}}`, `{{.ChassisID}}` templates.
+	SysName   string
+	Model     string
+	Serial    string
+	ChassisID string
 }
 
 // NewTrapExporter builds a TrapExporter. The per-device conn is not opened
@@ -167,6 +188,9 @@ func NewTrapExporter(opts TrapExporterOptions) *TrapExporter {
 	if opts.IfIndexFn == nil {
 		opts.IfIndexFn = func() int { return 1 }
 	}
+	if opts.IfNameFn == nil {
+		opts.IfNameFn = synthIfName
+	}
 	return &TrapExporter{
 		deviceIP:      append(net.IP(nil), opts.DeviceIP...),
 		community:     opts.Community,
@@ -183,6 +207,11 @@ func NewTrapExporter(opts TrapExporterOptions) *TrapExporter {
 		pendingOrder:  make([]uint32, 0, opts.PendingCap+1),
 		stats:         &TrapStats{},
 		ifIndexFn:     opts.IfIndexFn,
+		ifNameFn:      opts.IfNameFn,
+		sysName:       opts.SysName,
+		model:         opts.Model,
+		serial:        opts.Serial,
+		chassisID:     opts.ChassisID,
 		stopCh:        make(chan struct{}),
 	}
 }
@@ -235,11 +264,17 @@ func (e *TrapExporter) Fire(entry *CatalogEntry, overrides map[string]string) ui
 		return 0
 	}
 
+	ifIndex := e.ifIndexFn()
 	ctx := TemplateCtx{
-		IfIndex:  e.ifIndexFn(),
-		Uptime:   e.uptimeHundredths(),
-		Now:      time.Now().Unix(),
-		DeviceIP: e.deviceIP.String(),
+		IfIndex:   ifIndex,
+		IfName:    e.ifNameFn(ifIndex),
+		Uptime:    e.uptimeHundredths(),
+		Now:       time.Now().Unix(),
+		DeviceIP:  e.deviceIP.String(),
+		SysName:   e.sysName,
+		Model:     e.model,
+		Serial:    e.serial,
+		ChassisID: e.chassisID,
 	}
 	varbinds, err := entry.Resolve(ctx, overrides)
 	if err != nil {
