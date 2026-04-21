@@ -37,11 +37,11 @@ func TestJuniperMx240_TrapCatalogLoads(t *testing.T) {
 		}
 	}
 	juniperEntries := []string{
-		"jnxYellowAlarmOn",
-		"jnxYellowAlarmOff",
-		"jnxRedAlarmOn",
-		"jnxFruInsertion",
+		"jnxPowerSupplyFailure",
+		"jnxFanFailure",
+		"jnxOverTemperature",
 		"jnxFruRemoval",
+		"jnxFruInsertion",
 		"jnxFruPowerOff",
 		"jnxFruFailed",
 	}
@@ -73,6 +73,14 @@ func TestJuniperMx240_SyslogCatalogLoads(t *testing.T) {
 	}
 	if got := len(jnx.Entries); got != 13 {
 		t.Errorf("merged juniper_mx240 syslog entries: got %d, want 13 (universal 6 + juniper 7)", got)
+	}
+	// Symmetric with trap-side: pin totalWeight so overlay weight-
+	// recompute regressions surface here rather than silently shifting
+	// traffic distribution. Universal syslog weights sum to 135
+	// (40+40+20+20+10+5); juniper adds 90 (20+20+15+10+10+5+10). Total = 225.
+	wantTotal := 135 + 90
+	if jnx.totalWeight != wantTotal {
+		t.Errorf("merged syslog totalWeight: got %d, want %d", jnx.totalWeight, wantTotal)
 	}
 	for _, name := range []string{"interface-up", "interface-down", "auth-success", "auth-failure", "config-change", "system-restart"} {
 		if _, ok := jnx.ByName[name]; !ok {
@@ -124,17 +132,35 @@ func TestJuniperMx240_TrapCatalog_ResolveEndToEnd(t *testing.T) {
 		ChassisID: synthChassisID(net.IPv4(10, 42, 0, 2)),
 	}
 
-	// jnxYellowAlarmOn uses {{.Uptime}} on its lastChange timeticks varbind.
-	alarmEntry := jnx.ByName["jnxYellowAlarmOn"]
-	vbs, err := alarmEntry.Resolve(ctx, nil)
+	// jnxPowerSupplyFailure uses {{.Model}} + {{.Serial}} in the two
+	// chassis-level varbinds (jnxBoxDescr, jnxBoxSerialNo).
+	psuEntry := jnx.ByName["jnxPowerSupplyFailure"]
+	vbs, err := psuEntry.Resolve(ctx, nil)
 	if err != nil {
-		t.Fatalf("jnxYellowAlarmOn resolve: %v", err)
+		t.Fatalf("jnxPowerSupplyFailure resolve: %v", err)
 	}
-	if len(vbs) < 3 {
-		t.Fatalf("yellow alarm: got %d varbinds, want 3", len(vbs))
+	if len(vbs) < 2 {
+		t.Fatalf("PSU failure: got %d varbinds, want 2", len(vbs))
 	}
-	if vbs[2].Value != "98765" {
-		t.Errorf("yellow alarm timeticks: got %q, want 98765 (uptime)", vbs[2].Value)
+	if vbs[0].Value != "Juniper MX240" {
+		t.Errorf("PSU failure jnxBoxDescr: got %q, want 'Juniper MX240'", vbs[0].Value)
+	}
+	if vbs[1].Value != "SN0A2A0002" {
+		t.Errorf("PSU failure jnxBoxSerialNo: got %q, want SN0A2A0002", vbs[1].Value)
+	}
+
+	// jnxOverTemperature has a fixed sensor name + temp value 75 (matches
+	// the warning threshold used by real MX routers).
+	tempEntry := jnx.ByName["jnxOverTemperature"]
+	vbs, err = tempEntry.Resolve(ctx, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(vbs) < 2 {
+		t.Fatalf("over-temperature: got %d varbinds, want 2", len(vbs))
+	}
+	if vbs[1].Value != "75" {
+		t.Errorf("over-temperature value: got %q, want 75", vbs[1].Value)
 	}
 
 	// jnxFruPowerOff uses `PEM-{{.Serial}}` in the FRU descriptor.
@@ -147,14 +173,22 @@ func TestJuniperMx240_TrapCatalog_ResolveEndToEnd(t *testing.T) {
 		t.Errorf("FRU power-off descr: got %q, want it to contain PEM-SN0A2A0002", vbs[0].Value)
 	}
 
-	// jnxFruFailed uses `{{.Model}}` in the FRU descriptor.
+	// jnxFruFailed uses {{.Model}} in the FRU descriptor AND {{.Uptime}}
+	// in the jnxFruLastPowerOff timeticks varbind (.9). Covers the
+	// Class 1 template path end-to-end for the most complex entry.
 	failedEntry := jnx.ByName["jnxFruFailed"]
 	vbs, err = failedEntry.Resolve(ctx, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(vbs) == 0 || !strings.Contains(vbs[0].Value, "Juniper MX240") {
+	if len(vbs) < 3 {
+		t.Fatalf("FRU failed: got %d varbinds, want 3", len(vbs))
+	}
+	if !strings.Contains(vbs[0].Value, "Juniper MX240") {
 		t.Errorf("FRU failed descr: got %q, want it to contain Juniper MX240", vbs[0].Value)
+	}
+	if vbs[2].Value != "98765" {
+		t.Errorf("FRU failed jnxFruLastPowerOff timeticks: got %q, want 98765 (uptime)", vbs[2].Value)
 	}
 }
 
