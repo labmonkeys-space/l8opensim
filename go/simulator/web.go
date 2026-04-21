@@ -146,6 +146,9 @@ func fireSyslogHandler(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case errors.Is(err, ErrSyslogExportDisabled):
 			sendErrorResponse(w, err.Error(), http.StatusServiceUnavailable)
+		case errors.Is(err, ErrSyslogCatalogUnavailable):
+			// Pathological manager state — see trap handler for rationale.
+			sendErrorResponse(w, err.Error(), http.StatusInternalServerError)
 		case errors.Is(err, ErrSyslogDeviceNotFound):
 			sendErrorResponse(w, err.Error(), http.StatusNotFound)
 		case errors.As(err, &entryErr):
@@ -204,6 +207,10 @@ func fireTrapHandler(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case errors.Is(err, ErrTrapExportDisabled):
 			sendErrorResponse(w, err.Error(), http.StatusServiceUnavailable)
+		case errors.Is(err, ErrTrapCatalogUnavailable):
+			// Pathological manager state — client retrying later
+			// won't help. Map to 500 rather than 503.
+			sendErrorResponse(w, err.Error(), http.StatusInternalServerError)
 		case errors.Is(err, ErrTrapDeviceNotFound):
 			sendErrorResponse(w, err.Error(), http.StatusNotFound)
 		case errors.As(err, &entryErr):

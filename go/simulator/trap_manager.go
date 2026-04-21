@@ -438,25 +438,34 @@ func (sm *SimulatorManager) FindDeviceByIP(ip string) *DeviceSimulator {
 // use; the hot path is O(1) (two map reads). Returns nil only when trap
 // export has never been initialised.
 func (sm *SimulatorManager) CatalogFor(ip string) *Catalog {
+	cat, _ := sm.catalogWithLabelFor(ip)
+	return cat
+}
+
+// catalogWithLabelFor returns the resolved catalog and its `catalogsByType`
+// key under a single RLock. Collapses what used to be three separate
+// RLock acquisitions in `FireTrapOnDevice`'s 400-error path (find-device +
+// CatalogFor + resolvedCatalogLabel) so a concurrent DeleteDevice cannot
+// split-brain the returned pair.
+//
+// Label is the key the status endpoint reports (device-type slug or the
+// reserved `_universal`). Catalog is the resolved *Catalog the hot path
+// uses.
+func (sm *SimulatorManager) catalogWithLabelFor(ip string) (*Catalog, string) {
 	sm.mu.RLock()
 	defer sm.mu.RUnlock()
 	if sm.trapCatalogsByType == nil {
-		return sm.trapCatalog
+		return sm.trapCatalog, universalCatalogKey
 	}
 	if slug, ok := sm.deviceTypesByIP[ip]; ok {
 		if cat, found := sm.trapCatalogsByType[slug]; found {
-			return cat
+			return cat, slug
 		}
 	}
-	// Prefer the catalogsByType universal entry; fall back to the legacy
-	// `trapCatalog` pointer only if someone mutated catalogsByType without
-	// re-seeding the universal key. A non-nil return when any catalog
-	// surface is initialised protects the scheduler hot path from silent
-	// no-op fires and simplifies `FireTrapOnDevice` error semantics.
 	if cat := sm.trapCatalogsByType[universalCatalogKey]; cat != nil {
-		return cat
+		return cat, universalCatalogKey
 	}
-	return sm.trapCatalog
+	return sm.trapCatalog, universalCatalogKey
 }
 
 // universalCatalogKey is the reserved slug used in trapCatalogsByType and
@@ -511,15 +520,20 @@ func (sm *SimulatorManager) FireTrapOnDevice(ip, trapName string, overrides map[
 	if device == nil {
 		return 0, fmt.Errorf("%w: %q", ErrTrapDeviceNotFound, ip)
 	}
-	cat := sm.CatalogFor(ip)
+	// Resolve the catalog and its label under ONE RLock so a concurrent
+	// DeleteDevice cannot split-brain the 400-error fields (label says
+	// `cisco_ios` but catalog came from `_universal`). Previously this
+	// acquired RLock three times (FindDeviceByIP + CatalogFor +
+	// resolvedCatalogLabel).
+	cat, catLabel := sm.catalogWithLabelFor(ip)
 	if cat == nil {
-		return 0, fmt.Errorf("%w: no catalog resolved for %s", ErrTrapExportDisabled, ip)
+		return 0, fmt.Errorf("%w: catalog resolution failed for %s", ErrTrapCatalogUnavailable, ip)
 	}
 	entry, ok := cat.ByName[trapName]
 	if !ok {
 		return 0, &TrapEntryNotFoundError{
 			Name:    trapName,
-			Catalog: sm.resolvedCatalogLabel(ip),
+			Catalog: catLabel,
 			Entries: sortedTrapEntryNames(cat),
 		}
 	}
@@ -531,24 +545,6 @@ func (sm *SimulatorManager) FireTrapOnDevice(ip, trapName string, overrides map[
 		return 0, fmt.Errorf("trap fire for %s returned 0 reqID (resolve or write failure)", ip)
 	}
 	return id, nil
-}
-
-// resolvedCatalogLabel returns the catalogsByType key that CatalogFor
-// resolved for `ip` — either a device-type slug or "_universal". Used only
-// for HTTP error bodies, so a miss (unknown IP) maps to "_universal" for a
-// sensible message.
-func (sm *SimulatorManager) resolvedCatalogLabel(ip string) string {
-	sm.mu.RLock()
-	defer sm.mu.RUnlock()
-	if sm.trapCatalogsByType == nil {
-		return universalCatalogKey
-	}
-	if slug, ok := sm.deviceTypesByIP[ip]; ok {
-		if _, found := sm.trapCatalogsByType[slug]; found {
-			return slug
-		}
-	}
-	return universalCatalogKey
 }
 
 // sortedTrapEntryNames returns the catalog's entry names in stable
@@ -581,10 +577,19 @@ func (e *TrapEntryNotFoundError) Error() string {
 func (e *TrapEntryNotFoundError) Unwrap() error { return ErrTrapEntryNotFound }
 
 // Sentinel errors returned by FireTrapOnDevice for HTTP status mapping.
+//
+// ErrTrapCatalogUnavailable signals a pathological internal state where
+// trap export reports active (`trapActive=true`) but neither the
+// per-type catalog map nor the legacy single-catalog pointer resolves
+// to a catalog. This cannot happen under normal operation — it would
+// mean the manager is mid-reinitialisation or something overwrote the
+// catalog state after Start. The handler maps this to 500, not 503,
+// because "try again later" is misleading for a broken invariant.
 var (
-	ErrTrapExportDisabled = fmt.Errorf("trap export disabled")
-	ErrTrapDeviceNotFound = fmt.Errorf("device not found")
-	ErrTrapEntryNotFound  = fmt.Errorf("trap catalog entry not found")
+	ErrTrapExportDisabled     = fmt.Errorf("trap export disabled")
+	ErrTrapDeviceNotFound     = fmt.Errorf("device not found")
+	ErrTrapEntryNotFound      = fmt.Errorf("trap catalog entry not found")
+	ErrTrapCatalogUnavailable = fmt.Errorf("trap catalog unavailable (manager state broken)")
 )
 
 // WriteTrapStatusJSON writes GetTrapStatus as JSON to w. Extracted for
