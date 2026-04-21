@@ -142,13 +142,25 @@ func fireSyslogHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := manager.FireSyslogOnDevice(ip, req.Name, req.TemplateOverrides); err != nil {
+		var entryErr *SyslogEntryNotFoundError
 		switch {
 		case errors.Is(err, ErrSyslogExportDisabled):
 			sendErrorResponse(w, err.Error(), http.StatusServiceUnavailable)
 		case errors.Is(err, ErrSyslogDeviceNotFound):
 			sendErrorResponse(w, err.Error(), http.StatusNotFound)
-		case errors.Is(err, ErrSyslogEntryNotFound):
-			sendErrorResponse(w, err.Error(), http.StatusBadRequest)
+		case errors.As(err, &entryErr):
+			// Enriched 400: the device's resolved catalog and its
+			// entries list so operators can self-service.
+			// FireSyslogOnDevice always wraps unknown-entry failures
+			// in *SyslogEntryNotFoundError, so this arm handles every
+			// ErrSyslogEntryNotFound case.
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusBadRequest)
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{
+				"error":            entryErr.Error(),
+				"catalog":          entryErr.Catalog,
+				"availableEntries": entryErr.Entries,
+			})
 		default:
 			sendErrorResponse(w, err.Error(), http.StatusInternalServerError)
 		}
@@ -188,13 +200,25 @@ func fireTrapHandler(w http.ResponseWriter, r *http.Request) {
 
 	reqID, err := manager.FireTrapOnDevice(ip, req.Name, req.VarbindOverrides)
 	if err != nil {
+		var entryErr *TrapEntryNotFoundError
 		switch {
 		case errors.Is(err, ErrTrapExportDisabled):
 			sendErrorResponse(w, err.Error(), http.StatusServiceUnavailable)
 		case errors.Is(err, ErrTrapDeviceNotFound):
 			sendErrorResponse(w, err.Error(), http.StatusNotFound)
-		case errors.Is(err, ErrTrapEntryNotFound):
-			sendErrorResponse(w, err.Error(), http.StatusBadRequest)
+		case errors.As(err, &entryErr):
+			// 400 with available entries so operators can self-service
+			// when they target the wrong catalog (e.g., Cisco entry
+			// name on a Juniper device). FireTrapOnDevice always wraps
+			// ErrTrapEntryNotFound in *TrapEntryNotFoundError, so this
+			// arm handles every unknown-entry case.
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusBadRequest)
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{
+				"error":            entryErr.Error(),
+				"catalog":          entryErr.Catalog,
+				"availableEntries": entryErr.Entries,
+			})
 		default:
 			sendErrorResponse(w, err.Error(), http.StatusInternalServerError)
 		}

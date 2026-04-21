@@ -28,6 +28,7 @@ import (
 	"embed"
 	"encoding/json"
 	"fmt"
+	"log"
 	"math/rand"
 	"os"
 	"strings"
@@ -94,8 +95,13 @@ type catalogEntryJSON struct {
 
 // trapCatalogJSON is the on-disk shape of the whole catalog file.
 // The "comment" field (if present) is ignored so authors can annotate files.
+// The "extends" field is meaningful only on per-type catalog files — it
+// controls whether the per-type catalog merges on top of the universal
+// fallback (nil/true) or fully replaces it for that device type (false).
+// Universal catalogs ignore this field.
 type trapCatalogJSON struct {
 	Comment string             `json:"comment,omitempty"`
+	Extends *bool              `json:"extends,omitempty"`
 	Traps   []catalogEntryJSON `json:"traps"`
 }
 
@@ -129,11 +135,17 @@ type CatalogEntry struct {
 
 // Catalog is the whole parsed trap catalog plus cached weight metadata for Pick.
 // Immutable after load; safe for concurrent read from every device.
+//
+// Extends is meaningful only on per-type catalogs: true (the default when
+// the JSON field is absent) means "merge on top of universal"; false means
+// "replace universal for this type entirely". Universal catalogs carry this
+// field but the value is not consulted by the caller.
 type Catalog struct {
-	Entries       []*CatalogEntry
-	ByName        map[string]*CatalogEntry
-	cumulativeW   []int // cumulativeW[i] = sum(Weight[0..i]); used by Pick
-	totalWeight   int
+	Entries     []*CatalogEntry
+	ByName      map[string]*CatalogEntry
+	Extends     bool
+	cumulativeW []int // cumulativeW[i] = sum(Weight[0..i]); used by Pick
+	totalWeight int
 }
 
 // TemplateCtx is the data handed to text/template when Resolve evaluates
@@ -163,14 +175,74 @@ func LoadEmbeddedCatalog() (*Catalog, error) {
 	return parseCatalog(data, "<embedded "+embeddedCatalogPath+">")
 }
 
-// LoadCatalogFromFile parses a user-supplied catalog file. Replaces the
-// embedded catalog entirely — there is no merge (design.md §D3).
+// LoadCatalogFromFile parses a user-supplied catalog file. When used as the
+// `-trap-catalog` override target, this replaces the entire catalog surface
+// (universal + any per-type overlays) for all devices.
 func LoadCatalogFromFile(path string) (*Catalog, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil, fmt.Errorf("trap catalog: reading %q: %w", path, err)
 	}
 	return parseCatalog(data, path)
+}
+
+// ScanPerTypeTrapCatalogs walks resourceDir for `<slug>/traps.json` files and
+// returns a map keyed by device-type slug. Each map value is the MERGED
+// catalog for that slug — already layered on top of `universal` when the
+// per-type file declares (or defaults to) `extends: true`, or a pure
+// replacement when `extends: false`. Slugs without a `traps.json` file do not
+// appear in the returned map; callers fall through to the universal fallback
+// for those.
+//
+// Returns a non-nil empty map when resourceDir does not exist; that state is
+// not an error (matches the existing SNMP-resource loader's tolerance of
+// missing per-type directories).
+func ScanPerTypeTrapCatalogs(universal *Catalog, resourceDir string) (map[string]*Catalog, error) {
+	result := make(map[string]*Catalog)
+	entries, err := os.ReadDir(resourceDir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			// Missing resource tree is only a no-op when nothing else
+			// in the simulator cares about it (e.g. fully-embedded
+			// scenarios). Log a warning so operators running out of a
+			// directory that expected `resources/` aren't left
+			// wondering why per-type overlays never load.
+			log.Printf("trap catalog scan: resource dir %q not found — per-type overlays disabled",
+				resourceDir)
+			return result, nil
+		}
+		return nil, fmt.Errorf("trap catalog scan: reading %q: %w", resourceDir, err)
+	}
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+		// Normalise to lowercase so the catalog key matches what
+		// `resourceDirName` (used by deviceTypesByIP) produces. The
+		// repo ships lowercase dir names today but we don't want a
+		// mixed-case addition to silently miss the overlay.
+		slug := strings.ToLower(entry.Name())
+		// Skip the reserved _common dir — its content is embedded via go:embed
+		// and must not be reloaded from disk as a per-type overlay.
+		if strings.HasPrefix(slug, "_") {
+			continue
+		}
+		path := resourceDir + "/" + entry.Name() + "/traps.json"
+		info, err := os.Stat(path)
+		if err != nil || info.IsDir() {
+			continue
+		}
+		perType, err := LoadCatalogFromFile(path)
+		if err != nil {
+			return nil, fmt.Errorf("per-type trap catalog %q: %w", slug, err)
+		}
+		if perType.Extends {
+			result[slug] = universal.MergeOverlay(perType)
+		} else {
+			result[slug] = perType
+		}
+	}
+	return result, nil
 }
 
 // parseCatalog is the shared body of the two Load* helpers. Source is used
@@ -189,6 +261,7 @@ func parseCatalog(data []byte, source string) (*Catalog, error) {
 	cat := &Catalog{
 		Entries: make([]*CatalogEntry, 0, len(doc.Traps)),
 		ByName:  make(map[string]*CatalogEntry, len(doc.Traps)),
+		Extends: doc.Extends == nil || *doc.Extends, // default true when JSON omits the field
 	}
 	for i, raw := range doc.Traps {
 		entry, err := compileEntry(raw, source, i)
@@ -202,19 +275,97 @@ func parseCatalog(data []byte, source string) (*Catalog, error) {
 		cat.ByName[entry.Name] = entry
 	}
 
-	// Precompute cumulative weights for Pick's O(log N) binary search later.
-	// Linear scan is fine at catalog load since catalogs are small (≤ a few dozen).
-	running := 0
-	cat.cumulativeW = make([]int, len(cat.Entries))
-	for i, e := range cat.Entries {
-		running += e.Weight
-		cat.cumulativeW[i] = running
-	}
-	cat.totalWeight = running
-	if cat.totalWeight <= 0 {
-		return nil, fmt.Errorf("trap catalog: %s total weight must be > 0", source)
+	if err := cat.recomputeWeights(); err != nil {
+		return nil, fmt.Errorf("trap catalog: %s %w", source, err)
 	}
 	return cat, nil
+}
+
+// recomputeWeights rebuilds cumulativeW and totalWeight from the current
+// Entries slice. Called at parse time and after MergeOverlay. Returns an
+// error when the total weight is non-positive (catalog contains no pickable
+// entries) because Pick would infinitely select nothing otherwise.
+func (c *Catalog) recomputeWeights() error {
+	running := 0
+	c.cumulativeW = make([]int, len(c.Entries))
+	for i, e := range c.Entries {
+		running += e.Weight
+		c.cumulativeW[i] = running
+	}
+	c.totalWeight = running
+	if c.totalWeight <= 0 {
+		return fmt.Errorf("total weight must be > 0")
+	}
+	return nil
+}
+
+// MergeOverlay returns a new Catalog that is the name-based overlay of `overlay`
+// on top of `c` (the universal base). Entries whose names appear in `overlay`
+// replace the same-named entries in `c`; entries whose names are unique to
+// `overlay` are appended; entries present only in `c` carry through unchanged.
+// The returned catalog's weight metadata is recomputed across the merged set.
+//
+// Neither `c` nor `overlay` is mutated — both remain valid standalone catalogs
+// after the call. `overlay.Extends` is not consulted here; callers decide
+// whether to merge based on that flag before invoking MergeOverlay.
+func (c *Catalog) MergeOverlay(overlay *Catalog) *Catalog {
+	if c == nil {
+		return overlay
+	}
+	if overlay == nil || len(overlay.Entries) == 0 {
+		// Return a shallow copy so callers can treat the result as an
+		// independent catalog (same semantics as the merge path).
+		out := &Catalog{
+			Entries: append([]*CatalogEntry(nil), c.Entries...),
+			ByName:  make(map[string]*CatalogEntry, len(c.Entries)),
+			Extends: true,
+		}
+		for _, e := range out.Entries {
+			out.ByName[e.Name] = e
+		}
+		if err := out.recomputeWeights(); err != nil {
+			// The base catalog (`c`) already passed parseCatalog's
+			// weight check, so this is essentially impossible. Log
+			// defensively rather than silently emit a dud catalog
+			// that would trip Pick on division-by-zero.
+			log.Printf("trap catalog: MergeOverlay(empty overlay) produced invalid weights: %v", err)
+		}
+		return out
+	}
+
+	merged := &Catalog{
+		Entries: make([]*CatalogEntry, 0, len(c.Entries)+len(overlay.Entries)),
+		ByName:  make(map[string]*CatalogEntry, len(c.Entries)+len(overlay.Entries)),
+		Extends: true,
+	}
+	// Walk the base first so base ordering is preserved for same-name
+	// overrides; then append overlay-only entries.
+	for _, e := range c.Entries {
+		if override, replaced := overlay.ByName[e.Name]; replaced {
+			merged.Entries = append(merged.Entries, override)
+			merged.ByName[override.Name] = override
+		} else {
+			merged.Entries = append(merged.Entries, e)
+			merged.ByName[e.Name] = e
+		}
+	}
+	for _, e := range overlay.Entries {
+		if _, already := merged.ByName[e.Name]; already {
+			continue
+		}
+		merged.Entries = append(merged.Entries, e)
+		merged.ByName[e.Name] = e
+	}
+	if err := merged.recomputeWeights(); err != nil {
+		// A merged total-weight of zero means Pick would infinitely
+		// select nothing (or panic on rand.Intn(0)). Both base and
+		// overlay passed load-time validation individually, so this
+		// can only happen with pathological same-name overrides that
+		// replace every positive-weight entry with zero-weight ones.
+		// Surface it rather than ship a silently broken catalog.
+		log.Printf("trap catalog: MergeOverlay produced invalid weights: %v", err)
+	}
+	return merged
 }
 
 // compileEntry validates and compiles one catalog entry. Rejects reserved

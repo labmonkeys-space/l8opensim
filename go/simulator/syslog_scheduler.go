@@ -91,7 +91,7 @@ type SyslogScheduler struct {
 	byIP    map[string]*syslogHeapEntry // lookup for Deregister
 	devices map[string]syslogFirer      // exporter by device IP
 
-	catalog      *SyslogCatalog
+	catalogFor   func(deviceIP net.IP) *SyslogCatalog
 	meanInterval time.Duration
 	limiter      *rate.Limiter // nil → no global cap
 
@@ -110,6 +110,7 @@ type SyslogScheduler struct {
 // required.
 type SyslogSchedulerOptions struct {
 	Catalog      *SyslogCatalog
+	CatalogFor   func(deviceIP net.IP) *SyslogCatalog
 	MeanInterval time.Duration
 	// GlobalCapPerSecond is the maximum number of fires per second. Zero
 	// means unlimited (the limiter is elided).
@@ -124,8 +125,8 @@ type SyslogSchedulerOptions struct {
 // NewSyslogScheduler constructs a scheduler but does not start it. Call Run
 // to begin firing.
 func NewSyslogScheduler(opts SyslogSchedulerOptions) *SyslogScheduler {
-	if opts.Catalog == nil {
-		panic("NewSyslogScheduler: Catalog required")
+	if opts.Catalog == nil && opts.CatalogFor == nil {
+		panic("NewSyslogScheduler: Catalog or CatalogFor required")
 	}
 	// Sub-millisecond intervals busy-loop the scheduler with no global cap.
 	// 1ms is a generous floor — the 30k-device steady-state with cap=3k tps
@@ -135,10 +136,15 @@ func NewSyslogScheduler(opts SyslogSchedulerOptions) *SyslogScheduler {
 	if opts.MeanInterval < time.Millisecond {
 		panic("NewSyslogScheduler: MeanInterval must be >= 1ms")
 	}
+	catalogFor := opts.CatalogFor
+	if catalogFor == nil {
+		fixed := opts.Catalog
+		catalogFor = func(net.IP) *SyslogCatalog { return fixed }
+	}
 	s := &SyslogScheduler{
 		byIP:         make(map[string]*syslogHeapEntry),
 		devices:      make(map[string]syslogFirer),
-		catalog:      opts.Catalog,
+		catalogFor:   catalogFor,
 		meanInterval: opts.MeanInterval,
 		wake:         make(chan struct{}, 1),
 		stopCh:       make(chan struct{}),
@@ -301,8 +307,19 @@ func (s *SyslogScheduler) Run(ctx context.Context) {
 		heap.Push(&s.heap, entry)
 		s.byIP[key] = entry
 
-		// Pick a catalog entry under the lock (rnd is not concurrent-safe).
-		catEntry := s.catalog.Pick(s.rnd)
+		// Snapshot IP and release before the manager callback to avoid
+		// holding s.mu across sm.mu.RLock (same reasoning as trap
+		// scheduler — decouples lock domains).
+		deviceIP := entry.deviceIP
+		s.mu.Unlock()
+
+		cat := s.catalogFor(deviceIP)
+
+		s.mu.Lock()
+		var catEntry *SyslogCatalogEntry
+		if cat != nil {
+			catEntry = cat.Pick(s.rnd)
+		}
 		s.mu.Unlock()
 
 		if catEntry != nil {

@@ -32,6 +32,7 @@ import (
 	"embed"
 	"encoding/json"
 	"fmt"
+	"log"
 	"math/rand"
 	"os"
 	"sort"
@@ -191,9 +192,13 @@ type syslogCatalogEntryJSON struct {
 }
 
 // syslogCatalogJSON is the on-disk shape of the whole catalog file. The
-// "comment" field is ignored so authors can annotate files.
+// "comment" field is ignored so authors can annotate files. The "extends"
+// field is meaningful only on per-type catalog files — it controls whether
+// the per-type catalog merges on top of the universal fallback (nil/true)
+// or fully replaces it for that device type (false).
 type syslogCatalogJSON struct {
 	Comment string                   `json:"comment,omitempty"`
+	Extends *bool                    `json:"extends,omitempty"`
 	Entries []syslogCatalogEntryJSON `json:"entries"`
 }
 
@@ -235,6 +240,7 @@ type SyslogCatalogEntry struct {
 type SyslogCatalog struct {
 	Entries     []*SyslogCatalogEntry
 	ByName      map[string]*SyslogCatalogEntry
+	Extends     bool
 	cumulativeW []int
 	totalWeight int
 }
@@ -303,6 +309,7 @@ func parseSyslogCatalog(data []byte, source string) (*SyslogCatalog, error) {
 	cat := &SyslogCatalog{
 		Entries: make([]*SyslogCatalogEntry, 0, len(doc.Entries)),
 		ByName:  make(map[string]*SyslogCatalogEntry, len(doc.Entries)),
+		Extends: doc.Extends == nil || *doc.Extends, // default true when field absent
 	}
 	for i, raw := range doc.Entries {
 		entry, err := compileSyslogEntry(raw, source, i)
@@ -316,17 +323,117 @@ func parseSyslogCatalog(data []byte, source string) (*SyslogCatalog, error) {
 		cat.ByName[entry.Name] = entry
 	}
 
-	running := 0
-	cat.cumulativeW = make([]int, len(cat.Entries))
-	for i, e := range cat.Entries {
-		running += e.Weight
-		cat.cumulativeW[i] = running
-	}
-	cat.totalWeight = running
-	if cat.totalWeight <= 0 {
-		return nil, fmt.Errorf("syslog catalog: %s total weight must be > 0", source)
+	if err := cat.recomputeWeights(); err != nil {
+		return nil, fmt.Errorf("syslog catalog: %s %w", source, err)
 	}
 	return cat, nil
+}
+
+// recomputeWeights rebuilds cumulativeW and totalWeight from Entries. Used
+// at parse time and after MergeOverlay.
+func (c *SyslogCatalog) recomputeWeights() error {
+	running := 0
+	c.cumulativeW = make([]int, len(c.Entries))
+	for i, e := range c.Entries {
+		running += e.Weight
+		c.cumulativeW[i] = running
+	}
+	c.totalWeight = running
+	if c.totalWeight <= 0 {
+		return fmt.Errorf("total weight must be > 0")
+	}
+	return nil
+}
+
+// MergeOverlay returns a new SyslogCatalog that overlays `overlay` on `c`
+// (the universal base). Same-named entries in overlay replace c's; unique
+// entries append; c-only entries carry through. Weights recomputed over
+// the merged set. Neither input is mutated.
+func (c *SyslogCatalog) MergeOverlay(overlay *SyslogCatalog) *SyslogCatalog {
+	if c == nil {
+		return overlay
+	}
+	if overlay == nil || len(overlay.Entries) == 0 {
+		out := &SyslogCatalog{
+			Entries: append([]*SyslogCatalogEntry(nil), c.Entries...),
+			ByName:  make(map[string]*SyslogCatalogEntry, len(c.Entries)),
+			Extends: true,
+		}
+		for _, e := range out.Entries {
+			out.ByName[e.Name] = e
+		}
+		if err := out.recomputeWeights(); err != nil {
+			log.Printf("syslog catalog: MergeOverlay(empty overlay) produced invalid weights: %v", err)
+		}
+		return out
+	}
+	merged := &SyslogCatalog{
+		Entries: make([]*SyslogCatalogEntry, 0, len(c.Entries)+len(overlay.Entries)),
+		ByName:  make(map[string]*SyslogCatalogEntry, len(c.Entries)+len(overlay.Entries)),
+		Extends: true,
+	}
+	for _, e := range c.Entries {
+		if override, replaced := overlay.ByName[e.Name]; replaced {
+			merged.Entries = append(merged.Entries, override)
+			merged.ByName[override.Name] = override
+		} else {
+			merged.Entries = append(merged.Entries, e)
+			merged.ByName[e.Name] = e
+		}
+	}
+	for _, e := range overlay.Entries {
+		if _, already := merged.ByName[e.Name]; already {
+			continue
+		}
+		merged.Entries = append(merged.Entries, e)
+		merged.ByName[e.Name] = e
+	}
+	if err := merged.recomputeWeights(); err != nil {
+		log.Printf("syslog catalog: MergeOverlay produced invalid weights: %v", err)
+	}
+	return merged
+}
+
+// ScanPerTypeSyslogCatalogs walks resourceDir for `<slug>/syslog.json` files
+// and returns a map keyed by device-type slug. Each value is the merged
+// catalog (on top of `universal` when extends=true, or a replacement when
+// extends=false). Symmetric with ScanPerTypeTrapCatalogs.
+func ScanPerTypeSyslogCatalogs(universal *SyslogCatalog, resourceDir string) (map[string]*SyslogCatalog, error) {
+	result := make(map[string]*SyslogCatalog)
+	entries, err := os.ReadDir(resourceDir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			log.Printf("syslog catalog scan: resource dir %q not found — per-type overlays disabled",
+				resourceDir)
+			return result, nil
+		}
+		return nil, fmt.Errorf("syslog catalog scan: reading %q: %w", resourceDir, err)
+	}
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+		// Lowercase to match resourceDirName (used by deviceTypesByIP).
+		slug := strings.ToLower(entry.Name())
+		if strings.HasPrefix(slug, "_") {
+			continue
+		}
+		path := resourceDir + "/" + entry.Name() + "/syslog.json"
+		info, err := os.Stat(path)
+		if err != nil || info.IsDir() {
+			continue
+		}
+		perType, err := LoadSyslogCatalogFromFile(path)
+		if err != nil {
+			return nil, fmt.Errorf("per-type syslog catalog %q: %w", slug, err)
+		}
+		if perType.Extends {
+			result[slug] = universal.MergeOverlay(perType)
+		} else {
+			result[slug] = perType
+		}
+	}
+	return result, nil
 }
 
 func compileSyslogEntry(raw syslogCatalogEntryJSON, source string, idx int) (*SyslogCatalogEntry, error) {

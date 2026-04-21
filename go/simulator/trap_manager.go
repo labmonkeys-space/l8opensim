@@ -31,6 +31,7 @@ import (
 	"math/rand"
 	"net"
 	"net/http"
+	"sort"
 	"strings"
 	"time"
 
@@ -67,18 +68,33 @@ func ParseTrapMode(s string) (TrapMode, error) {
 
 // TrapStatus is the JSON body returned by GET /api/v1/traps/status. Fields
 // follow the shape required by spec.md ("Trap status HTTP endpoint").
+//
+// CatalogsByType surfaces the per-device-type overlay map so operators can
+// see at a glance which vendor catalogs are active. Keys are device-type
+// slugs (plus the reserved `_fallback` entry for the universal catalog);
+// values describe each catalog's entry count and source (embedded vs file
+// override).
 type TrapStatus struct {
-	Enabled                    bool   `json:"enabled"`
-	Mode                       string `json:"mode,omitempty"`
-	Collector                  string `json:"collector,omitempty"`
-	Community                  string `json:"community,omitempty"`
-	Sent                       uint64 `json:"sent"`
-	InformsPending             uint64 `json:"informs_pending,omitempty"`
-	InformsAcked               uint64 `json:"informs_acked,omitempty"`
-	InformsFailed              uint64 `json:"informs_failed,omitempty"`
-	InformsDropped             uint64 `json:"informs_dropped,omitempty"`
-	RateLimiterTokensAvailable int    `json:"rate_limiter_tokens_available,omitempty"`
-	DevicesExporting           int    `json:"devices_exporting"`
+	Enabled                    bool                          `json:"enabled"`
+	Mode                       string                        `json:"mode,omitempty"`
+	Collector                  string                        `json:"collector,omitempty"`
+	Community                  string                        `json:"community,omitempty"`
+	Sent                       uint64                        `json:"sent"`
+	InformsPending             uint64                        `json:"informs_pending,omitempty"`
+	InformsAcked               uint64                        `json:"informs_acked,omitempty"`
+	InformsFailed              uint64                        `json:"informs_failed,omitempty"`
+	InformsDropped             uint64                        `json:"informs_dropped,omitempty"`
+	RateLimiterTokensAvailable int                           `json:"rate_limiter_tokens_available,omitempty"`
+	DevicesExporting           int                           `json:"devices_exporting"`
+	CatalogsByType             map[string]CatalogSourceInfo  `json:"catalogs_by_type,omitempty"`
+}
+
+// CatalogSourceInfo describes one entry in TrapStatus.CatalogsByType /
+// SyslogStatus.CatalogsByType. Shared between trap and syslog since their
+// observability shape is identical.
+type CatalogSourceInfo struct {
+	Entries int    `json:"entries"`
+	Source  string `json:"source"` // "embedded", "file:<path>", or "override:<path>"
 }
 
 // StartTrapExport validates cfg, loads the catalog, creates the shared
@@ -131,6 +147,22 @@ func (sm *SimulatorManager) StartTrapExport(cfg TrapConfig) error {
 		return err
 	}
 
+	// Per-device-type overlay scan. Skipped when `-trap-catalog` is set —
+	// the flag preserves today's full-replacement contract: every device
+	// uses the single file supplied.
+	catalogsByType := map[string]*Catalog{
+		universalCatalogKey: catalog,
+	}
+	if cfg.CatalogPath == "" {
+		perType, scanErr := ScanPerTypeTrapCatalogs(catalog, trapCatalogResourceDir)
+		if scanErr != nil {
+			return fmt.Errorf("trap export: scanning per-type catalogs: %w", scanErr)
+		}
+		for slug, c := range perType {
+			catalogsByType[slug] = c
+		}
+	}
+
 	// Shared fallback socket: used only when per-device binding is off or
 	// fails in TRAP mode (INFORM mode disallows fallback).
 	conn, err := net.ListenUDP("udp4", &net.UDPAddr{})
@@ -144,13 +176,14 @@ func (sm *SimulatorManager) StartTrapExport(cfg TrapConfig) error {
 	}
 
 	scheduler := NewTrapScheduler(SchedulerOptions{
-		Catalog:            catalog,
+		CatalogFor:         func(ip net.IP) *Catalog { return sm.CatalogFor(ip.String()) },
 		MeanInterval:       cfg.Interval,
 		GlobalCapPerSecond: cfg.GlobalCap,
 	})
 
 	sm.mu.Lock()
 	sm.trapCatalog = catalog
+	sm.trapCatalogsByType = catalogsByType
 	sm.trapScheduler = scheduler
 	sm.trapEncoder = SNMPv2cEncoder{}
 	sm.trapLimiter = limiter
@@ -224,6 +257,11 @@ func (sm *SimulatorManager) StopTrapExport() {
 	sm.mu.Lock()
 	sm.trapScheduler = nil
 	sm.trapConn = nil
+	// Clear per-type catalog state so a subsequent StartTrapExport
+	// rebuilds it from scratch rather than inheriting stale overlays.
+	sm.trapCatalog = nil
+	sm.trapCatalogsByType = nil
+	sm.trapCatalogPath = ""
 	sm.mu.Unlock()
 }
 
@@ -322,6 +360,16 @@ func (sm *SimulatorManager) GetTrapStatus() TrapStatus {
 		status.Mode = "trap"
 	}
 	limiter := sm.trapLimiter
+	// Snapshot catalogs-by-type under the lock so reads are race-free.
+	if len(sm.trapCatalogsByType) > 0 {
+		status.CatalogsByType = make(map[string]CatalogSourceInfo, len(sm.trapCatalogsByType))
+		for slug, cat := range sm.trapCatalogsByType {
+			status.CatalogsByType[slug] = CatalogSourceInfo{
+				Entries: len(cat.Entries),
+				Source:  trapCatalogSource(slug, sm.trapCatalogPath),
+			}
+		}
+	}
 
 	var sent, pending, acked, failed, dropped uint64
 	devicesExporting := 0
@@ -375,10 +423,72 @@ func (sm *SimulatorManager) FindDeviceByIP(ip string) *DeviceSimulator {
 	return nil
 }
 
+// CatalogFor returns the trap catalog to use for the device with the given
+// IP. Resolution order: device-IP → type-slug → `trapCatalogsByType[slug]`
+// → `trapCatalogsByType["_universal"]` (the universal). Safe for concurrent
+// use; the hot path is O(1) (two map reads). Returns nil only when trap
+// export has never been initialised.
+func (sm *SimulatorManager) CatalogFor(ip string) *Catalog {
+	sm.mu.RLock()
+	defer sm.mu.RUnlock()
+	if sm.trapCatalogsByType == nil {
+		return sm.trapCatalog
+	}
+	if slug, ok := sm.deviceTypesByIP[ip]; ok {
+		if cat, found := sm.trapCatalogsByType[slug]; found {
+			return cat
+		}
+	}
+	// Prefer the catalogsByType universal entry; fall back to the legacy
+	// `trapCatalog` pointer only if someone mutated catalogsByType without
+	// re-seeding the universal key. A non-nil return when any catalog
+	// surface is initialised protects the scheduler hot path from silent
+	// no-op fires and simplifies `FireTrapOnDevice` error semantics.
+	if cat := sm.trapCatalogsByType[universalCatalogKey]; cat != nil {
+		return cat
+	}
+	return sm.trapCatalog
+}
+
+// universalCatalogKey is the reserved slug used in trapCatalogsByType and
+// syslogCatalogsByType for the universal (non-per-type) catalog. The
+// constant value appears verbatim in observability output
+// (GET /api/v1/traps/status, POST 400 error bodies) so the name is
+// operator-facing, not just an internal detail.
+const universalCatalogKey = "_universal"
+
+// trapCatalogResourceDir is the root of the per-device-type resource tree.
+// Must match the path used by the SNMP/SSH/REST resource loader in
+// resources.go so per-type trap catalogs live alongside their siblings.
+const trapCatalogResourceDir = "resources"
+
+// trapCatalogSource returns the `source` string for a CatalogSourceInfo,
+// distinguishing the three paths that can populate an entry: the
+// `-trap-catalog` flag override (`override:<path>`), the per-type file on
+// disk (`file:resources/<slug>/traps.json`), or the embedded universal
+// catalog (`embedded`). `catalogFlagPath` is the value of `-trap-catalog`;
+// empty means the flag was not set.
+func trapCatalogSource(slug, catalogFlagPath string) string {
+	if catalogFlagPath != "" {
+		return "override:" + catalogFlagPath
+	}
+	if slug == universalCatalogKey {
+		return "embedded"
+	}
+	return fmt.Sprintf("file:%s/%s/traps.json", trapCatalogResourceDir, slug)
+}
+
 // FireTrapOnDevice implements POST /api/v1/devices/{ip}/trap by looking up the
 // device's TrapExporter and invoking Fire with the given catalog name.
 // Returns the request-id and nil on success; HTTP status codes are chosen by
 // the caller based on the error (see web.go / api.go).
+//
+// Name resolution uses the DEVICE'S catalog (via CatalogFor), not the
+// universal catalog — entries defined only in a per-type overlay are
+// reachable here for devices of that type. Unknown entries return
+// ErrTrapEntryNotFound wrapped in a TrapEntryNotFoundError carrying the
+// resolved-catalog identifier and available entry names so the handler
+// can render an actionable 400 body.
 //
 // Returns errors tagged so the HTTP layer can map them:
 //   - ErrTrapExportDisabled → 503 Service Unavailable
@@ -388,17 +498,21 @@ func (sm *SimulatorManager) FireTrapOnDevice(ip, trapName string, overrides map[
 	if !sm.trapActive.Load() {
 		return 0, ErrTrapExportDisabled
 	}
-	sm.mu.RLock()
-	cat := sm.trapCatalog
-	sm.mu.RUnlock()
-
-	entry, ok := cat.ByName[trapName]
-	if !ok {
-		return 0, fmt.Errorf("%w: %q", ErrTrapEntryNotFound, trapName)
-	}
 	device := sm.FindDeviceByIP(ip)
 	if device == nil {
 		return 0, fmt.Errorf("%w: %q", ErrTrapDeviceNotFound, ip)
+	}
+	cat := sm.CatalogFor(ip)
+	if cat == nil {
+		return 0, fmt.Errorf("%w: no catalog resolved for %s", ErrTrapExportDisabled, ip)
+	}
+	entry, ok := cat.ByName[trapName]
+	if !ok {
+		return 0, &TrapEntryNotFoundError{
+			Name:    trapName,
+			Catalog: sm.resolvedCatalogLabel(ip),
+			Entries: sortedTrapEntryNames(cat),
+		}
 	}
 	if device.trapExporter == nil {
 		return 0, fmt.Errorf("%w: device %s has no trap exporter", ErrTrapExportDisabled, ip)
@@ -409,6 +523,53 @@ func (sm *SimulatorManager) FireTrapOnDevice(ip, trapName string, overrides map[
 	}
 	return id, nil
 }
+
+// resolvedCatalogLabel returns the catalogsByType key that CatalogFor
+// resolved for `ip` — either a device-type slug or "_universal". Used only
+// for HTTP error bodies, so a miss (unknown IP) maps to "_universal" for a
+// sensible message.
+func (sm *SimulatorManager) resolvedCatalogLabel(ip string) string {
+	sm.mu.RLock()
+	defer sm.mu.RUnlock()
+	if sm.trapCatalogsByType == nil {
+		return universalCatalogKey
+	}
+	if slug, ok := sm.deviceTypesByIP[ip]; ok {
+		if _, found := sm.trapCatalogsByType[slug]; found {
+			return slug
+		}
+	}
+	return universalCatalogKey
+}
+
+// sortedTrapEntryNames returns the catalog's entry names in stable
+// alphabetical order — useful for deterministic HTTP 400 bodies that
+// tests can assert against.
+func sortedTrapEntryNames(cat *Catalog) []string {
+	if cat == nil {
+		return nil
+	}
+	out := make([]string, 0, len(cat.Entries))
+	for _, e := range cat.Entries {
+		out = append(out, e.Name)
+	}
+	sort.Strings(out)
+	return out
+}
+
+// TrapEntryNotFoundError is returned when POST /trap references a catalog
+// entry name that isn't in the device's resolved catalog. Embeds the
+// standard ErrTrapEntryNotFound so existing errors.Is checks keep working.
+type TrapEntryNotFoundError struct {
+	Name    string
+	Catalog string
+	Entries []string
+}
+
+func (e *TrapEntryNotFoundError) Error() string {
+	return fmt.Sprintf("%s: %q (catalog: %s)", ErrTrapEntryNotFound.Error(), e.Name, e.Catalog)
+}
+func (e *TrapEntryNotFoundError) Unwrap() error { return ErrTrapEntryNotFound }
 
 // Sentinel errors returned by FireTrapOnDevice for HTTP status mapping.
 var (

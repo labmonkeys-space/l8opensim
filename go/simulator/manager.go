@@ -46,6 +46,7 @@ func NewSimulatorManagerWithOptions(useNamespace bool) *SimulatorManager {
 	sm := &SimulatorManager{
 		devices:          make(map[string]*DeviceSimulator),
 		deviceIPs:        make(map[string]struct{}),
+		deviceTypesByIP:  make(map[string]string),
 		nextTunIndex:     0,
 		resourcesCache:   make(map[string]*DeviceResources),
 		tunInterfacePool: make(map[string]*TunInterface),
@@ -265,6 +266,7 @@ func (sm *SimulatorManager) DeleteDevice(deviceID string) error {
 
 	delete(sm.devices, deviceID)
 	delete(sm.deviceIPs, device.IP.String())
+	delete(sm.deviceTypesByIP, device.IP.String())
 	return nil
 }
 
@@ -306,6 +308,7 @@ func (sm *SimulatorManager) DeleteAllDevices() error {
 	// Clear the devices map, IP set, and pre-allocated pool
 	sm.devices = make(map[string]*DeviceSimulator)
 	sm.deviceIPs = make(map[string]struct{})
+	sm.deviceTypesByIP = make(map[string]string)
 	sm.tunPoolMutex.Lock()
 	sm.tunInterfacePool = make(map[string]*TunInterface)
 	sm.tunPoolMutex.Unlock()
@@ -383,8 +386,13 @@ func (sm *SimulatorManager) shutdownFast() {
 		device.stopListenersOnly()
 	}
 
-	// Clear maps
+	// Clear maps. The IP-keyed companion maps are cleared alongside
+	// `devices` so that a subsequent Startup cycle starts from a clean
+	// slate (previously these were leaked, letting stale IP→slug mappings
+	// bleed into the next run and mis-resolving per-type catalogs).
 	sm.devices = make(map[string]*DeviceSimulator)
+	sm.deviceIPs = make(map[string]struct{})
+	sm.deviceTypesByIP = make(map[string]string)
 	sm.tunPoolMutex.Lock()
 	// Close pre-allocated TUN FDs
 	for _, tunIface := range sm.tunInterfacePool {

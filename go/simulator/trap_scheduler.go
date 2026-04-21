@@ -85,13 +85,18 @@ func (h *trapHeap) Pop() interface{} {
 // TrapScheduler coordinates per-device trap firing with a single goroutine
 // and a global token-bucket rate limiter. All fields are private; callers
 // interact via Register / Deregister / Run / Stop.
+//
+// The scheduler does not own the catalog directly — it resolves a catalog
+// per-fire via `catalogFor(deviceIP)`, which the manager implements over
+// `trapCatalogsByType`. This keeps per-type catalog lifecycle on the
+// manager, where `_universal` resolution and future per-type metrics live.
 type TrapScheduler struct {
 	mu           sync.Mutex
 	heap         trapHeap
 	byIP         map[string]*trapHeapEntry // lookup for Deregister
 	devices      map[string]trapFirer      // exporter by device IP
 
-	catalog      *Catalog
+	catalogFor   func(deviceIP net.IP) *Catalog
 	meanInterval time.Duration
 	limiter      *rate.Limiter // nil → no global cap
 
@@ -106,10 +111,17 @@ type TrapScheduler struct {
 }
 
 // SchedulerOptions groups the tunables that NewTrapScheduler accepts. The
-// zero value is not valid — a Catalog and a non-zero MeanInterval are
-// required.
+// zero value is not valid — either Catalog or CatalogFor must be set, and
+// MeanInterval must be positive.
+//
+// CatalogFor (preferred) enables per-device-type catalog resolution. When
+// set, the scheduler calls it per fire to look up the device's effective
+// catalog. Catalog (legacy) is a single catalog shared by every device —
+// when CatalogFor is nil the scheduler wraps Catalog in a constant
+// callback so existing call sites and tests continue to work.
 type SchedulerOptions struct {
 	Catalog      *Catalog
+	CatalogFor   func(deviceIP net.IP) *Catalog
 	MeanInterval time.Duration
 	// GlobalCapPerSecond is the maximum number of fires+retries per second.
 	// Zero means unlimited (the limiter is elided).
@@ -124,16 +136,24 @@ type SchedulerOptions struct {
 // NewTrapScheduler constructs a scheduler but does not start it. Call Run to
 // begin firing.
 func NewTrapScheduler(opts SchedulerOptions) *TrapScheduler {
-	if opts.Catalog == nil {
-		panic("NewTrapScheduler: Catalog required")
+	if opts.Catalog == nil && opts.CatalogFor == nil {
+		panic("NewTrapScheduler: Catalog or CatalogFor required")
 	}
 	if opts.MeanInterval <= 0 {
 		panic("NewTrapScheduler: MeanInterval must be positive")
 	}
+	catalogFor := opts.CatalogFor
+	if catalogFor == nil {
+		// Legacy single-catalog mode: wrap the static catalog in a
+		// constant callback so the fire loop is shape-stable regardless
+		// of whether per-type resolution is in use.
+		fixed := opts.Catalog
+		catalogFor = func(net.IP) *Catalog { return fixed }
+	}
 	s := &TrapScheduler{
 		byIP:         make(map[string]*trapHeapEntry),
 		devices:      make(map[string]trapFirer),
-		catalog:      opts.Catalog,
+		catalogFor:   catalogFor,
 		meanInterval: opts.MeanInterval,
 		wake:         make(chan struct{}, 1),
 		stopCh:       make(chan struct{}),
@@ -283,8 +303,22 @@ func (s *TrapScheduler) Run(ctx context.Context) {
 		heap.Push(&s.heap, entry)
 		s.byIP[key] = entry
 
-		// Pick a catalog entry under the lock (rnd is not concurrent-safe).
-		trapEntry := s.catalog.Pick(s.rnd)
+		// Snapshot IP under the lock so we can release before calling
+		// the manager callback (which takes sm.mu.RLock). Holding s.mu
+		// across the callback creates an A→B/B→A lock-order hazard with
+		// any code path that later takes sm.mu.Lock and then touches the
+		// scheduler; decoupling removes the invariant's fragility.
+		deviceIP := entry.deviceIP
+		s.mu.Unlock()
+
+		cat := s.catalogFor(deviceIP)
+
+		// Pick requires the lock because rnd is not concurrent-safe.
+		s.mu.Lock()
+		var trapEntry *CatalogEntry
+		if cat != nil {
+			trapEntry = cat.Pick(s.rnd)
+		}
 		s.mu.Unlock()
 
 		if trapEntry != nil {

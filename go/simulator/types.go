@@ -158,6 +158,11 @@ type SimulatorManager struct {
 	// resource files would both pass the `sm.devices[deviceID]` lookup (the
 	// IDs differ by slug) and race to bind the same TUN and SNMP/SSH ports.
 	deviceIPs       map[string]struct{}
+	// deviceTypesByIP maps device IP → type slug. Populated in AddDevice /
+	// per-device construction paths so the trap and syslog `CatalogFor(ip)`
+	// hot paths can resolve device type in O(1). Kept in sync with `devices`
+	// and `deviceIPs`; entries are removed on device deletion.
+	deviceTypesByIP map[string]string
 	currentIP       net.IP
 	nextTunIndex    int
 	deviceResources *DeviceResources
@@ -207,8 +212,14 @@ type SimulatorManager struct {
 
 	// SNMP trap export state (nil/zero when disabled; set by StartTrapExport).
 	// See trap_manager.go for lifecycle and trap_exporter.go for per-device state.
+	//
+	// trapCatalogsByType is the per-device-type overlay map populated at
+	// startup. Key `_universal` holds the universal catalog; other keys are
+	// device-type slugs (e.g., "cisco_ios"). `trapCatalog` remains as a
+	// legacy alias for the fallback, preserved for test compatibility.
 	trapActive          atomic.Bool
 	trapCatalog         *Catalog
+	trapCatalogsByType  map[string]*Catalog
 	trapScheduler       *TrapScheduler
 	trapEncoder         TrapEncoder
 	trapLimiter         *rate.Limiter // shared global cap (nil = unlimited)
@@ -226,8 +237,11 @@ type SimulatorManager struct {
 
 	// UDP syslog export state (nil/zero when disabled; set by StartSyslogExport).
 	// See syslog_manager.go for lifecycle and syslog_exporter.go for per-device state.
+	//
+	// syslogCatalogsByType mirrors trapCatalogsByType for the syslog side.
 	syslogActive          atomic.Bool
 	syslogCatalog         *SyslogCatalog
+	syslogCatalogsByType  map[string]*SyslogCatalog
 	syslogScheduler       *SyslogScheduler
 	syslogEncoder         SyslogEncoder
 	syslogLimiter         *rate.Limiter // independent of trap's limiter (design.md §D9)
