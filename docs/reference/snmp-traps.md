@@ -36,8 +36,12 @@ confidential data.
 - **Embedded catalog** loaded via `go:embed` from
   `resources/_common/traps.json` at startup — no filesystem dependency
   for the out-of-box experience. `-trap-catalog <path>` replaces the
-  embedded default with a user-supplied JSON file (complete override,
-  not merge).
+  entire catalog surface (universal + per-type overlays) with a single
+  user-supplied JSON file.
+- **Per-device-type catalog overlays** loaded from
+  `resources/<slug>/traps.json` when present. Each device of type
+  `<slug>` fires from the merged catalog (universal + per-type).
+  See [Per-type catalog overlays](#per-type-catalog-overlays).
 - **Global rate limiter** (`golang.org/x/time/rate`) gates both fresh
   fires and INFORM retransmissions so a collector outage cannot amplify
   wire traffic past the operator-configured ceiling.
@@ -76,9 +80,19 @@ that list either reserved OID:
 |----------|-----|------|--------|
 | 1 | `1.3.6.1.2.1.1.3.0` (`sysUpTime.0`) | TimeTicks (`0x43`) | Device uptime in 1/100-second ticks |
 | 2 | `1.3.6.1.6.3.1.1.4.1.0` (`snmpTrapOID.0`) | OID (`0x06`) | Catalog entry's `snmpTrapOID` |
+| 3 (optional) | `1.3.6.1.6.3.1.1.4.3.0` (`snmpTrapEnterprise.0`) | OID (`0x06`) | Catalog entry's `snmpTrapEnterprise` field, when set |
 
-Everything after position 2 is the catalog entry's body varbinds with
-templates resolved to concrete values.
+Positions 1 and 2 are unconditional per RFC 3416 §4.2.6. Position 3 is
+emitted only when the catalog entry declares a non-empty
+`snmpTrapEnterprise` field — per SNMPv2-MIB §10 this additional-info
+varbind aids v1↔v2c cross-compatibility on collectors that expect the
+enterprise OID, and RFC 3584 §4.1 pins the positional ordering. All
+three reserved OIDs (`sysUpTime.0`, `snmpTrapOID.0`,
+`snmpTrapEnterprise.0`) are rejected when they appear as body varbind
+OIDs — the encoder emits them automatically.
+
+Everything after the auto-prepended varbinds is the catalog entry's
+body varbinds with templates resolved to concrete values.
 
 ### INFORM acknowledgement
 
@@ -116,6 +130,7 @@ Top-level object:
 | Field | Type | Required | Meaning |
 |-------|------|----------|---------|
 | `traps` | array | yes | List of catalog entries. Must contain at least one. |
+| `extends` | bool | no (default `true`) | **Per-type overlays only.** Controls whether the per-type catalog merges on top of the universal (`true`) or fully replaces it for devices of that type (`false`). Ignored on the universal catalog itself. |
 
 Per-entry object:
 
@@ -123,8 +138,9 @@ Per-entry object:
 |-------|------|----------|---------|
 | `name` | string | yes | Unique within the catalog. Used by the HTTP fire-on-demand endpoint and for log attribution. |
 | `snmpTrapOID` | string | yes | Dotted-decimal OID. Becomes the value of the auto-prepended `snmpTrapOID.0` varbind. |
+| `snmpTrapEnterprise` | string | no | Dotted-decimal OID for the optional `snmpTrapEnterprise.0` varbind. When set, the encoder emits a third prepended varbind after `snmpTrapOID.0` and before body varbinds. Useful for v1↔v2c proxy compatibility (RFC 3584 §4.1); conventionally the MIB module root. |
 | `weight` | integer | no (default `1`) | Relative weight for weighted-random selection by the scheduler. Zero means omit the entry from scheduled firing (still reachable via the HTTP endpoint). |
-| `varbinds` | array | yes (may be empty) | Body varbinds following the two auto-prepended ones. |
+| `varbinds` | array | yes (may be empty) | Body varbinds following the auto-prepended ones. |
 
 Per-varbind object:
 
@@ -152,20 +168,59 @@ exercising the other three types.
 
 ### Template vocabulary
 
-Both `oid` and `value` fields are evaluated as Go `text/template` strings
-per fire. The current vocabulary (see `go/simulator/trap_catalog.go` for
-the ground truth) is restricted to four fields:
+Both `oid` and `value` fields are evaluated as Go `text/template`
+strings per fire. The vocabulary is **unified with the syslog
+subsystem** — the same nine fields work on both sides:
 
 | Field | Evaluation |
 |-------|-----------|
 | `{{.IfIndex}}` | Random ifIndex drawn from the device's simulated interface set at fire time |
+| `{{.IfName}}` | `ifDescr.<IfIndex>` live lookup from the device's SNMP OID table; falls back to synthesised `GigabitEthernet0/<N>` on miss |
 | `{{.Uptime}}` | Device uptime in 1/100-second ticks |
 | `{{.Now}}` | Unix epoch seconds |
 | `{{.DeviceIP}}` | Dotted-quad IPv4 of the device |
+| `{{.SysName}}` | Device's `sysName.0` value (captured at construction) |
+| `{{.Model}}` | Human-readable model string derived from device-type slug (e.g., `cisco_ios` → `Cisco IOS`) |
+| `{{.Serial}}` | Deterministic `SN` + 8-hex-digit serial synthesised from the device's IPv4 |
+| `{{.ChassisID}}` | Deterministic locally-administered MAC-style chassis ID synthesised from the device's IPv4 (`02:42:xx:xx:xx:xx`) |
 
 References to any other field are rejected at catalog load — the
-simulator refuses to start rather than silently emitting a trap with an
-empty OID component.
+simulator refuses to start rather than silently emitting a trap with
+an empty OID component. Class 2 random-per-fire fields (`PeerIP`,
+`User`, `SourceIP`, `RuleName`, `NeighborRouterID`, `PeerAS`) are
+explicitly unsupported and tracked as follow-up work.
+
+## Per-type catalog overlays
+
+Devices can ship vendor-flavoured trap content via per-type JSON files
+at `resources/<slug>/traps.json`. When a per-type file exists, the
+simulator merges it with the universal catalog using **name-based
+overlay semantics**:
+
+1. Entries whose names are unique to the per-type file are **added**.
+2. Entries whose names match a universal entry **override** the
+   universal entry for devices of that type.
+3. Universal entries with no matching per-type name **carry through**.
+
+Set `"extends": false` at the top of the per-type file for a pure
+replacement. Weights are recomputed over the merged entry set after
+overlay — operators tuning the distribution should check
+`GET /api/v1/traps/status` → `catalogs_by_type` for the resulting
+entry counts.
+
+### Shipped vendor catalogs
+
+| Slug | Count | Notable entries |
+|------|-------|-----------------|
+| `cisco_ios` | 7 Cisco-MIB entries (merged total 12) | `ciscoConfigManEvent`, `ciscoEnvMonSupplyStatusChangeNotif`, `ciscoEnvMonTemperatureNotification`, `cefcModuleStatusChange`, `cefcFanTrayStatusChangeNotif`, `ciscoEntSensorThresholdNotification`, `ciscoFlashDeviceChangeTrap`. All with `snmpTrapEnterprise` set to `1.3.6.1.4.1.9.9.<mib-root>`. |
+| `juniper_mx240` | 7 JUNIPER-MIB entries (merged total 12) | `jnxPowerSupplyFailure`, `jnxFanFailure`, `jnxOverTemperature`, `jnxFruRemoval`, `jnxFruInsertion`, `jnxFruPowerOff`, `jnxFruFailed` (all `jnxChassisTraps` family). `snmpTrapEnterprise` = `1.3.6.1.4.1.2636` on all entries. |
+
+Other cisco_* slugs (`cisco_catalyst_9500`, `cisco_crs_x`,
+`cisco_nexus_9500`, `asr9k`), `juniper_mx960`, Arista, Linux, and
+Palo Alto fall back to the universal catalog — their realistic
+content depends on Class 2 random fields deferred to a follow-up.
+Family-catalog concept (one catalog shared by all `cisco_*` slugs) is
+also a follow-up refactor.
 
 ## HTTP endpoints
 
@@ -192,9 +247,9 @@ Responses:
 | Status | Body | When |
 |--------|------|------|
 | `202 Accepted` | `{"requestId": <uint32>}` | Success; the trap has been enqueued. For INFORM mode the `requestId` is the INFORM PDU's `request-id` — correlate with `/api/v1/traps/status` to watch its lifecycle. |
-| `400 Bad Request` | `{"success": false, "message": "..."}` | Malformed JSON body, missing/empty `name` field, or unknown catalog entry name. |
+| `400 Bad Request` | `{"error": "...", "catalog": "<slug>", "availableEntries": [...]}` | Unknown catalog entry for the device. The enriched body tells the caller which catalog the device resolved to (`cisco_ios`, `_universal`, etc.) and lists its entries alphabetically so a scripted caller can self-service when it targeted the wrong vendor. For malformed JSON or missing `name`, the legacy envelope form `{"success": false, "message": "..."}` applies. |
 | `404 Not Found` | `{"success": false, "message": "..."}` | Unknown device IP. |
-| `500 Internal Server Error` | `{"success": false, "message": "..."}` | `Fire` failed for a non-lookup reason — template resolve error or write failure. Logs on the simulator side carry the detail. |
+| `500 Internal Server Error` | `{"success": false, "message": "..."}` | `Fire` failed for a non-lookup reason — template resolve error, catalog resolution returned nil despite feature active (pathological manager state), or write failure. Logs on the simulator side carry the detail. |
 | `503 Service Unavailable` | `{"success": false, "message": "..."}` | Trap export is disabled (`-trap-collector` not set). |
 
 The endpoint is fire-and-forget — it does **not** block waiting for an
@@ -221,9 +276,22 @@ response shape):
   "informs_failed": 33,
   "informs_dropped": 0,
   "rate_limiter_tokens_available": 94,
-  "devices_exporting": 100
+  "devices_exporting": 100,
+  "catalogs_by_type": {
+    "_universal":    {"entries": 5,  "source": "embedded"},
+    "cisco_ios":     {"entries": 12, "source": "file:resources/cisco_ios/traps.json"},
+    "juniper_mx240": {"entries": 12, "source": "file:resources/juniper_mx240/traps.json"}
+  }
 }
 ```
+
+`catalogs_by_type` is present whenever the feature is enabled. Keys
+are device-type slugs with the reserved `_universal` entry for the
+fallback catalog. Values include the merged entry count and the
+catalog's provenance: `"embedded"` (compiled-in universal),
+`"file:<path>"` (per-type overlay on disk), or
+`"override:<path>"` when `-trap-catalog` was supplied (in which case
+`catalogs_by_type` contains a single `_universal` entry).
 
 When enabled in TRAP mode, the four `informs_*` fields are omitted (no
 INFORM state to report). When disabled the response is:

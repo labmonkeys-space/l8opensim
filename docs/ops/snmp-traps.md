@@ -129,6 +129,13 @@ device IP as the sender and an OID from the universal catalog
 (`linkDown` / `linkUp` dominate; `coldStart` / `warmStart` /
 `authenticationFailure` appear less often).
 
+For vendor-flavoured content (e.g., Cisco `ciscoConfigManEvent` or
+Juniper `jnxPowerSupplyFailure`), select a device type with a per-type
+overlay — see
+[SNMP trap reference → Per-type catalog overlays](../reference/snmp-traps.md#per-type-catalog-overlays).
+`cisco_ios` devices fire from 12 merged entries (universal 5 + 7 Cisco),
+`juniper_mx240` devices fire from a comparable 12-entry Juniper set.
+
 If you need it sooner on demand:
 
 ```bash
@@ -158,7 +165,8 @@ conflicts) see [Troubleshooting](troubleshooting.md).
 
 ## Related
 
-- [SNMP trap reference](../reference/snmp-traps.md) — wire format, catalog JSON, HTTP endpoints
+- [SNMP trap reference](../reference/snmp-traps.md) — wire format, catalog JSON, HTTP endpoints, per-type catalog overlays
 - [CLI flags → SNMP trap / INFORM export flags](../reference/cli-flags.md#snmp-trap--inform-export-flags)
+- [UDP syslog export (operator guide)](syslog-export.md) — sibling feature; shares overlay loader and template vocabulary
 - [Flow export (operator guide)](flow-export.md) — shared `opensim` namespace plumbing
 - [Web API → Fire a trap on demand](../reference/web-api.md#fire-a-trap-on-demand)
