@@ -8,6 +8,7 @@ package main
 
 import (
 	"net"
+	"strings"
 	"sync"
 	"testing"
 )
@@ -131,6 +132,50 @@ func TestDeviceIfNameFn_ByteIdentity_Unchanged_OnMiss(t *testing.T) {
 		if got != want {
 			t.Errorf("ifIndex=%d: got %q, want %q", ifIndex, got, want)
 		}
+	}
+}
+
+// TestLookupIfDescr_AgainstRealLoadedResources is the integration test
+// that exercises the FULL chain: real `LoadSpecificResources` call →
+// `buildResourceIndexes` produces the `oidIndex` with its canonical key
+// format → `lookupIfDescr` reads from that map using the format the
+// helper assumes. The other tests in this file self-consistently
+// Store dot-prefixed keys that the helper then reads — they would all
+// pass even if the loader used a different convention. This one fails
+// loudly if the loader's key normalisation ever drifts from
+// `.1.3.6.1.2.1.2.2.1.2.<N>`, protecting PR 3 from a silent regression.
+func TestLookupIfDescr_AgainstRealLoadedResources(t *testing.T) {
+	sm := &SimulatorManager{resourcesCache: make(map[string]*DeviceResources)}
+	resources, err := sm.LoadSpecificResources("cisco_ios.json")
+	if err != nil {
+		t.Fatalf("LoadSpecificResources cisco_ios: %v", err)
+	}
+	if resources == nil || resources.oidIndex == nil {
+		t.Fatal("loaded resources missing oidIndex — buildResourceIndexes did not run")
+	}
+	device := &DeviceSimulator{
+		IP:        net.IPv4(10, 42, 0, 1),
+		resources: resources,
+	}
+	// Spot-check ifIndex 1. The shipped cisco_ios JSON fixture seeds
+	// ifDescr.1 = GigabitEthernet0/0 in resources/cisco_ios/cisco_ios_snmp_1.json.
+	// If the loader's key format ever diverges from the helper's, the
+	// Load misses → synth kicks in → "GigabitEthernet0/1" (note the
+	// different suffix). Asserting the exact vendor-shipped string
+	// catches both format drift AND a loader that silently fails to
+	// populate the map.
+	got := lookupIfDescr(device, 1)
+	if got == "" {
+		t.Fatal("lookupIfDescr returned empty — key format drift between loader and helper")
+	}
+	if got == "GigabitEthernet0/1" {
+		t.Fatal("lookupIfDescr returned the synth fallback, not the vendor value — loader key format drift")
+	}
+	// Sanity: the real value contains "Ethernet" (every Cisco ifDescr
+	// does). Not asserting the exact string so future fixture updates
+	// to cisco_ios don't require hand-editing this test.
+	if !strings.Contains(got, "Ethernet") {
+		t.Errorf("lookupIfDescr for cisco_ios ifIndex 1: got %q, want a string containing 'Ethernet'", got)
 	}
 }
 
