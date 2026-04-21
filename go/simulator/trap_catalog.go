@@ -572,7 +572,7 @@ func validateTemplateFields(s, entryName string, vbIdx int, which string) error 
 		}
 		if _, ok := allowedTemplateFields[field]; !ok {
 			return fmt.Errorf("trap catalog: entry %q varbind %d %s: unknown template field "+
-				"%q (allowed: IfIndex, Uptime, Now, DeviceIP)",
+				"%q (allowed: IfIndex, IfName, Uptime, Now, DeviceIP, SysName, Model, Serial, ChassisID)",
 				entryName, vbIdx, which, field)
 		}
 		rest = rest[open+close+2:]

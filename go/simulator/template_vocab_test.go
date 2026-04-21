@@ -175,6 +175,43 @@ func TestCatalogEntry_Resolve_NewFieldOverrides(t *testing.T) {
 	}
 }
 
+// TestSyslogCatalogEntry_Resolve_NewFieldsFromCtx is the symmetric
+// syslog end-to-end test for the trap-side `TestCatalogEntry_Resolve_NewFieldsFromCtx`.
+// Covers Class 1 field resolution through the full syslog load →
+// Resolve → rendered message path so future regressions in either
+// vocabulary surface equally on both sides.
+func TestSyslogCatalogEntry_Resolve_NewFieldsFromCtx(t *testing.T) {
+	body := `{"entries":[{"name":"all","facility":"local7","severity":"notice","appName":"T",
+		"template":"model={{.Model}} sn={{.Serial}} cid={{.ChassisID}} host={{.SysName}} ifn={{.IfName}}"}]}`
+	path := filepath.Join(t.TempDir(), "s.json")
+	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cat, err := LoadSyslogCatalogFromFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := SyslogTemplateCtx{
+		DeviceIP:  "10.42.0.1",
+		SysName:   "rtr-dc-01",
+		IfIndex:   3,
+		IfName:    "TenGigE0/0/0/3",
+		Now:       1700000000,
+		Uptime:    100,
+		Model:     "Cisco IOS",
+		Serial:    "SN0A2A0001",
+		ChassisID: "02:42:0a:2a:00:01",
+	}
+	resolved, err := cat.Entries[0].Resolve(ctx, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "model=Cisco IOS sn=SN0A2A0001 cid=02:42:0a:2a:00:01 host=rtr-dc-01 ifn=TenGigE0/0/0/3"
+	if resolved.Message != want {
+		t.Errorf("resolved message:\n got %q\nwant %q", resolved.Message, want)
+	}
+}
+
 // BenchmarkTemplateResolve_NineFieldVocab exercises the per-fire
 // Resolve path with the full nine-field vocabulary so a regression
 // inflating the render cost (e.g., dynamic reflection, string

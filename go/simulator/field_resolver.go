@@ -135,6 +135,7 @@ var deviceTypeLabels = map[string]string{
 	"nvidia_hgx_h200":           "NVIDIA HGX H200",
 	"palo_alto_pa3220":          "Palo Alto PA-3220",
 	"pure_storage_flasharray":   "Pure Storage FlashArray",
+	"sonicwall_nsa6700":         "SonicWall NSA 6700",
 }
 
 // modelLabelForSlug returns the human-readable model string for a
@@ -159,6 +160,11 @@ func modelLabelForSlug(slug string) string {
 	}
 	return strings.Join(words, " ")
 }
+
+// Compile-time check: SimulatorManager satisfies FieldResolver. If a
+// method is renamed or removed the build breaks here rather than
+// silently at a future call site.
+var _ FieldResolver = (*SimulatorManager)(nil)
 
 // SimulatorManager implements FieldResolver. Methods are safe for
 // concurrent use — they read device state under `sm.mu.RLock` and call

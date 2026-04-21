@@ -607,7 +607,7 @@ func validateSyslogTemplateFields(s, entryName, which string) error {
 		}
 		if _, ok := allowedSyslogTemplateFields[field]; !ok {
 			return fmt.Errorf("syslog catalog: entry %q %s: unknown template field %q "+
-				"(allowed: DeviceIP, SysName, IfIndex, IfName, Now, Uptime)",
+				"(allowed: DeviceIP, SysName, IfIndex, IfName, Now, Uptime, Model, Serial, ChassisID)",
 				entryName, which, field)
 		}
 		rest = rest[open+closeIdx+2:]
