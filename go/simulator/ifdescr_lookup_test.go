@@ -8,6 +8,7 @@ package main
 
 import (
 	"net"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -128,7 +129,7 @@ func TestDeviceIfNameFn_ByteIdentity_Unchanged_OnMiss(t *testing.T) {
 	fn := deviceIfNameFn(device)
 	for _, ifIndex := range []int{1, 2, 3, 10, 100, 65535} {
 		got := fn(ifIndex)
-		want := "GigabitEthernet0/" + itoaSimple(ifIndex)
+		want := "GigabitEthernet0/" + strconv.Itoa(ifIndex)
 		if got != want {
 			t.Errorf("ifIndex=%d: got %q, want %q", ifIndex, got, want)
 		}
@@ -179,26 +180,3 @@ func TestLookupIfDescr_AgainstRealLoadedResources(t *testing.T) {
 	}
 }
 
-// itoaSimple avoids pulling strconv in a test that otherwise only
-// needs a toy conversion.
-func itoaSimple(n int) string {
-	if n == 0 {
-		return "0"
-	}
-	neg := n < 0
-	if neg {
-		n = -n
-	}
-	var buf [20]byte
-	i := len(buf)
-	for n > 0 {
-		i--
-		buf[i] = byte('0' + n%10)
-		n /= 10
-	}
-	if neg {
-		i--
-		buf[i] = '-'
-	}
-	return string(buf[i:])
-}
