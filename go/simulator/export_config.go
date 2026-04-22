@@ -13,6 +13,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -26,12 +27,31 @@ import (
 //
 // Validation and default-fill live here. The actual wiring to exporter
 // lifecycles lands in phases 3–5 of the `per-device-export-config` change.
+//
+// Integer / duration fields that default to non-zero values treat the Go
+// zero value as "use default" — there is no way to express "explicitly
+// zero" for `InformRetries`, `TickInterval`, `ActiveTimeout`,
+// `InactiveTimeout`, `Interval`, or `InformTimeout`. Review decision D2.a
+// (per-device-export-config change) accepted this limitation; see
+// `design.md` for the pointer-field alternative if demand emerges.
+//
+// Caller contract:
+//   1. Deserialize JSON → zero-filled struct
+//   2. Call `ApplyDefaults()` to fill zero-valued fields with the
+//      simulator-wide defaults historically supplied by CLI flags
+//   3. Call `Validate()` to check shape, resolve collector, and canonicalise
+//      string enums (Protocol / Mode / Format)
+// Skipping step 2 causes step 3 to reject empty-string Mode/Format with a
+// hint to call ApplyDefaults first.
 
 // jsonDuration is a time.Duration wrapper that marshals/unmarshals as a
 // Go duration string ("10s", "5m", "1m30s") rather than a nanosecond
 // integer. Operators write REST bodies by hand; integer nanoseconds are
 // unreadable and conflict with the CLI flags that historically accepted
 // seconds-as-integers.
+//
+// JSON `null` is accepted and leaves the receiver at zero (so the field
+// can later be filled by ApplyDefaults).
 type jsonDuration time.Duration
 
 func (d jsonDuration) MarshalJSON() ([]byte, error) {
@@ -39,6 +59,10 @@ func (d jsonDuration) MarshalJSON() ([]byte, error) {
 }
 
 func (d *jsonDuration) UnmarshalJSON(b []byte) error {
+	if string(b) == "null" {
+		// Leave zero; ApplyDefaults fills.
+		return nil
+	}
 	var s string
 	if err := json.Unmarshal(b, &s); err != nil {
 		return fmt.Errorf("duration must be a JSON string like \"10s\": %w", err)
@@ -52,6 +76,9 @@ func (d *jsonDuration) UnmarshalJSON(b []byte) error {
 }
 
 // DeviceFlowConfig is the per-device flow-export configuration.
+//
+// Zero values on `TickInterval` / `ActiveTimeout` / `InactiveTimeout` are
+// treated as "use default" by `ApplyDefaults` (review decision D2.a).
 type DeviceFlowConfig struct {
 	Collector       string       `json:"collector"`
 	Protocol        string       `json:"protocol,omitempty"`
@@ -61,6 +88,9 @@ type DeviceFlowConfig struct {
 }
 
 // DeviceTrapConfig is the per-device SNMP trap/INFORM configuration.
+//
+// Zero values on `InformRetries` / `Interval` / `InformTimeout` are
+// treated as "use default" by `ApplyDefaults` (review decision D2.a).
 type DeviceTrapConfig struct {
 	Collector     string       `json:"collector"`
 	Mode          string       `json:"mode,omitempty"`
@@ -71,14 +101,18 @@ type DeviceTrapConfig struct {
 }
 
 // DeviceSyslogConfig is the per-device UDP syslog configuration.
+//
+// Zero value on `Interval` is treated as "use default" by `ApplyDefaults`
+// (review decision D2.a).
 type DeviceSyslogConfig struct {
 	Collector string       `json:"collector"`
 	Format    string       `json:"format,omitempty"`
 	Interval  jsonDuration `json:"interval,omitempty"`
 }
 
-// Defaults applied by ApplyDefaults. Kept as named constants so PR2/3/4
-// can reference the same values when constructing CLI-seed configs.
+// Defaults applied by ApplyDefaults. Sourced from `simulator.go` flag
+// defaults (review decision D1.a — simulator.go is authoritative over
+// CLAUDE.md documentation drift).
 const (
 	defaultFlowProtocol        = "netflow9"
 	defaultFlowTickInterval    = 5 * time.Second
@@ -96,9 +130,9 @@ const (
 )
 
 // ApplyDefaults fills in zero-valued fields with the simulator-wide
-// defaults that historically came from the CLI flags. Safe to call on a
-// nil receiver (no-op). Call this before Validate so the normalised,
-// defaulted struct is what validation sees.
+// defaults. Safe to call on a nil receiver (no-op). Callers MUST invoke
+// ApplyDefaults before Validate — Validate rejects empty Mode / Format
+// with a hint to call ApplyDefaults first.
 func (c *DeviceFlowConfig) ApplyDefaults() {
 	if c == nil {
 		return
@@ -117,17 +151,32 @@ func (c *DeviceFlowConfig) ApplyDefaults() {
 	}
 }
 
-// Validate checks the config and canonicalises Protocol to its stable form
-// (e.g. "nf9"/"NetFlow9" → "netflow9"). Safe to call on a nil receiver
-// (no-op). Callers SHOULD invoke ApplyDefaults first.
+// Validate checks the config and canonicalises Protocol to its stable
+// form (e.g. "nf9" → "netflow9"). Range checks run before canonicalisation
+// so an error path does not leave partial mutations on the struct.
+// Safe on nil.
 func (c *DeviceFlowConfig) Validate() error {
 	if c == nil {
 		return nil
 	}
+	// Range checks first so canonicalisation never runs on invalid input.
+	if time.Duration(c.TickInterval) < 0 {
+		return fmt.Errorf("flow: tick_interval must be >= 0, got %s", time.Duration(c.TickInterval))
+	}
+	if time.Duration(c.ActiveTimeout) < 0 {
+		return fmt.Errorf("flow: active_timeout must be >= 0, got %s", time.Duration(c.ActiveTimeout))
+	}
+	if time.Duration(c.InactiveTimeout) < 0 {
+		return fmt.Errorf("flow: inactive_timeout must be >= 0, got %s", time.Duration(c.InactiveTimeout))
+	}
 	if err := validateCollector("flow", c.Collector); err != nil {
 		return err
 	}
-	switch strings.ToLower(strings.TrimSpace(c.Protocol)) {
+	lowered := strings.ToLower(strings.TrimSpace(c.Protocol))
+	if !isASCII(lowered) {
+		return fmt.Errorf("flow: protocol must be ASCII, got %q", c.Protocol)
+	}
+	switch lowered {
 	case "netflow9", "nf9", "":
 		c.Protocol = "netflow9"
 	case "ipfix", "ipfix10":
@@ -137,16 +186,7 @@ func (c *DeviceFlowConfig) Validate() error {
 	case "sflow", "sflow5":
 		c.Protocol = "sflow"
 	default:
-		return fmt.Errorf("flow: invalid protocol %q (valid: netflow9, ipfix, netflow5, sflow)", c.Protocol)
-	}
-	if time.Duration(c.TickInterval) < 0 {
-		return fmt.Errorf("flow: tick_interval must be >= 0, got %s", time.Duration(c.TickInterval))
-	}
-	if time.Duration(c.ActiveTimeout) < 0 {
-		return fmt.Errorf("flow: active_timeout must be >= 0, got %s", time.Duration(c.ActiveTimeout))
-	}
-	if time.Duration(c.InactiveTimeout) < 0 {
-		return fmt.Errorf("flow: inactive_timeout must be >= 0, got %s", time.Duration(c.InactiveTimeout))
+		return fmt.Errorf("flow: invalid protocol %q (valid: netflow9, ipfix, netflow5, sflow)", lowered)
 	}
 	return nil
 }
@@ -173,15 +213,29 @@ func (c *DeviceTrapConfig) ApplyDefaults() {
 	}
 }
 
-// Validate checks the config and canonicalises Mode. Uses ParseTrapMode
-// (defined in trap_manager.go) for parity with the CLI-side accepted
-// spelling rules. Safe on nil.
+// Validate checks the config and canonicalises Mode. Rejects empty Mode
+// with a hint to call ApplyDefaults first (review decision D3.b —
+// symmetric with `DeviceSyslogConfig.Validate` rejecting empty Format).
+// Range checks run before canonicalisation. Safe on nil.
 func (c *DeviceTrapConfig) Validate() error {
 	if c == nil {
 		return nil
 	}
+	// Range checks first.
+	if c.InformRetries < 0 {
+		return fmt.Errorf("traps: inform_retries must be >= 0, got %d", c.InformRetries)
+	}
+	if time.Duration(c.Interval) < 0 {
+		return fmt.Errorf("traps: interval must be >= 0, got %s", time.Duration(c.Interval))
+	}
+	if time.Duration(c.InformTimeout) < 0 {
+		return fmt.Errorf("traps: inform_timeout must be >= 0, got %s", time.Duration(c.InformTimeout))
+	}
 	if err := validateCollector("traps", c.Collector); err != nil {
 		return err
+	}
+	if strings.TrimSpace(c.Mode) == "" {
+		return fmt.Errorf("traps: mode is required (caller must call ApplyDefaults() first)")
 	}
 	mode, err := ParseTrapMode(c.Mode)
 	if err != nil {
@@ -192,15 +246,6 @@ func (c *DeviceTrapConfig) Validate() error {
 		c.Mode = "trap"
 	case TrapModeInform:
 		c.Mode = "inform"
-	}
-	if c.InformRetries < 0 {
-		return fmt.Errorf("traps: inform_retries must be >= 0, got %d", c.InformRetries)
-	}
-	if time.Duration(c.Interval) < 0 {
-		return fmt.Errorf("traps: interval must be >= 0, got %s", time.Duration(c.Interval))
-	}
-	if time.Duration(c.InformTimeout) < 0 {
-		return fmt.Errorf("traps: inform_timeout must be >= 0, got %s", time.Duration(c.InformTimeout))
 	}
 	return nil
 }
@@ -218,39 +263,72 @@ func (c *DeviceSyslogConfig) ApplyDefaults() {
 	}
 }
 
-// Validate checks the config and canonicalises Format via
-// ParseSyslogFormat (defined in syslog_wire.go). Safe on nil.
+// Validate checks the config and canonicalises Format. Rejects empty
+// Format with a hint to call ApplyDefaults first. Range checks run
+// before canonicalisation. Safe on nil.
 func (c *DeviceSyslogConfig) Validate() error {
 	if c == nil {
 		return nil
 	}
+	if time.Duration(c.Interval) < 0 {
+		return fmt.Errorf("syslog: interval must be >= 0, got %s", time.Duration(c.Interval))
+	}
 	if err := validateCollector("syslog", c.Collector); err != nil {
 		return err
+	}
+	if strings.TrimSpace(c.Format) == "" {
+		return fmt.Errorf("syslog: format is required (caller must call ApplyDefaults() first)")
 	}
 	fm, err := ParseSyslogFormat(c.Format)
 	if err != nil {
 		return fmt.Errorf("syslog: %w", err)
 	}
 	c.Format = string(fm)
-	if time.Duration(c.Interval) < 0 {
-		return fmt.Errorf("syslog: interval must be >= 0, got %s", time.Duration(c.Interval))
+	return nil
+}
+
+// validateCollector is the shared host:port validation used by all three
+// export configs. Rejects empty / whitespace-only inputs, requires a
+// port in the 1–65535 range, and resolves the host over both IPv4 and
+// IPv6 (use "udp" network, not "udp4"). Host resolution remains
+// synchronous here; deferring to exporter dial time (or adding a
+// `context.WithTimeout`) is filed for phase 3+ when the HTTP handler
+// actually invokes this function.
+func validateCollector(subsystem, collector string) error {
+	if strings.TrimSpace(collector) == "" {
+		return fmt.Errorf("%s: collector is required", subsystem)
+	}
+	host, portStr, err := net.SplitHostPort(collector)
+	if err != nil {
+		return fmt.Errorf("%s: collector %q must be host:port: %w", subsystem, collector, err)
+	}
+	if strings.TrimSpace(host) == "" {
+		return fmt.Errorf("%s: collector %q has empty host", subsystem, collector)
+	}
+	port, err := strconv.Atoi(portStr)
+	if err != nil {
+		return fmt.Errorf("%s: collector %q has invalid port %q: %w", subsystem, collector, portStr, err)
+	}
+	if port <= 0 || port > 65535 {
+		return fmt.Errorf("%s: collector %q port must be 1–65535, got %d", subsystem, collector, port)
+	}
+	if _, err := net.ResolveUDPAddr("udp", collector); err != nil {
+		return fmt.Errorf("%s: collector %q: %w", subsystem, collector, err)
 	}
 	return nil
 }
 
-// validateCollector is the shared host:port + DNS-resolution check used
-// by all three export configs. Empty string is rejected; any
-// net.ResolveUDPAddr error (bad syntax, unresolvable host, unknown port)
-// is wrapped with the subsystem name for easier diagnosis at the REST
-// boundary.
-func validateCollector(subsystem, collector string) error {
-	if collector == "" {
-		return fmt.Errorf("%s: collector is required", subsystem)
+// isASCII reports whether every byte is < 0x80. Used as an early
+// rejection for non-ASCII input to the Protocol switch so Unicode
+// casing quirks (Turkish dotted I, fullwidth letters, etc.) surface
+// as a clean "must be ASCII" error rather than slipping through.
+func isASCII(s string) bool {
+	for i := 0; i < len(s); i++ {
+		if s[i] >= 0x80 {
+			return false
+		}
 	}
-	if _, err := net.ResolveUDPAddr("udp4", collector); err != nil {
-		return fmt.Errorf("%s: collector %q: %w", subsystem, collector, err)
-	}
-	return nil
+	return true
 }
 
 // Compile-time safety: ensure jsonDuration satisfies the json

@@ -26,9 +26,9 @@ sudo ./simulator [flags]
 # Flow export flags (NetFlow v5 / v9 / IPFIX / sFlow v5)
 -flow-collector <host:port>       # Enable flow export to this UDP collector
 -flow-protocol <proto>            # netflow9 (default) | ipfix | netflow5 | sflow (alias: sflow5)
--flow-tick <duration>             # How often to emit flows (default: 10s)
--flow-active-timeout <duration>   # Active flow expiry timeout (default: 5m)
--flow-inactive-timeout <duration> # Inactive flow expiry timeout (default: 1m)
+-flow-tick-interval <duration>    # How often to emit flows (default: 5s)
+-flow-active-timeout <duration>   # Active flow expiry timeout (default: 30s)
+-flow-inactive-timeout <duration> # Inactive flow expiry timeout (default: 15s)
 -flow-template-interval <dur>     # Re-send template every N ticks (default: 10m; ignored under netflow5/sflow)
 -flow-source-per-device           # Bind per-device UDP socket so src IP = device IP (default: true)
 
