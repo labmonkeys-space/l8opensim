@@ -175,10 +175,10 @@ article h1, article h2, article h3, article h4 {
 .l8-tl__caret { width: 7px; height: 13px; background: var(--l8-accent); display: inline-block; vertical-align: middle; animation: l8-blink 1s steps(1) infinite; }
 @keyframes l8-blink { 50% { opacity: 0; } }
 
-.l8-copy { display: flex; align-items: center; gap: 8px; padding: 10px 12px; background: var(--l8-bg-2); border: 1px solid var(--l8-hair); border-radius: 2px; font-family: var(--ifm-font-family-monospace); font-size: 12px; margin-bottom: 8px; }
+.l8-copy { display: flex; align-items: flex-start; gap: 8px; padding: 10px 12px; background: var(--l8-bg-2); border: 1px solid var(--l8-hair); border-radius: 2px; font-family: var(--ifm-font-family-monospace); font-size: 12px; margin-bottom: 8px; }
 .l8-copy:last-child { margin-bottom: 0; }
-.l8-copy__prompt { color: var(--l8-accent); }
-.l8-copy__text { flex: 1; overflow-x: auto; white-space: nowrap; color: var(--l8-fg); background: transparent; border: none; padding: 0; }
+.l8-copy__prompt { color: var(--l8-accent); line-height: 1.5; }
+.l8-copy__text { flex: 1; overflow-x: auto; white-space: pre; color: var(--l8-fg); background: transparent; border: none; padding: 0; line-height: 1.5; }
 .l8-copy__btn { font-family: var(--ifm-font-family-monospace); font-size: 10px; text-transform: uppercase; letter-spacing: 0.08em; padding: 3px 8px; background: transparent; color: var(--l8-fg-mute); border: 1px solid var(--l8-hair); border-radius: 2px; cursor: pointer; }
 .l8-copy__btn:hover { color: var(--l8-accent); border-color: var(--l8-accent); }
 

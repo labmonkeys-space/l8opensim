@@ -165,7 +165,12 @@ export default function Landing(): JSX.Element {
               <Copyable text="docker pull ghcr.io/labmonkeys-space/l8opensim:latest" />
             </Panel>
             <Panel title="02 · run" meta="needs --cap-add=net_admin">
-              <Copyable text="docker run --rm -it --cap-add=NET_ADMIN --device=/dev/net/tun --network=host ghcr.io/labmonkeys-space/l8opensim:latest -auto-start-ip 10.0.0.1 -auto-count 100" />
+              <Copyable text={`docker run --rm -it \\
+  --cap-add=NET_ADMIN \\
+  --device=/dev/net/tun \\
+  --network=host \\
+  ghcr.io/labmonkeys-space/l8opensim:latest \\
+  -auto-start-ip 10.0.0.1 -auto-count 100`} />
             </Panel>
           </div>
         </section>
