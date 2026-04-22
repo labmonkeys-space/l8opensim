@@ -149,14 +149,14 @@ export default function Landing(): JSX.Element {
           <div className="l8-grid-3">
             <Panel title="01 · clone" meta="git">
               <Copyable text="git clone https://github.com/labmonkeys-space/l8opensim.git" />
-              <Copyable text="cd l8opensim/go/simulator" />
+              <Copyable text="cd l8opensim" />
             </Panel>
-            <Panel title="02 · build" meta="go 1.26+">
-              <Copyable text="go mod tidy" />
-              <Copyable text="go build -o simulator ." />
+            <Panel title="02 · build" meta="make · go 1.26+">
+              <Copyable text="make tidy" />
+              <Copyable text="make build" />
             </Panel>
             <Panel title="03 · run" meta="needs root">
-              <Copyable text="sudo ./simulator -auto-start-ip 10.0.0.1 -auto-count 100" />
+              <Copyable text="sudo ./go/simulator/simulator -auto-start-ip 10.0.0.1 -auto-count 100" />
             </Panel>
           </div>
           <div className="l8-sec__or"><span>or with docker</span></div>
