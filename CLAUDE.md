@@ -57,10 +57,6 @@ go test ./...
 
 # Run a single test
 go test ./tests/ -run TestDevices
-
-# Docker build (L8 integration)
-cd go/l8
-docker build --no-cache --platform=linux/amd64 -t saichler/opensim-web:latest .
 ```
 
 ## Architecture
@@ -72,8 +68,6 @@ docker build --no-cache --platform=linux/amd64 -t saichler/opensim-web:latest .
 | Path | Purpose |
 |------|---------|
 | `go/simulator/` | Core simulator — all device simulation logic |
-| `go/l8/` | Layer 8 vnet overlay + HTTPS web proxy (port 9095) |
-| `go/proxy/` | Reverse proxy from L8 frontend to simulator backend |
 | `go/tests/` | Integration tests |
 | `go/simulator/resources/` | 379 JSON files (28 device types) with SNMP/SSH/REST response data |
 

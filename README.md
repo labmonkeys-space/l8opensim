@@ -80,8 +80,7 @@ web UI, REST control plane.
 **Experimental** — sFlow v5 (synthesised from `FlowCache` records with a
 fixed `sampling_rate`; suitable for collector-plumbing validation, not
 link-utilisation benchmarking — see
-[Flow export reference → sFlow caveat](https://labmonkeys-space.github.io/l8opensim/reference/flow-export/#sflow-caveat)),
-and the optional Layer 8 (`go/l8/`) vnet overlay + HTTPS proxy.
+[Flow export reference → sFlow caveat](https://labmonkeys-space.github.io/l8opensim/reference/flow-export/#sflow-caveat)).
 
 **Tested scale** — up to 30,000 concurrent simulated devices on a single
 host. **Toolchain** — Go 1.26 or later; canonical version pinned in

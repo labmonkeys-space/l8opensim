@@ -73,8 +73,8 @@ When running under Docker or Kubernetes, pair the host tuning above with:
 
 - `--cap-add=NET_ADMIN` + `--device=/dev/net/tun` so the container can
   manage TUN / netns.
-- `hostNetwork: true` on the K8s StatefulSet (the bundled
-  `go/l8/opensim.yaml` already sets this).
+- `hostNetwork: true` on the K8s StatefulSet so per-device TUN IPs are
+  reachable from outside the pod.
 - A resource `limits.memory` at least `250Mi` for small fleets; budget
   `~1 KiB * device_count` plus a comfortable buffer.
 

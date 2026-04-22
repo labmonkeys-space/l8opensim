@@ -53,8 +53,6 @@ flowchart LR
 | Path | Purpose |
 |------|---------|
 | `go/simulator/` | Core simulator — all device simulation logic. |
-| `go/l8/` | Optional Layer 8 vnet overlay + HTTPS web proxy (port 9095). |
-| `go/proxy/` | Reverse proxy from the L8 frontend to the simulator backend. |
 | `go/tests/` | Integration tests. |
 | `go/simulator/resources/` | Per-device-type JSON resource files (SNMP / SSH / REST) across 28 device-type directories, plus the `worldcities/` datasets used for `sysLocation`. |
 
@@ -130,13 +128,8 @@ are merged at load time. See [Resource files](resource-files.md).
   namespace through the host's routing table (Docker-present hosts default
   `FORWARD` to `DROP`). The rule is removed in `NetNamespace.Close`.
 
-## Integration paths
+## Container image
 
-- **Layer 8 overlay** (`go/l8/`) — optional vnet mesh + HTTPS web proxy on
-  port 9095 for distributed deployment. Includes a Dockerfile and a K8s
-  StatefulSet manifest (`opensim.yaml`). `hostNetwork: true`, `/data`
-  hostPath volume.
-- **Container images** —
-  `ghcr.io/labmonkeys-space/l8opensim` is the simulator itself;
-  `saichler/opensim-web` is the L8 web frontend. Published on different
-  pipelines — see the project's CI workflow files.
+The simulator is published as `ghcr.io/labmonkeys-space/l8opensim` on
+push to `main` and on release tags — see the project's CI workflow
+files.

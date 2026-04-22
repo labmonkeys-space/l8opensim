@@ -1,7 +1,6 @@
 BINARY       := simulator
 BUILD_DIR    := go/simulator
 GO_DIR       := go
-IMAGE        := saichler/opensim-web:latest
 SIM_IMAGE    := ghcr.io/labmonkeys-space/l8opensim:latest
 # Space-separated list of -t tags for docker-push; override in CI with release tags.
 DOCKER_TAGS  ?= $(SIM_IMAGE)
@@ -17,7 +16,7 @@ NPM ?= npm
 
 UNAME_S := $(shell uname -s)
 
-.PHONY: all build run test tidy check-tidy dist clean docker docker-build docker-push docker-up docker-down help \
+.PHONY: all build run test tidy check-tidy dist clean docker-build docker-push docker-up docker-down help \
         check-go check-docker check-buildx check-linux check-node \
         docs-install docs-serve docs-build docs-clean
 
@@ -78,12 +77,6 @@ docker-up: check-docker
 ## docker-down: Stop and remove the simulator container
 docker-down: check-docker
 	docker compose down
-
-## docker: Build the L8 web Docker image (linux/amd64)
-docker: check-docker
-	@echo "Note: requires saichler/builder:latest and saichler/business-security:latest"
-	@echo "      to be available in your Docker registry. Pull them first if needed."
-	cd go/l8 && docker build --no-cache --platform=linux/amd64 -t $(IMAGE) .
 
 ## clean: Remove build artefacts (binary and dist/)
 clean:
