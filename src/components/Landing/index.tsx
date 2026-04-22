@@ -133,7 +133,7 @@ export default function Landing(): JSX.Element {
                 <Stat label="devices / host" value="30,000" unit="max" />
                 <Stat label="device types"   value="28"     unit="in 8 cat." />
                 <Stat label="mem / device"   value="~1"     unit="KB" />
-                <Stat label="alloc time"     value="12.4"   unit="s @ 30k" />
+                <Stat label="parallel workers" value="500"  unit="max" />
               </div>
             </div>
           </div>
