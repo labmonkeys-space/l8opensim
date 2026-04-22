@@ -26,6 +26,31 @@ import (
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
+// newTestFlowExporter wraps the production NewFlowExporter with dummy
+// collector/encoder/protocol defaults so pre-phase-3 test call sites keep
+// working after the constructor signature grew. Tests that exercise
+// specific wire formats mutate `fe.encoder` / `fe.collectorAddr` via
+// `tickWithEncoder` below.
+func newTestFlowExporter(device *DeviceSimulator, profile *FlowProfile,
+	activeTimeout, inactiveTimeout, templateInterval time.Duration) *FlowExporter {
+	addr, _ := net.ResolveUDPAddr("udp", "127.0.0.1:0")
+	return NewFlowExporter(device, profile,
+		activeTimeout, inactiveTimeout, templateInterval,
+		"127.0.0.1:0", addr, "netflow9", NetFlow9Encoder{})
+}
+
+// tickWithEncoder emulates the pre-phase-3 Tick signature for existing
+// tests. The new FlowExporter.Tick reads encoder + collectorAddr from
+// the exporter itself; this shim overwrites those fields on the fly so
+// tests that construct ad-hoc listeners and pick specific encoders don't
+// need per-test rewiring. Production code never calls this.
+func tickWithEncoder(fe *FlowExporter, now time.Time, enc FlowEncoder,
+	conn *net.UDPConn, addr *net.UDPAddr, pool *sync.Pool) FlowTickStats {
+	fe.encoder = enc
+	fe.collectorAddr = addr
+	return fe.Tick(now, conn, pool)
+}
+
 // testUDPListener opens an ephemeral loopback UDP socket, returning the
 // listener and a channel that delivers raw packet bytes as they arrive.
 // The goroutine exits when the listener is closed.
@@ -87,7 +112,7 @@ func receivePacket(ch <-chan []byte) []byte {
 
 func TestNewFlowExporter_DomainID(t *testing.T) {
 	device := testDevice("10.0.0.1")
-	fe := NewFlowExporter(device, flowProfileEdgeRouter, 30*time.Second, 15*time.Second, 60*time.Second)
+	fe := newTestFlowExporter(device, flowProfileEdgeRouter, 30*time.Second, 15*time.Second, 60*time.Second)
 
 	// domainID must be the device IPv4 encoded as big-endian uint32.
 	if fe.domainID != 0x0A000001 {
@@ -102,8 +127,8 @@ func TestNewFlowExporter_DomainID(t *testing.T) {
 }
 
 func TestNewFlowExporter_DifferentDevicesDifferentDomainIDs(t *testing.T) {
-	feA := NewFlowExporter(testDevice("10.0.0.1"), flowProfileEdgeRouter, time.Second, time.Second, time.Minute)
-	feB := NewFlowExporter(testDevice("10.0.0.2"), flowProfileEdgeRouter, time.Second, time.Second, time.Minute)
+	feA := newTestFlowExporter(testDevice("10.0.0.1"), flowProfileEdgeRouter, time.Second, time.Second, time.Minute)
+	feB := newTestFlowExporter(testDevice("10.0.0.2"), flowProfileEdgeRouter, time.Second, time.Second, time.Minute)
 
 	if feA.domainID == feB.domainID {
 		t.Errorf("expected different domainIDs for different devices, both got %08x", feA.domainID)
@@ -115,7 +140,7 @@ func TestDomainIDtoIP_RoundTrip(t *testing.T) {
 	for _, c := range cases {
 		original := net.ParseIP(c).To4()
 		device := &DeviceSimulator{IP: original}
-		fe := NewFlowExporter(device, flowProfileEdgeRouter, time.Second, time.Second, time.Minute)
+		fe := newTestFlowExporter(device, flowProfileEdgeRouter, time.Second, time.Second, time.Minute)
 		recovered := domainIDtoIP(fe.domainID)
 		if !recovered.Equal(original) {
 			t.Errorf("%s: domainIDtoIP(%08x) = %v, want %v", c, fe.domainID, recovered, original)
@@ -137,10 +162,10 @@ func TestFlowExporter_Tick_TemplateOnFirstCall(t *testing.T) {
 	collectorAddr := ln.LocalAddr().(*net.UDPAddr)
 
 	// Large timeouts so nothing expires during the test.
-	fe := NewFlowExporter(testDevice("10.1.2.3"), flowProfileEdgeRouter,
+	fe := newTestFlowExporter(testDevice("10.1.2.3"), flowProfileEdgeRouter,
 		10*time.Minute, 5*time.Minute, 10*time.Minute)
 
-	fe.Tick(time.Now(), NetFlow9Encoder{}, conn, collectorAddr, testPool())
+	tickWithEncoder(fe, time.Now(), NetFlow9Encoder{}, conn, collectorAddr, testPool())
 
 	pkt := receivePacket(ch)
 	if pkt == nil {
@@ -173,17 +198,17 @@ func TestFlowExporter_Tick_NoSendWhenIdle(t *testing.T) {
 
 	collectorAddr := ln.LocalAddr().(*net.UDPAddr)
 
-	fe := NewFlowExporter(testDevice("10.1.2.4"), flowProfileEdgeRouter,
+	fe := newTestFlowExporter(testDevice("10.1.2.4"), flowProfileEdgeRouter,
 		10*time.Minute, 5*time.Minute, 10*time.Minute)
 
 	now := time.Now()
 
 	// First Tick sends template (seqNo=0).
-	fe.Tick(now, NetFlow9Encoder{}, conn, collectorAddr, testPool())
+	tickWithEncoder(fe, now, NetFlow9Encoder{}, conn, collectorAddr, testPool())
 	receivePacket(ch) // drain
 
 	// Second Tick immediately after — no flows expired, template fresh.
-	fe.Tick(now, NetFlow9Encoder{}, conn, collectorAddr, testPool())
+	tickWithEncoder(fe, now, NetFlow9Encoder{}, conn, collectorAddr, testPool())
 
 	pkt := receivePacket(ch)
 	if pkt != nil {
@@ -204,25 +229,25 @@ func TestFlowExporter_Tick_SendsFlowsWhenExpired(t *testing.T) {
 	collectorAddr := ln.LocalAddr().(*net.UDPAddr)
 
 	// Very short timeouts so manually-inserted flows are expired immediately.
-	fe := NewFlowExporter(testDevice("10.1.2.5"), flowProfileEdgeRouter,
+	fe := newTestFlowExporter(testDevice("10.1.2.5"), flowProfileEdgeRouter,
 		1*time.Millisecond, 1*time.Millisecond, 10*time.Minute)
 
 	// Insert 3 flows directly into the cache, timestamped far in the past.
 	past := time.Now().Add(-1 * time.Hour)
 	for i := 0; i < 3; i++ {
 		fe.cache.Add(FlowRecord{
-			SrcIP:   net.ParseIP("10.0.0.1").To4(),
-			DstIP:   net.ParseIP("10.0.0.2").To4(),
-			NextHop: net.IPv4(0, 0, 0, 0).To4(),
-			SrcPort: uint16(1000 + i),
-			DstPort: 443,
+			SrcIP:    net.ParseIP("10.0.0.1").To4(),
+			DstIP:    net.ParseIP("10.0.0.2").To4(),
+			NextHop:  net.IPv4(0, 0, 0, 0).To4(),
+			SrcPort:  uint16(1000 + i),
+			DstPort:  443,
 			Protocol: 6,
-			Bytes:   1024,
-			Packets: 10,
+			Bytes:    1024,
+			Packets:  10,
 		}, past)
 	}
 
-	fe.Tick(time.Now(), NetFlow9Encoder{}, conn, collectorAddr, testPool())
+	tickWithEncoder(fe, time.Now(), NetFlow9Encoder{}, conn, collectorAddr, testPool())
 
 	pkt := receivePacket(ch)
 	if pkt == nil {
@@ -245,20 +270,20 @@ func TestFlowExporter_Tick_TemplateRetransmit(t *testing.T) {
 
 	collectorAddr := ln.LocalAddr().(*net.UDPAddr)
 
-	fe := NewFlowExporter(testDevice("10.1.2.6"), flowProfileEdgeRouter,
+	fe := newTestFlowExporter(testDevice("10.1.2.6"), flowProfileEdgeRouter,
 		10*time.Minute, 5*time.Minute, 60*time.Second)
 
 	now := time.Now()
 
 	// First Tick: sends template.
-	fe.Tick(now, NetFlow9Encoder{}, conn, collectorAddr, testPool())
+	tickWithEncoder(fe, now, NetFlow9Encoder{}, conn, collectorAddr, testPool())
 	pkt1 := receivePacket(ch)
 	if pkt1 == nil {
 		t.Fatal("expected template on first Tick")
 	}
 
 	// Second Tick: template interval has not elapsed — no send.
-	fe.Tick(now, NetFlow9Encoder{}, conn, collectorAddr, testPool())
+	tickWithEncoder(fe, now, NetFlow9Encoder{}, conn, collectorAddr, testPool())
 	if pkt := receivePacket(ch); pkt != nil {
 		t.Error("unexpected packet before template interval elapsed")
 	}
@@ -267,7 +292,7 @@ func TestFlowExporter_Tick_TemplateRetransmit(t *testing.T) {
 	fe.lastTempl = now.Add(-61 * time.Second)
 
 	// Third Tick: template should be retransmitted.
-	fe.Tick(now, NetFlow9Encoder{}, conn, collectorAddr, testPool())
+	tickWithEncoder(fe, now, NetFlow9Encoder{}, conn, collectorAddr, testPool())
 	pkt3 := receivePacket(ch)
 	if pkt3 == nil {
 		t.Fatal("expected template retransmission after interval elapsed")
@@ -289,10 +314,10 @@ func TestFlowExporter_Tick_IPFIXTemplateOnFirstCall(t *testing.T) {
 
 	collectorAddr := ln.LocalAddr().(*net.UDPAddr)
 
-	fe := NewFlowExporter(testDevice("10.2.3.4"), flowProfileEdgeRouter,
+	fe := newTestFlowExporter(testDevice("10.2.3.4"), flowProfileEdgeRouter,
 		10*time.Minute, 5*time.Minute, 10*time.Minute)
 
-	fe.Tick(time.Now(), IPFIXEncoder{}, conn, collectorAddr, testPool())
+	tickWithEncoder(fe, time.Now(), IPFIXEncoder{}, conn, collectorAddr, testPool())
 
 	pkt := receivePacket(ch)
 	if pkt == nil {
@@ -327,16 +352,16 @@ func TestFlowExporter_Tick_IPFIXPagination(t *testing.T) {
 
 	profile := &FlowProfile{
 		TCPWeight: 1.0, UDPWeight: 0, ICMPWeight: 0,
-		DstPorts:        []PortWeight{{443, 1.0}},
-		SrcPortMin:      1024, SrcPortMax: 65535,
-		BytesMin:        100, BytesMax: 200,
-		PktsMin:         1, PktsMax: 2,
-		DurationMinMs:   100, DurationMaxMs: 200,
+		DstPorts:   []PortWeight{{443, 1.0}},
+		SrcPortMin: 1024, SrcPortMax: 65535,
+		BytesMin: 100, BytesMax: 200,
+		PktsMin: 1, PktsMax: 2,
+		DurationMinMs: 100, DurationMaxMs: 200,
 		ConcurrentFlows: 100,
 		MaxFlows:        256,
 	}
 
-	fe := NewFlowExporter(testDevice("10.2.3.5"), profile,
+	fe := newTestFlowExporter(testDevice("10.2.3.5"), profile,
 		1*time.Millisecond, 1*time.Millisecond, 10*time.Minute)
 
 	// Insert 80 distinct flows all with past timestamps so they expire immediately.
@@ -358,7 +383,7 @@ func TestFlowExporter_Tick_IPFIXPagination(t *testing.T) {
 		t.Fatalf("expected 80 cache entries, got %d", got)
 	}
 
-	fe.Tick(time.Now(), IPFIXEncoder{}, conn, collectorAddr, testPool())
+	tickWithEncoder(fe, time.Now(), IPFIXEncoder{}, conn, collectorAddr, testPool())
 
 	// Collect all received packets.
 	var packets [][]byte
@@ -402,16 +427,16 @@ func TestFlowExporter_Tick_Pagination(t *testing.T) {
 	// Use a large MaxFlows to allow many concurrent entries.
 	profile := &FlowProfile{
 		TCPWeight: 1.0, UDPWeight: 0, ICMPWeight: 0,
-		DstPorts:        []PortWeight{{443, 1.0}},
-		SrcPortMin:      1024, SrcPortMax: 65535,
-		BytesMin:        100, BytesMax: 200,
-		PktsMin:         1, PktsMax: 2,
-		DurationMinMs:   100, DurationMaxMs: 200,
+		DstPorts:   []PortWeight{{443, 1.0}},
+		SrcPortMin: 1024, SrcPortMax: 65535,
+		BytesMin: 100, BytesMax: 200,
+		PktsMin: 1, PktsMax: 2,
+		DurationMinMs: 100, DurationMaxMs: 200,
 		ConcurrentFlows: 100,
 		MaxFlows:        256,
 	}
 
-	fe := NewFlowExporter(testDevice("10.1.2.7"), profile,
+	fe := newTestFlowExporter(testDevice("10.1.2.7"), profile,
 		1*time.Millisecond, 1*time.Millisecond, 10*time.Minute)
 
 	// Insert 80 distinct flows all with past timestamps so they expire immediately.
@@ -433,7 +458,7 @@ func TestFlowExporter_Tick_Pagination(t *testing.T) {
 		t.Fatalf("expected 80 cache entries, got %d", got)
 	}
 
-	fe.Tick(time.Now(), NetFlow9Encoder{}, conn, collectorAddr, testPool())
+	tickWithEncoder(fe, time.Now(), NetFlow9Encoder{}, conn, collectorAddr, testPool())
 
 	// Collect all received packets.
 	var packets [][]byte
@@ -469,7 +494,7 @@ func TestFlowTickStats_Counters(t *testing.T) {
 	defer conn.Close()
 	collectorAddr := ln.LocalAddr().(*net.UDPAddr)
 
-	fe := NewFlowExporter(testDevice("10.0.0.3"), flowProfileEdgeRouter, 30*time.Second, 15*time.Second, 60*time.Second)
+	fe := newTestFlowExporter(testDevice("10.0.0.3"), flowProfileEdgeRouter, 30*time.Second, 15*time.Second, 60*time.Second)
 
 	// Pre-populate 5 expired records.
 	past := time.Now().Add(-2 * time.Minute)
@@ -486,7 +511,7 @@ func TestFlowTickStats_Counters(t *testing.T) {
 		}, past)
 	}
 
-	stats := fe.Tick(time.Now(), NetFlow9Encoder{}, conn, collectorAddr, testPool())
+	stats := tickWithEncoder(fe, time.Now(), NetFlow9Encoder{}, conn, collectorAddr, testPool())
 	// Drain sent packets so the listener goroutine can exit cleanly.
 	receivePacket(ch)
 
@@ -514,81 +539,85 @@ func TestFlowTickStats_NoRecordsNoTemplate(t *testing.T) {
 	defer conn.Close()
 	collectorAddr := ln.LocalAddr().(*net.UDPAddr)
 
-	fe := NewFlowExporter(testDevice("10.0.0.4"), flowProfileEdgeRouter, 30*time.Second, 15*time.Second, 60*time.Minute)
+	fe := newTestFlowExporter(testDevice("10.0.0.4"), flowProfileEdgeRouter, 30*time.Second, 15*time.Second, 60*time.Minute)
 
 	// Advance past the first (seqNo==0) template send so the next call has no template due.
-	fe.Tick(time.Now(), NetFlow9Encoder{}, conn, collectorAddr, testPool())
+	tickWithEncoder(fe, time.Now(), NetFlow9Encoder{}, conn, collectorAddr, testPool())
 	// Second tick with empty cache and no template interval elapsed → zero stats.
-	stats := fe.Tick(time.Now(), NetFlow9Encoder{}, conn, collectorAddr, testPool())
+	stats := tickWithEncoder(fe, time.Now(), NetFlow9Encoder{}, conn, collectorAddr, testPool())
 
 	if stats.PacketsSent != 0 || stats.BytesSent != 0 || stats.RecordsSent != 0 || stats.LastTemplateMs != 0 {
 		t.Errorf("expected zero stats on idle tick, got %+v", stats)
 	}
 }
 
-// TestGetFlowStatus_Disabled verifies that GetFlowStatus returns {Enabled:false}
-// when flow export has not been initialised.
-func TestGetFlowStatus_Disabled(t *testing.T) {
+// TestGetFlowStatus_NoExportingDevices verifies that GetFlowStatus returns
+// an empty Collectors array when no device has a FlowExporter attached.
+// Under the per-device-export-config model "feature off" is expressed as
+// `len(collectors) == 0`.
+func TestGetFlowStatus_NoExportingDevices(t *testing.T) {
 	sm := &SimulatorManager{devices: make(map[string]*DeviceSimulator)}
 	status := sm.GetFlowStatus()
-	if status.Enabled {
-		t.Error("expected Enabled=false when flow export is off")
+	if len(status.Collectors) != 0 {
+		t.Errorf("expected empty Collectors, got %+v", status.Collectors)
 	}
-	if status.Protocol != "" || status.Collector != "" {
-		t.Errorf("expected empty Protocol/Collector when disabled, got %+v", status)
+	if status.DevicesExporting != 0 {
+		t.Errorf("DevicesExporting = %d, want 0", status.DevicesExporting)
 	}
 }
 
-// TestGetFlowStatus_Enabled verifies that GetFlowStatus reflects the values set
-// by InitFlowExport and the cumulative counters updated by tickAllFlowExporters.
-func TestGetFlowStatus_Enabled(t *testing.T) {
-	ln, ch := testUDPListener(t)
-	defer ln.Close()
+// TestGetFlowStatus_AggregatesAcrossDevices verifies that GetFlowStatus
+// aggregates per-device counters by (collector, protocol) tuple. Two
+// devices pointing at the same collector/protocol collapse into one
+// record; one device on a distinct collector yields a second record.
+func TestGetFlowStatus_AggregatesAcrossDevices(t *testing.T) {
+	sm := &SimulatorManager{devices: make(map[string]*DeviceSimulator)}
 
-	collectorStr := ln.LocalAddr().String()
-	sm := NewSimulatorManagerWithOptions(false)
-	err := sm.InitFlowExport(collectorStr, "netflow9", 30*time.Second, 15*time.Second, 60*time.Second, 100*time.Millisecond)
-	if err != nil {
-		t.Fatalf("InitFlowExport: %v", err)
+	mkExporter := func(ip, collector, protocol string, encoder FlowEncoder,
+		packets, bytesSent, records uint64) *DeviceSimulator {
+		d := testDevice(ip)
+		addr, _ := net.ResolveUDPAddr("udp", collector)
+		fe := NewFlowExporter(d, flowProfileEdgeRouter,
+			30*time.Second, 15*time.Second, 60*time.Second,
+			collector, addr, protocol, encoder)
+		fe.statPackets.Store(packets)
+		fe.statBytes.Store(bytesSent)
+		fe.statRecords.Store(records)
+		d.flowExporter = fe
+		return d
 	}
-	defer sm.Shutdown()
 
-	// Add a device with a flow exporter.
-	device := testDevice("10.5.0.1")
-	device.flowExporter = NewFlowExporter(device, flowProfileEdgeRouter, 30*time.Second, 15*time.Second, 60*time.Second)
-	sm.mu.Lock()
-	sm.devices["10.5.0.1"] = device
-	sm.mu.Unlock()
+	sm.devices["1"] = mkExporter("10.0.0.1", "a:2055", "netflow9", NetFlow9Encoder{}, 10, 100, 5)
+	sm.devices["2"] = mkExporter("10.0.0.2", "a:2055", "netflow9", NetFlow9Encoder{}, 20, 200, 7)
+	sm.devices["3"] = mkExporter("10.0.0.3", "b:4739", "ipfix", IPFIXEncoder{}, 3, 30, 1)
 
-	// Poll until TotalPacketsSent is updated. receivePacket() synchronises on
-	// UDP arrival, which races the atomic Add in tickAllFlowExporters — use a
-	// short polling loop to fence the counter reliably.
-	deadline := time.Now().Add(2 * time.Second)
-	var status FlowStatus
-	for time.Now().Before(deadline) {
-		receivePacket(ch)
-		status = sm.GetFlowStatus()
-		if status.TotalPacketsSent > 0 {
-			break
+	status := sm.GetFlowStatus()
+
+	if status.DevicesExporting != 3 {
+		t.Errorf("DevicesExporting = %d, want 3", status.DevicesExporting)
+	}
+	if len(status.Collectors) != 2 {
+		t.Fatalf("Collectors = %+v, want 2 records", status.Collectors)
+	}
+	for _, c := range status.Collectors {
+		switch {
+		case c.Collector == "a:2055" && c.Protocol == "netflow9":
+			if c.Devices != 2 {
+				t.Errorf("a:2055/netflow9 Devices = %d, want 2", c.Devices)
+			}
+			if c.SentPackets != 30 || c.SentBytes != 300 || c.SentRecords != 12 {
+				t.Errorf("a:2055/netflow9 counters wrong: %+v", c)
+			}
+		case c.Collector == "b:4739" && c.Protocol == "ipfix":
+			if c.Devices != 1 {
+				t.Errorf("b:4739/ipfix Devices = %d, want 1", c.Devices)
+			}
+			if c.SentPackets != 3 || c.SentBytes != 30 || c.SentRecords != 1 {
+				t.Errorf("b:4739/ipfix counters wrong: %+v", c)
+			}
+		default:
+			t.Errorf("unexpected collector record: %+v", c)
 		}
-	}
-	if !status.Enabled {
-		t.Error("expected Enabled=true after InitFlowExport")
-	}
-	if status.Protocol != "netflow9" {
-		t.Errorf("Protocol = %q, want \"netflow9\"", status.Protocol)
-	}
-	if status.Collector != collectorStr {
-		t.Errorf("Collector = %q, want %q", status.Collector, collectorStr)
-	}
-	if status.DevicesExporting != 1 {
-		t.Errorf("DevicesExporting = %d, want 1", status.DevicesExporting)
-	}
-	if status.TotalPacketsSent == 0 {
-		t.Error("TotalPacketsSent = 0, want >0 after at least one tick")
-	}
-	if status.LastTemplateSend == "" {
-		t.Error("LastTemplateSend is empty, want a non-empty RFC3339 timestamp")
 	}
 }
 
@@ -618,11 +647,11 @@ func TestFlowExporter_Tick_PrefersPerDeviceConn(t *testing.T) {
 	}
 	fallback.Close()
 
-	fe := NewFlowExporter(testDevice("10.9.9.9"), flowProfileEdgeRouter,
+	fe := newTestFlowExporter(testDevice("10.9.9.9"), flowProfileEdgeRouter,
 		10*time.Minute, 5*time.Minute, 10*time.Minute)
 	fe.conn.Store(perDevice)
 
-	stats := fe.Tick(time.Now(), NetFlow9Encoder{}, fallback, collectorAddr, testPool())
+	stats := tickWithEncoder(fe, time.Now(), NetFlow9Encoder{}, fallback, collectorAddr, testPool())
 
 	pkt := receivePacket(ch)
 	if pkt == nil {
@@ -641,7 +670,7 @@ func TestFlowExporter_Tick_CloseRace(t *testing.T) {
 	defer ln.Close()
 	collectorAddr := ln.LocalAddr().(*net.UDPAddr)
 
-	fe := NewFlowExporter(testDevice("10.9.9.11"), flowProfileEdgeRouter,
+	fe := newTestFlowExporter(testDevice("10.9.9.11"), flowProfileEdgeRouter,
 		10*time.Minute, 5*time.Minute, 10*time.Minute)
 
 	perDevice, err := net.ListenUDP("udp4", &net.UDPAddr{IP: net.ParseIP("127.0.0.1"), Port: 0})
@@ -667,7 +696,7 @@ func TestFlowExporter_Tick_CloseRace(t *testing.T) {
 			case <-stop:
 				return
 			default:
-				fe.Tick(time.Now(), NetFlow9Encoder{}, fallback, collectorAddr, pool)
+				tickWithEncoder(fe, time.Now(), NetFlow9Encoder{}, fallback, collectorAddr, pool)
 			}
 		}
 	}()
@@ -685,13 +714,12 @@ func TestFlowExporter_Tick_CloseRace(t *testing.T) {
 	}
 }
 
-// TestInitFlowExport_UnknownProtocol verifies that the default-case error
-// message lists all supported protocols including sflow. This is the
-// assertion point for the spec scenario "Unknown protocol is rejected with
-// updated error message".
-func TestInitFlowExport_UnknownProtocol(t *testing.T) {
-	sm := NewSimulatorManagerWithOptions(false)
-	err := sm.InitFlowExport("127.0.0.1:65530", "nonexistent", time.Second, time.Second, time.Minute, time.Second)
+// TestBuildFlowEncoder_UnknownProtocol verifies that the default-case
+// error message lists all supported protocols including sflow. Ported
+// from the retired InitFlowExport test against the `buildFlowEncoder`
+// helper that replaced it in the per-device-export-config refactor.
+func TestBuildFlowEncoder_UnknownProtocol(t *testing.T) {
+	_, _, err := buildFlowEncoder("nonexistent")
 	if err == nil {
 		t.Fatal("expected error for unknown protocol, got nil")
 	}
@@ -703,21 +731,20 @@ func TestInitFlowExport_UnknownProtocol(t *testing.T) {
 	}
 }
 
-// TestInitFlowExport_SFlowCanonicalized verifies both sflow and sflow5 select
-// the sFlow encoder and canonicalize to "sflow" in GetFlowStatus.
-func TestInitFlowExport_SFlowCanonicalized(t *testing.T) {
+// TestBuildFlowEncoder_SFlowCanonicalized verifies both sflow and sflow5
+// select the sFlow encoder and canonicalize to "sflow". Ported from the
+// retired InitFlowExport-based test; canonicalisation now lives in
+// `buildFlowEncoder`.
+func TestBuildFlowEncoder_SFlowCanonicalized(t *testing.T) {
 	for _, alias := range []string{"sflow", "sflow5", "SFLOW", "SFlow5"} {
-		sm := NewSimulatorManagerWithOptions(false)
-		err := sm.InitFlowExport("127.0.0.1:65531", alias, time.Second, time.Second, time.Minute, time.Hour)
+		_, canonical, err := buildFlowEncoder(alias)
 		if err != nil {
-			t.Errorf("alias %q: InitFlowExport returned error: %v", alias, err)
+			t.Errorf("alias %q: buildFlowEncoder returned error: %v", alias, err)
 			continue
 		}
-		status := sm.GetFlowStatus()
-		if status.Protocol != "sflow" {
-			t.Errorf("alias %q: Protocol = %q, want \"sflow\" (canonical)", alias, status.Protocol)
+		if canonical != "sflow" {
+			t.Errorf("alias %q: canonical = %q, want \"sflow\"", alias, canonical)
 		}
-		_ = sm.Shutdown()
 	}
 }
 
@@ -951,7 +978,7 @@ func TestFlowExporter_Close_Idempotent(t *testing.T) {
 		t.Errorf("Close on nil exporter returned error: %v", err)
 	}
 
-	fe := NewFlowExporter(testDevice("10.9.9.10"), flowProfileEdgeRouter,
+	fe := newTestFlowExporter(testDevice("10.9.9.10"), flowProfileEdgeRouter,
 		time.Second, time.Second, time.Minute)
 	if err := fe.Close(); err != nil {
 		t.Errorf("Close without conn returned error: %v", err)

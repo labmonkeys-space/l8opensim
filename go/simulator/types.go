@@ -194,28 +194,28 @@ type SimulatorManager struct {
 	deviceCreateProgress atomic.Value // int - number of devices created so far
 	deviceCreateTotal    atomic.Value // int - total number of devices to create
 
-	// Flow export state (nil/zero when disabled; set by InitFlowExport)
-	flowConn             *net.UDPConn
-	flowCollectorAddr    *net.UDPAddr
-	flowCollectorStr     string // original "host:port" string for status reporting
-	flowProtocol         string // normalised protocol name ("netflow9" or "ipfix")
-	flowEncoder          FlowEncoder
-	flowBufPool          sync.Pool   // supplies []byte(1500); set via flowBufPool.New
-	flowActive           atomic.Bool // true after InitFlowExport; safe for concurrent reads
+	// Flow export state. Per the per-device-export-config refactor, each
+	// device owns its collector/protocol/timeouts on its `flowConfig`
+	// field. The manager retains:
+	//   - a pool of shared UDP sockets keyed by (collector, protocol) for
+	//     the fallback path when `flowSourcePerDevice=false`;
+	//   - simulator-wide concerns: buf pool, ticker goroutine, global tick
+	//     interval, global template interval (design §D5), and stat
+	//     counters aggregated across all devices.
+	flowConns            sync.Map // key: flowConnKey, value: *net.UDPConn (shared-socket fallback pool)
+	flowBufPool          sync.Pool
 	flowTickInterval     time.Duration
-	flowActiveTimeout    time.Duration
-	flowInactiveTimeout  time.Duration
 	flowTemplateInterval time.Duration
 	flowSourcePerDevice  bool           // bind per-device UDP socket in opensim ns so src IP = device IP
 	flowStopCh           chan struct{}  // closed by Shutdown to stop the ticker goroutine
 	flowStopOnce         sync.Once      // ensures flowStopCh is closed exactly once
-	flowWg               sync.WaitGroup // tracks the ticker goroutine; Wait before closing flowConn
+	flowWg               sync.WaitGroup // tracks the ticker goroutine; Wait before tearing down pool
 
-	// Flow export cumulative counters (updated atomically by tickAllFlowExporters).
-	flowStatPackets  atomic.Uint64 // total UDP datagrams sent since InitFlowExport
-	flowStatBytes    atomic.Uint64 // total bytes written to UDP (headers + records + padding) since InitFlowExport
-	flowStatRecords  atomic.Uint64 // total flow records exported since InitFlowExport
-	flowStatLastTmpl atomic.Int64  // unix milliseconds of the most recent template transmission
+	// Simulator-wide "last template send" stamp — aggregated from
+	// per-exporter ticks and surfaced via GetFlowStatus.
+	// Per-exporter packet/byte/record counters live on the FlowExporter
+	// itself and are aggregated at GetFlowStatus read time.
+	flowStatLastTmpl atomic.Int64 // unix milliseconds of the most recent template transmission
 
 	// SNMP trap export state (nil/zero when disabled; set by StartTrapExport).
 	// See trap_manager.go for lifecycle and trap_exporter.go for per-device state.
@@ -362,13 +362,44 @@ type ManagerStatus struct {
 }
 
 // FlowStatus is the JSON body returned by GET /api/v1/flows/status.
+//
+// BREAKING (per-device-export-config phase 3): the response shape is now
+// an array-of-collectors aggregated across devices. The legacy scalar
+// `enabled`/`protocol`/`collector`/`total_*` fields were removed — clients
+// detect "feature off" via `len(collectors) == 0`.
 type FlowStatus struct {
-	Enabled            bool   `json:"enabled"`
-	Protocol           string `json:"protocol,omitempty"`
-	Collector          string `json:"collector,omitempty"`
-	TotalFlowsExported uint64 `json:"total_flows_exported"`
-	TotalPacketsSent   uint64 `json:"total_packets_sent"`
-	TotalBytesSent     uint64 `json:"total_bytes_sent"`
-	DevicesExporting   int    `json:"devices_exporting"`
-	LastTemplateSend   string `json:"last_template_send,omitempty"`
+	Collectors       []FlowCollectorStatus `json:"collectors"`
+	DevicesExporting int                   `json:"devices_exporting"`
+	LastTemplateSend string                `json:"last_template_send,omitempty"`
+}
+
+// FlowCollectorStatus is one aggregate record in FlowStatus.Collectors.
+// Devices with the same (collector, protocol) tuple collapse into one
+// record; counters are cumulative since simulator start across every
+// device that has ever exported under that tuple.
+type FlowCollectorStatus struct {
+	Collector   string `json:"collector"`
+	Protocol    string `json:"protocol"`
+	Devices     int    `json:"devices"`
+	SentPackets uint64 `json:"sent_packets"`
+	SentBytes   uint64 `json:"sent_bytes"`
+	SentRecords uint64 `json:"sent_records"`
+}
+
+// ExportSeed carries the optional per-device export configs handed to
+// `CreateDevices` / `CreateDevicesWithOptions`. A non-nil field seeds
+// every device in the batch with a copy of the referenced config.
+// nil fields mean "no export of this type for this batch".
+type ExportSeed struct {
+	Flow   *DeviceFlowConfig
+	Traps  *DeviceTrapConfig
+	Syslog *DeviceSyslogConfig
+}
+
+// flowConnKey identifies a shared-socket pool entry. One pooled
+// *net.UDPConn exists per unique (collector, protocol) tuple when
+// `flowSourcePerDevice=false`.
+type flowConnKey struct {
+	collector string
+	protocol  string
 }

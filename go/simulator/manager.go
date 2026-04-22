@@ -78,6 +78,12 @@ func NewSimulatorManagerWithOptions(useNamespace bool) *SimulatorManager {
 	// Pre-generate shared TLS certificate for all API servers
 	sm.generateSharedTLSCert()
 
+	// Bring up the always-on flow-export infrastructure (buf pool + ticker
+	// goroutine + stop channel). No-op at startup when no device has
+	// flowConfig; per-device attach via attachFlowExporter enables export
+	// later. Phase 3 of per-device-export-config.
+	sm.initFlowSubsystem()
+
 	return sm
 }
 
@@ -211,6 +217,12 @@ func (sm *SimulatorManager) ListDevices() []DeviceInfo {
 		if device.tunIface != nil {
 			info.Interface = device.tunIface.Name
 		}
+		// Echo the per-device export config blocks (phase 3 task 3.9).
+		// Pointer copy so JSON emission sees the resolved config; nil
+		// blocks are omitted via `omitempty` on DeviceInfo.
+		info.Flow = device.flowConfig
+		info.Traps = device.trapConfig
+		info.Syslog = device.syslogConfig
 		devices = append(devices, info)
 	}
 
@@ -324,19 +336,17 @@ func (sm *SimulatorManager) Shutdown() error {
 	log.Println("Shutting down simulator manager...")
 	startTime := time.Now()
 
-	// Stop the flow ticker goroutine and close the shared UDP socket.
-	// flowStopOnce ensures close(flowStopCh) is safe on repeated Shutdown() calls.
-	// flowWg.Wait() ensures the ticker goroutine has exited before we close flowConn,
-	// eliminating the data race between WriteTo and conn.Close()/nil.
-	if sm.flowActive.Load() {
+	// Stop the flow ticker goroutine and close every pooled shared socket.
+	// Per the per-device-export-config refactor the subsystem is always-on
+	// (design §D9); flowStopOnce ensures close(flowStopCh) is idempotent.
+	// flowWg.Wait() guarantees the ticker has exited before we close pooled
+	// sockets so Tick never races WriteTo against Close. Per-device sockets
+	// are closed when each device's flowExporter.Close() runs.
+	if sm.flowStopCh != nil {
 		sm.flowStopOnce.Do(func() { close(sm.flowStopCh) })
 		sm.flowWg.Wait()
-		sm.flowActive.Store(false)
 	}
-	if sm.flowConn != nil {
-		sm.flowConn.Close()
-		sm.flowConn = nil
-	}
+	sm.closeFlowConnPool()
 
 	// Stop the trap subsystem (scheduler goroutine + per-device exporters +
 	// shared fallback socket). Safe to call when trap export was never started.
