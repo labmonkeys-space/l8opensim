@@ -277,6 +277,9 @@ func (sm *SimulatorManager) CreateDevicesWithOptions(startIP string, count int, 
 				flowProfile := GetFlowProfile(deviceResourceFile)
 				if err := sm.attachFlowExporter(device, flowProfile); err != nil {
 					log.Printf("flow export: skipping device %s: %v", device.IP, err)
+					// Nil out flowConfig so ListDevices doesn't show
+					// config that has no live exporter (review fix P5).
+					device.flowConfig = nil
 				}
 			}
 
@@ -545,6 +548,9 @@ func (sm *SimulatorManager) createSingleDevice(deviceIndex int, deviceIP net.IP,
 		flowProfile := GetFlowProfile(resourceFile)
 		if err := sm.attachFlowExporter(device, flowProfile); err != nil {
 			log.Printf("flow export: skipping device %s: %v", device.IP, err)
+			// Nil out flowConfig so ListDevices doesn't show config
+			// that has no live exporter (review fix P5).
+			device.flowConfig = nil
 		}
 	}
 
@@ -699,6 +705,13 @@ func (d *DeviceSimulator) Stop() error {
 	}
 
 	if d.flowExporter != nil {
+		// Persist cumulative counters into the simulator-wide
+		// per-collector aggregate (review decision D1.b) BEFORE closing
+		// the exporter so /flows/status reports monotonic totals. The
+		// outer `if !d.running` guard above makes this single-shot.
+		if manager != nil {
+			manager.persistFlowCounters(d.flowExporter)
+		}
 		d.flowExporter.Close() //nolint:errcheck
 	}
 
@@ -755,6 +768,11 @@ func (d *DeviceSimulator) stopListenersOnly() {
 		d.apiServer.Stop()
 	}
 	if d.flowExporter != nil {
+		// Persist counters before Close (review decision D1.b). The
+		// `if !d.running` early-return above makes this single-shot.
+		if manager != nil {
+			manager.persistFlowCounters(d.flowExporter)
+		}
 		d.flowExporter.Close() //nolint:errcheck
 	}
 	if d.trapExporter != nil {

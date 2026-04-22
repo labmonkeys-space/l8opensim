@@ -202,7 +202,12 @@ type SimulatorManager struct {
 	//   - simulator-wide concerns: buf pool, ticker goroutine, global tick
 	//     interval, global template interval (design §D5), and stat
 	//     counters aggregated across all devices.
-	flowConns            sync.Map // key: flowConnKey, value: *net.UDPConn (shared-socket fallback pool)
+	flowConns sync.Map // key: flowConnKey, value: *net.UDPConn (shared-socket fallback pool)
+	// flowAggregates holds monotonic per-(collector,protocol) counters
+	// that survive device deletion (review decision D1.b). Per-exporter
+	// counters are added here on device Stop; GetFlowStatus merges these
+	// with live-exporter counters to emit cumulative totals.
+	flowAggregates       sync.Map // key: flowConnKey, value: *flowCollectorAggregate
 	flowBufPool          sync.Pool
 	flowTickInterval     time.Duration
 	flowTemplateInterval time.Duration
@@ -210,6 +215,7 @@ type SimulatorManager struct {
 	flowStopCh           chan struct{}  // closed by Shutdown to stop the ticker goroutine
 	flowStopOnce         sync.Once      // ensures flowStopCh is closed exactly once
 	flowWg               sync.WaitGroup // tracks the ticker goroutine; Wait before tearing down pool
+	flowFirstAttachLog   sync.Once      // emits a single "flow export active" line on first per-device attach (review fix P4)
 
 	// Simulator-wide "last template send" stamp — aggregated from
 	// per-exporter ticks and surfaced via GetFlowStatus.
