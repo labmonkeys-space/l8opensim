@@ -105,10 +105,17 @@ type FlowExporter struct {
 	encoder       FlowEncoder
 
 	// Per-exporter cumulative counters. Summed at status-endpoint read
-	// time to produce FlowStatus.Collectors aggregates.
+	// time and persisted into the simulator-wide per-collector aggregate
+	// when the device is deleted, so /api/v1/flows/status exposes
+	// monotonic totals even as devices come and go.
 	statPackets atomic.Uint64
 	statBytes   atomic.Uint64
 	statRecords atomic.Uint64
+
+	// firstWriteErr ensures we log at most one write-failure message per
+	// exporter; silent swallowing of WriteTo errors was an observability
+	// hole flagged in the phase 3 review (P6).
+	firstWriteErr sync.Once
 
 	// conn is the per-device UDP socket (nil = use shared pool). atomic.Pointer
 	// so Tick (ticker goroutine) and Close (device-shutdown paths) can read and
@@ -166,6 +173,19 @@ func (fe *FlowExporter) Close() error {
 		return nil
 	}
 	return conn.Close()
+}
+
+// logFirstWriteErr emits at most one log line per exporter on a failed
+// WriteTo. Gated by fe.firstWriteErr so a down/misconfigured collector
+// doesn't flood logs at tick cadence × device count.
+func (fe *FlowExporter) logFirstWriteErr(err error) {
+	if fe == nil {
+		return
+	}
+	fe.firstWriteErr.Do(func() {
+		log.Printf("flow export: device %s write to %s failed: %v (further errors suppressed for this exporter)",
+			domainIDtoIP(fe.domainID), fe.collectorStr, err)
+	})
 }
 
 // Tick is called by the shared SimulatorManager ticker goroutine on every
@@ -271,7 +291,9 @@ func (fe *FlowExporter) Tick(now time.Time, sharedConn *net.UDPConn, bufPool *sy
 			break
 		}
 
-		writeConn.WriteTo(buf[:n], collectorAddr) //nolint:errcheck
+		if _, err := writeConn.WriteTo(buf[:n], collectorAddr); err != nil {
+			fe.logFirstWriteErr(err)
+		}
 		stats.PacketsSent++
 		stats.BytesSent += uint64(n)
 		stats.RecordsSent += uint64(len(batch))
@@ -321,7 +343,9 @@ func (fe *FlowExporter) Tick(now time.Time, sharedConn *net.UDPConn, bufPool *sy
 			if err != nil || n == 0 {
 				break
 			}
-			writeConn.WriteTo(buf[:n], collectorAddr) //nolint:errcheck
+			if _, err := writeConn.WriteTo(buf[:n], collectorAddr); err != nil {
+				fe.logFirstWriteErr(err)
+			}
 			stats.PacketsSent++
 			stats.BytesSent += uint64(n)
 			fe.seqNo++
@@ -415,7 +439,10 @@ func (sm *SimulatorManager) flowConnFor(key flowConnKey) *net.UDPConn {
 }
 
 // closeFlowConnPool closes every pooled shared socket. Called from
-// Shutdown after the ticker goroutine has exited.
+// Shutdown after the ticker goroutine has exited. Does NOT reassign
+// `sm.flowConns` — the manager is being torn down, the map value goes
+// out of scope with it, and reassigning a concurrent sync.Map field is
+// racy by itself.
 func (sm *SimulatorManager) closeFlowConnPool() {
 	sm.flowConns.Range(func(_, v interface{}) bool {
 		if conn, ok := v.(*net.UDPConn); ok {
@@ -423,7 +450,35 @@ func (sm *SimulatorManager) closeFlowConnPool() {
 		}
 		return true
 	})
-	sm.flowConns = sync.Map{}
+}
+
+// flowCollectorAggregate holds monotonic counters for a
+// (collector, protocol) tuple that survive device deletion. Written
+// by `persistFlowCounters` on device Stop; read by `GetFlowStatus` and
+// merged with live-exporter counters to produce cumulative totals.
+type flowCollectorAggregate struct {
+	packets atomic.Uint64
+	bytes   atomic.Uint64
+	records atomic.Uint64
+}
+
+// persistFlowCounters snapshots a FlowExporter's cumulative counters
+// into the simulator-wide per-collector aggregate so /flows/status
+// reports monotonic totals even as devices come and go (review
+// decision D1.b). Called from the device lifecycle immediately before
+// `FlowExporter.Close()`. Safe to call with nil exporter; idempotent
+// only in the sense that calling it twice will DOUBLE the persisted
+// counters — callers MUST invoke it at most once per exporter.
+func (sm *SimulatorManager) persistFlowCounters(fe *FlowExporter) {
+	if fe == nil || fe.collectorStr == "" {
+		return
+	}
+	key := flowConnKey{collector: fe.collectorStr, protocol: fe.protocol}
+	v, _ := sm.flowAggregates.LoadOrStore(key, &flowCollectorAggregate{})
+	agg := v.(*flowCollectorAggregate)
+	agg.packets.Add(fe.statPackets.Load())
+	agg.bytes.Add(fe.statBytes.Load())
+	agg.records.Add(fe.statRecords.Load())
 }
 
 // buildFlowEncoder returns the encoder + canonical protocol name for a
@@ -453,6 +508,12 @@ func buildFlowEncoder(protocol string) (FlowEncoder, string, error) {
 // sources if the device is exporting sFlow. On failure, logs and leaves
 // `device.flowExporter == nil` so the device participates in the
 // simulator but without flow export.
+//
+// The collector string stored on the exporter is the canonicalised form
+// returned by `net.ResolveUDPAddr` so that devices configured with
+// equivalent-but-different-spelling collectors (e.g. "localhost:2055"
+// vs "127.0.0.1:2055") aggregate into one pool entry and one
+// FlowCollectorStatus row (review fix P1).
 func (sm *SimulatorManager) attachFlowExporter(device *DeviceSimulator, flowProfile *FlowProfile) error {
 	cfg := device.flowConfig
 	if cfg == nil {
@@ -466,13 +527,28 @@ func (sm *SimulatorManager) attachFlowExporter(device *DeviceSimulator, flowProf
 	if err != nil {
 		return fmt.Errorf("resolve collector %q: %w", cfg.Collector, err)
 	}
+	canonicalCollector := collectorAddr.String()
+
+	// Per-device TickInterval is stored on cfg but not honored by the
+	// single global ticker (design debt documented in the change). Warn
+	// once per device at attach so operators aren't silently surprised
+	// when they set a distinct value (review fix P2).
+	if time.Duration(cfg.TickInterval) != 0 && time.Duration(cfg.TickInterval) != sm.flowTickInterval {
+		log.Printf("flow export: device %s configured tick_interval=%s but the simulator-wide ticker runs at %s; per-device tick rates are not yet honored",
+			device.IP, time.Duration(cfg.TickInterval), sm.flowTickInterval)
+	}
+
 	device.flowExporter = NewFlowExporter(device, flowProfile,
 		time.Duration(cfg.ActiveTimeout),
 		time.Duration(cfg.InactiveTimeout),
 		sm.flowTemplateInterval,
-		cfg.Collector, collectorAddr, canonical, encoder)
+		canonicalCollector, collectorAddr, canonical, encoder)
 	sm.openFlowConnForDevice(device)
 	sm.registerSFlowCounterSources(device)
+	sm.flowFirstAttachLog.Do(func() {
+		log.Printf("flow export: active; first device %s → %s (protocol=%s)",
+			device.IP, canonicalCollector, canonical)
+	})
 	return nil
 }
 
@@ -586,17 +662,17 @@ func (sm *SimulatorManager) tickAllFlowExporters(now time.Time) {
 
 // GetFlowStatus returns the aggregated flow-export snapshot. Devices
 // sharing the same (collector, protocol) tuple collapse into one record
-// in the `Collectors` array; counters are cumulative since each
-// exporter's construction.
+// in the `Collectors` array. Counters are MONOTONIC since simulator
+// start: live exporters' per-tick counters are summed with the
+// per-collector aggregates persisted when earlier devices were deleted
+// (review decision D1.b), so Prometheus-style consumers never see
+// counter resets mid-run.
 //
 // BREAKING (per-device-export-config phase 3): returns the new
 // array-of-collectors shape. The legacy scalar fields are retired;
 // callers detect "feature off" via `len(collectors) == 0`.
 func (sm *SimulatorManager) GetFlowStatus() FlowStatus {
-	type aggKey struct {
-		collector, protocol string
-	}
-	agg := make(map[aggKey]*FlowCollectorStatus)
+	agg := make(map[flowConnKey]*FlowCollectorStatus)
 
 	sm.mu.RLock()
 	for _, d := range sm.devices {
@@ -604,7 +680,7 @@ func (sm *SimulatorManager) GetFlowStatus() FlowStatus {
 		if fe == nil {
 			continue
 		}
-		k := aggKey{fe.collectorStr, fe.protocol}
+		k := flowConnKey{collector: fe.collectorStr, protocol: fe.protocol}
 		rec, ok := agg[k]
 		if !ok {
 			rec = &FlowCollectorStatus{
@@ -619,6 +695,27 @@ func (sm *SimulatorManager) GetFlowStatus() FlowStatus {
 		rec.SentRecords += fe.statRecords.Load()
 	}
 	sm.mu.RUnlock()
+
+	// Fold persisted counters for tuples whose devices have since been
+	// deleted (or that have a live device AND historical deletions).
+	// A tuple with no live exporters still shows up in the output with
+	// Devices=0 so the monotonic totals remain visible.
+	sm.flowAggregates.Range(func(k, v interface{}) bool {
+		key := k.(flowConnKey)
+		pers := v.(*flowCollectorAggregate)
+		rec, ok := agg[key]
+		if !ok {
+			rec = &FlowCollectorStatus{
+				Collector: key.collector,
+				Protocol:  key.protocol,
+			}
+			agg[key] = rec
+		}
+		rec.SentPackets += pers.packets.Load()
+		rec.SentBytes += pers.bytes.Load()
+		rec.SentRecords += pers.records.Load()
+		return true
+	})
 
 	collectors := make([]FlowCollectorStatus, 0, len(agg))
 	totalDevices := 0
