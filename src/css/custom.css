@@ -182,8 +182,11 @@ article h1, article h2, article h3, article h4 {
 .l8-copy__btn { font-family: var(--ifm-font-family-monospace); font-size: 10px; text-transform: uppercase; letter-spacing: 0.08em; padding: 3px 8px; background: transparent; color: var(--l8-fg-mute); border: 1px solid var(--l8-hair); border-radius: 2px; cursor: pointer; }
 .l8-copy__btn:hover { color: var(--l8-accent); border-color: var(--l8-accent); }
 
+.l8-grid-2 { display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px; }
 .l8-grid-3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; }
 .l8-grid-4 { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; }
+.l8-sec__or { display: flex; align-items: center; gap: 12px; margin: 20px 0; font-family: var(--ifm-font-family-monospace); font-size: 11px; color: var(--l8-fg-mute); letter-spacing: 0.08em; text-transform: uppercase; }
+.l8-sec__or::before, .l8-sec__or::after { content: ''; flex: 1; height: 1px; background: var(--l8-hair); }
 .l8-features { display: grid; grid-template-columns: repeat(3, 1fr); gap: 1px; background: var(--l8-hair); border: 1px solid var(--l8-hair); }
 .l8-features > .l8-panel { border: none; border-radius: 0; }
 .l8-features > .l8-panel:hover { background: var(--l8-bg-2); }
@@ -219,6 +222,6 @@ article h1, article h2, article h3, article h4 {
   .l8-hero__stats { grid-template-columns: repeat(2, 1fr); }
 }
 @media (max-width: 720px) {
-  .l8-hero__grid, .l8-features, .l8-grid-3, .l8-grid-4, .l8-scale, .l8-cta { grid-template-columns: 1fr; }
+  .l8-hero__grid, .l8-features, .l8-grid-2, .l8-grid-3, .l8-grid-4, .l8-scale, .l8-cta { grid-template-columns: 1fr; }
   .l8-hero__stats { grid-template-columns: repeat(2, 1fr); }
 }

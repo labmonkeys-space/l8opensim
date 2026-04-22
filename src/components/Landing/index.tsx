@@ -144,7 +144,7 @@ export default function Landing(): JSX.Element {
           <div className="l8-sec__hd">
             <span className="l8-sec__num">01</span>
             <h2 className="l8-sec__title">quick start</h2>
-            <span className="l8-sec__sub">three commands and a sudo</span>
+            <span className="l8-sec__sub">build from source · or pull with docker</span>
           </div>
           <div className="l8-grid-3">
             <Panel title="01 · clone" meta="git">
@@ -157,6 +157,15 @@ export default function Landing(): JSX.Element {
             </Panel>
             <Panel title="03 · run" meta="needs root">
               <Copyable text="sudo ./simulator -auto-start-ip 10.0.0.1 -auto-count 100" />
+            </Panel>
+          </div>
+          <div className="l8-sec__or"><span>or with docker</span></div>
+          <div className="l8-grid-2">
+            <Panel title="01 · pull" meta="no toolchain">
+              <Copyable text="docker pull ghcr.io/labmonkeys-space/l8opensim:latest" />
+            </Panel>
+            <Panel title="02 · run" meta="needs --cap-add=net_admin">
+              <Copyable text="docker run --rm -it --cap-add=NET_ADMIN --device=/dev/net/tun --network=host ghcr.io/labmonkeys-space/l8opensim:latest -auto-start-ip 10.0.0.1 -auto-count 100" />
             </Panel>
           </div>
         </section>
