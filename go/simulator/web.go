@@ -51,14 +51,48 @@ func createDevicesHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Parse and validate per-device export blocks (phase 3 task 3.7).
+	// Each block is optional; missing or nil → export disabled for batch.
+	// Validation failures return 400 with the underlying error so the
+	// operator can see what went wrong. `Traps` and `Syslog` blocks pass
+	// through into the seed but the subsystems themselves still run off
+	// the old globals until phases 4/5 land.
+	seed := &ExportSeed{Flow: req.Flow, Traps: req.Traps, Syslog: req.Syslog}
+	if seed.Flow != nil {
+		seed.Flow.ApplyDefaults()
+		if err := seed.Flow.Validate(); err != nil {
+			sendErrorResponse(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+	}
+	if seed.Traps != nil {
+		seed.Traps.ApplyDefaults()
+		if err := seed.Traps.Validate(); err != nil {
+			sendErrorResponse(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+	}
+	if seed.Syslog != nil {
+		seed.Syslog.ApplyDefaults()
+		if err := seed.Syslog.Validate(); err != nil {
+			sendErrorResponse(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+	}
+	// Collapse the seed to nil when no block was supplied so CreateDevices
+	// receives the exact "no export" signal rather than an empty shell.
+	if seed.Flow == nil && seed.Traps == nil && seed.Syslog == nil {
+		seed = nil
+	}
+
 	// Use CreateDevicesWithOptions if pre-allocation parameters are specified
 	if req.PreAllocate || req.MaxWorkers > 0 {
 		// If PreAllocate is not explicitly set but MaxWorkers is provided, enable pre-allocation
 		preAllocate := req.PreAllocate || req.MaxWorkers > 0
-		err = manager.CreateDevicesWithOptions(req.StartIP, req.DeviceCount, req.Netmask, req.ResourceFile, req.SNMPv3, preAllocate, req.MaxWorkers, req.RoundRobin, req.Category, snmpPort)
+		err = manager.CreateDevicesWithOptions(req.StartIP, req.DeviceCount, req.Netmask, req.ResourceFile, req.SNMPv3, preAllocate, req.MaxWorkers, req.RoundRobin, req.Category, snmpPort, seed)
 	} else {
 		// Use default behavior (auto pre-allocates for 10+ devices)
-		err = manager.CreateDevices(req.StartIP, req.DeviceCount, req.Netmask, req.ResourceFile, req.SNMPv3, req.RoundRobin, req.Category, snmpPort)
+		err = manager.CreateDevices(req.StartIP, req.DeviceCount, req.Netmask, req.ResourceFile, req.SNMPv3, req.RoundRobin, req.Category, snmpPort, seed)
 	}
 	if err != nil {
 		sendErrorResponse(w, err.Error(), http.StatusInternalServerError)

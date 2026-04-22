@@ -331,6 +331,29 @@ func isASCII(s string) bool {
 	return true
 }
 
+// applyExportSeed copies a batch-level ExportSeed onto a newly-constructed
+// device. Each non-nil block in the seed is copied so every device in the
+// batch gets its own pointer; downstream mutations don't leak across
+// devices in the fleet. Safe to call with a nil seed (no-op) or nil
+// blocks (partial seed).
+func applyExportSeed(device *DeviceSimulator, seed *ExportSeed) {
+	if device == nil || seed == nil {
+		return
+	}
+	if seed.Flow != nil {
+		f := *seed.Flow
+		device.flowConfig = &f
+	}
+	if seed.Traps != nil {
+		t := *seed.Traps
+		device.trapConfig = &t
+	}
+	if seed.Syslog != nil {
+		s := *seed.Syslog
+		device.syslogConfig = &s
+	}
+}
+
 // Compile-time safety: ensure jsonDuration satisfies the json
 // (Un)Marshaler interfaces. Catches accidental signature drift.
 var (

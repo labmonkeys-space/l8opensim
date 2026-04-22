@@ -29,13 +29,13 @@ import (
 // wire-compliant XDR without introducing an external dependency.
 
 type sflowDatagramHdr struct {
-	Version     uint32
-	AddrType    uint32
-	AgentIPv4   [4]byte
-	SubAgentID  uint32
-	SequenceNo  uint32
-	Uptime      uint32
-	NumSamples  uint32
+	Version    uint32
+	AddrType   uint32
+	AgentIPv4  [4]byte
+	SubAgentID uint32
+	SequenceNo uint32
+	Uptime     uint32
+	NumSamples uint32
 }
 
 type sflowSampledHeader struct {
@@ -77,10 +77,10 @@ type sflowCountersSample struct {
 }
 
 type sflowSample struct {
-	Type         uint32
-	Length       uint32
-	FlowSample   *sflowFlowSample   // populated when Type == 1
-	CounterSmpl  *sflowCountersSample // populated when Type == 2
+	Type        uint32
+	Length      uint32
+	FlowSample  *sflowFlowSample     // populated when Type == 1
+	CounterSmpl *sflowCountersSample // populated when Type == 2
 }
 
 type sflowDatagram struct {
@@ -641,13 +641,13 @@ func TestSFlowTickSyntheticRate(t *testing.T) {
 		MaxFlows:        256,
 	}
 
-	fe := NewFlowExporter(testDevice("10.9.8.7"), profile,
+	fe := newTestFlowExporter(testDevice("10.9.8.7"), profile,
 		1*time.Millisecond, 1*time.Millisecond, 10*time.Minute)
 
 	// Run two ticks 10ms apart so the inactive timeout fires.
-	fe.Tick(time.Now(), SFlowEncoder{}, conn, collectorAddr, testPool())
+	tickWithEncoder(fe, time.Now(), SFlowEncoder{}, conn, collectorAddr, testPool())
 	time.Sleep(15 * time.Millisecond)
-	fe.Tick(time.Now(), SFlowEncoder{}, conn, collectorAddr, testPool())
+	tickWithEncoder(fe, time.Now(), SFlowEncoder{}, conn, collectorAddr, testPool())
 
 	// Drain any datagrams produced. Look for the first one that actually
 	// carries a flow_sample (as opposed to a counter-only tick).

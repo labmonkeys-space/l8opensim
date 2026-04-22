@@ -103,13 +103,13 @@ func main() {
 		ifFailurePct    = flag.Int("if-failure-pct", 10, "Percentage of interfaces with oper-down (used with -if-scenario 4, 0–100)")
 
 		// Flow export flags
-		flowCollector        = flag.String("flow-collector", "", "NetFlow/IPFIX collector address (host:port, e.g. 192.168.1.100:2055); disables flow export when empty")
-		flowProtocol         = flag.String("flow-protocol", "netflow9", "Flow export protocol: netflow9 (default), ipfix, netflow5, sflow (alias sflow5). Under netflow5, -flow-template-interval is accepted but has no effect (v5 has no template mechanism). Under sflow, -flow-template-interval is accepted but has no effect (sFlow records are self-describing); flow-samples carry a synthetic sampling_rate of 10 × FlowProfile.ConcurrentFlows — see CLAUDE.md and README.md for caveats")
-		flowActiveSecs       = flag.Int("flow-active-timeout", 30, "Active flow timeout in seconds (default: 30)")
-		flowInactiveSecs     = flag.Int("flow-inactive-timeout", 15, "Inactive flow timeout in seconds (default: 15)")
+		flowCollector            = flag.String("flow-collector", "", "NetFlow/IPFIX collector address (host:port, e.g. 192.168.1.100:2055); disables flow export when empty")
+		flowProtocol             = flag.String("flow-protocol", "netflow9", "Flow export protocol: netflow9 (default), ipfix, netflow5, sflow (alias sflow5). Under netflow5, -flow-template-interval is accepted but has no effect (v5 has no template mechanism). Under sflow, -flow-template-interval is accepted but has no effect (sFlow records are self-describing); flow-samples carry a synthetic sampling_rate of 10 × FlowProfile.ConcurrentFlows — see CLAUDE.md and README.md for caveats")
+		flowActiveSecs           = flag.Int("flow-active-timeout", 30, "Active flow timeout in seconds (default: 30)")
+		flowInactiveSecs         = flag.Int("flow-inactive-timeout", 15, "Inactive flow timeout in seconds (default: 15)")
 		flowTemplateIntervalSecs = flag.Int("flow-template-interval", 60, "Template retransmission interval in seconds (default: 60)")
-		flowTickSecs         = flag.Int("flow-tick-interval", 5, "Flow ticker interval in seconds (default: 5)")
-		flowSourcePerDevice  = flag.Bool("flow-source-per-device", true, "Bind a per-device UDP socket inside the opensim namespace so flow packets use the device's IP as the source address (default: true). Requires the opensim ns to have a route to the collector; set to false to use a single shared socket from the host namespace")
+		flowTickSecs             = flag.Int("flow-tick-interval", 5, "Flow ticker interval in seconds (default: 5)")
+		flowSourcePerDevice      = flag.Bool("flow-source-per-device", true, "Bind a per-device UDP socket inside the opensim namespace so flow packets use the device's IP as the source address (default: true). Requires the opensim ns to have a route to the collector; set to false to use a single shared socket from the host namespace")
 
 		// SNMP trap / INFORM export flags. See CLAUDE.md "SNMP Trap export" for detail.
 		trapCollector       = flag.String("trap-collector", "", "SNMP trap collector address (host:port, e.g. 10.0.0.50:162); enables trap export when non-empty")
@@ -199,19 +199,30 @@ func main() {
 		}
 	}
 
-	// Enable flow export if a collector address was provided.
+	// Configure simulator-wide flow parameters. Per-device fields (collector,
+	// protocol, timeouts) live on DeviceFlowConfig; `tick_interval`,
+	// `template_interval`, and `source_per_device` remain global per
+	// design §D5. Always applied so operators can tune the ticker cadence
+	// even when no CLI-seed flow export is configured.
+	manager.SetFlowSourcePerDevice(*flowSourcePerDevice)
+	manager.SetFlowTickInterval(time.Duration(*flowTickSecs) * time.Second)
+	manager.SetFlowTemplateInterval(time.Duration(*flowTemplateIntervalSecs) * time.Second)
+
+	// Build the CLI-seed flow config for the auto-start batch. Phase 3 of
+	// per-device-export-config: flags seed auto-start devices only;
+	// REST-created devices must opt in via POST /api/v1/devices.
+	var flowSeed *DeviceFlowConfig
 	if *flowCollector != "" {
-		manager.SetFlowSourcePerDevice(*flowSourcePerDevice)
-		err := manager.InitFlowExport(
-			*flowCollector,
-			*flowProtocol,
-			time.Duration(*flowActiveSecs)*time.Second,
-			time.Duration(*flowInactiveSecs)*time.Second,
-			time.Duration(*flowTemplateIntervalSecs)*time.Second,
-			time.Duration(*flowTickSecs)*time.Second,
-		)
-		if err != nil {
-			log.Fatalf("Failed to initialize flow export: %v", err)
+		flowSeed = &DeviceFlowConfig{
+			Collector:       *flowCollector,
+			Protocol:        *flowProtocol,
+			TickInterval:    jsonDuration(time.Duration(*flowTickSecs) * time.Second),
+			ActiveTimeout:   jsonDuration(time.Duration(*flowActiveSecs) * time.Second),
+			InactiveTimeout: jsonDuration(time.Duration(*flowInactiveSecs) * time.Second),
+		}
+		flowSeed.ApplyDefaults()
+		if err := flowSeed.Validate(); err != nil {
+			log.Fatalf("flow export: invalid -flow-* CLI seed: %v", err)
 		}
 	}
 
@@ -313,7 +324,7 @@ func main() {
 					*snmpv3EngineID, *snmpv3AuthProto, *snmpv3PrivProto)
 			}
 
-			err := manager.CreateDevices(*autoStartIP, *autoCount, *autoNetmask, "", v3Config, false, "", *snmpPort)
+			err := manager.CreateDevices(*autoStartIP, *autoCount, *autoNetmask, "", v3Config, false, "", *snmpPort, &ExportSeed{Flow: flowSeed})
 			if err != nil {
 				log.Printf("Failed to auto-create devices: %v", err)
 			} else {

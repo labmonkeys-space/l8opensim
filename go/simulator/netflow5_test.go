@@ -345,20 +345,20 @@ func TestNetFlow5IPv4OnlyFiltering(t *testing.T) {
 	buf := make([]byte, 1500)
 
 	v6Src := FlowRecord{
-		SrcIP:    net.ParseIP("2001:db8::1"),
-		DstIP:    net.ParseIP("10.0.0.2").To4(),
-		NextHop:  net.IPv4(0, 0, 0, 0).To4(),
-		SrcPort:  1000, DstPort: 443, Protocol: 6,
+		SrcIP:   net.ParseIP("2001:db8::1"),
+		DstIP:   net.ParseIP("10.0.0.2").To4(),
+		NextHop: net.IPv4(0, 0, 0, 0).To4(),
+		SrcPort: 1000, DstPort: 443, Protocol: 6,
 		Bytes: 100, Packets: 1,
 		StartMs: 500, EndMs: 600,
 		InIface: 1, OutIface: 2, SrcMask: 24, DstMask: 24,
 	}
 	v4 := makeRecord("10.0.0.1", "10.0.0.2", 2000, 443, 6)
 	v6Dst := FlowRecord{
-		SrcIP:    net.ParseIP("10.0.0.1").To4(),
-		DstIP:    net.ParseIP("2001:db8::2"),
-		NextHop:  net.IPv4(0, 0, 0, 0).To4(),
-		SrcPort:  3000, DstPort: 80, Protocol: 6,
+		SrcIP:   net.ParseIP("10.0.0.1").To4(),
+		DstIP:   net.ParseIP("2001:db8::2"),
+		NextHop: net.IPv4(0, 0, 0, 0).To4(),
+		SrcPort: 3000, DstPort: 80, Protocol: 6,
 		Bytes: 200, Packets: 2,
 		StartMs: 700, EndMs: 800,
 		InIface: 1, OutIface: 2, SrcMask: 24, DstMask: 24,
@@ -411,10 +411,10 @@ func TestNetFlow5NextHopCoercion(t *testing.T) {
 	buf := make([]byte, 1500)
 
 	r := FlowRecord{
-		SrcIP:    net.ParseIP("10.0.0.1").To4(),
-		DstIP:    net.ParseIP("10.0.0.2").To4(),
-		NextHop:  net.ParseIP("2001:db8::feed"), // IPv6 nexthop
-		SrcPort:  1000, DstPort: 443, Protocol: 6,
+		SrcIP:   net.ParseIP("10.0.0.1").To4(),
+		DstIP:   net.ParseIP("10.0.0.2").To4(),
+		NextHop: net.ParseIP("2001:db8::feed"), // IPv6 nexthop
+		SrcPort: 1000, DstPort: 443, Protocol: 6,
 		Bytes: 100, Packets: 1,
 		StartMs: 500, EndMs: 600,
 		InIface: 1, OutIface: 2, SrcMask: 24, DstMask: 24,
@@ -666,16 +666,16 @@ func TestNetFlow5Tick_FlowSequenceCumulative(t *testing.T) {
 	// Large MaxFlows so 80 records fit; short timeouts so everything expires.
 	profile := &FlowProfile{
 		TCPWeight: 1.0, UDPWeight: 0, ICMPWeight: 0,
-		DstPorts:        []PortWeight{{443, 1.0}},
-		SrcPortMin:      1024, SrcPortMax: 65535,
-		BytesMin:        100, BytesMax: 200,
-		PktsMin:         1, PktsMax: 2,
-		DurationMinMs:   100, DurationMaxMs: 200,
+		DstPorts:   []PortWeight{{443, 1.0}},
+		SrcPortMin: 1024, SrcPortMax: 65535,
+		BytesMin: 100, BytesMax: 200,
+		PktsMin: 1, PktsMax: 2,
+		DurationMinMs: 100, DurationMaxMs: 200,
 		ConcurrentFlows: 100,
 		MaxFlows:        256,
 	}
 
-	fe := NewFlowExporter(testDevice("10.5.6.7"), profile,
+	fe := newTestFlowExporter(testDevice("10.5.6.7"), profile,
 		1*time.Millisecond, 1*time.Millisecond, 10*time.Minute)
 
 	// Insert 80 pre-expired IPv4 flows.
@@ -694,7 +694,7 @@ func TestNetFlow5Tick_FlowSequenceCumulative(t *testing.T) {
 	}
 
 	enc := &NetFlow5Encoder{}
-	fe.Tick(time.Now(), enc, conn, collectorAddr, testPool())
+	tickWithEncoder(fe, time.Now(), enc, conn, collectorAddr, testPool())
 
 	// Collect all packets emitted by this single Tick.
 	var packets [][]byte

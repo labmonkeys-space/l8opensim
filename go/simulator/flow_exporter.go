@@ -76,17 +76,41 @@ type FlowTickStats struct {
 // flowSourcePerDevice is enabled) lets each exporter send UDP packets with
 // a source IP matching the simulated device, so collectors like OpenNMS
 // Telemetryd can attribute flows to the correct node. When conn is nil,
-// Tick falls back to the shared SimulatorManager socket.
+// Tick falls back to the shared-socket pool (one entry per (collector,
+// protocol) tuple) via `SimulatorManager.flowConnFor`.
+//
+// As of the per-device-export-config refactor, the exporter owns its
+// protocol / encoder / collector address and cumulative stat counters
+// instead of pulling them from the manager at tick time. That keeps
+// heterogeneous fleets coherent: devices pointing at different collectors
+// or using different protocols tick independently through the same
+// goroutine.
 type FlowExporter struct {
 	cache            *FlowCache
 	profile          *FlowProfile
 	rng              *rand.Rand
 	seqNo            uint32
-	domainID         uint32        // device IPv4 as uint32 (RFC 7011 §3.1)
-	startTime        time.Time     // reference point for SysUptime
-	lastTempl        time.Time     // last template transmission time
+	domainID         uint32    // device IPv4 as uint32 (RFC 7011 §3.1)
+	startTime        time.Time // reference point for SysUptime
+	lastTempl        time.Time // last template transmission time
 	templateInterval time.Duration
-	// conn is the per-device UDP socket (nil = use shared conn). atomic.Pointer
+
+	// Per-device wire configuration (owned by the exporter, not the manager).
+	// collectorStr keeps the human-readable "host:port" for status reporting;
+	// collectorAddr is the resolved *net.UDPAddr used for WriteTo. protocol
+	// is the canonicalised name ("netflow9" / "ipfix" / "netflow5" / "sflow").
+	collectorStr  string
+	collectorAddr *net.UDPAddr
+	protocol      string
+	encoder       FlowEncoder
+
+	// Per-exporter cumulative counters. Summed at status-endpoint read
+	// time to produce FlowStatus.Collectors aggregates.
+	statPackets atomic.Uint64
+	statBytes   atomic.Uint64
+	statRecords atomic.Uint64
+
+	// conn is the per-device UDP socket (nil = use shared pool). atomic.Pointer
 	// so Tick (ticker goroutine) and Close (device-shutdown paths) can read and
 	// clear it without racing. Callers must use Load/Store/Swap — never touch
 	// the field by address.
@@ -101,7 +125,16 @@ type FlowExporter struct {
 // NewFlowExporter creates a FlowExporter for device, using profile to drive
 // synthetic flow generation. The RNG is seeded from the device's domainID so
 // each device produces distinct but deterministic traffic patterns.
-func NewFlowExporter(device *DeviceSimulator, profile *FlowProfile, activeTimeout, inactiveTimeout, templateInterval time.Duration) *FlowExporter {
+//
+// collectorStr is the "host:port" the device exports to; collectorAddr is the
+// resolved form (the caller must pre-resolve so construction is cheap);
+// protocol is the canonical protocol name; encoder is the matching encoder
+// instance. Callers typically use `SimulatorManager.attachFlowExporter`
+// rather than calling this constructor directly.
+func NewFlowExporter(device *DeviceSimulator, profile *FlowProfile,
+	activeTimeout, inactiveTimeout, templateInterval time.Duration,
+	collectorStr string, collectorAddr *net.UDPAddr,
+	protocol string, encoder FlowEncoder) *FlowExporter {
 	var domainID uint32
 	if ip4 := device.IP.To4(); ip4 != nil {
 		domainID = binary.BigEndian.Uint32(ip4)
@@ -113,6 +146,10 @@ func NewFlowExporter(device *DeviceSimulator, profile *FlowProfile, activeTimeou
 		domainID:         domainID,
 		startTime:        time.Now(),
 		templateInterval: templateInterval,
+		collectorStr:     collectorStr,
+		collectorAddr:    collectorAddr,
+		protocol:         protocol,
+		encoder:          encoder,
 	}
 }
 
@@ -133,29 +170,34 @@ func (fe *FlowExporter) Close() error {
 
 // Tick is called by the shared SimulatorManager ticker goroutine on every
 // flowTickInterval. It replenishes the flow cache to ConcurrentFlows, expires
-// aged records, and emits one or more UDP datagrams to collectorAddr.
+// aged records, and emits one or more UDP datagrams to `fe.collectorAddr`
+// using `fe.encoder`.
 //
 // When fe.conn is non-nil (per-device mode) it is used for the WriteTo; the
-// passed-in conn is the shared fallback used when the per-device socket
-// could not be opened or per-device mode is disabled.
+// passed-in sharedConn is the shared-pool fallback (keyed by collector +
+// protocol) used when the per-device socket could not be opened or
+// per-device mode is disabled. sharedConn may be nil when the pool
+// could not open a socket for this exporter's (collector, protocol) tuple.
 //
 // bufPool must supply []byte slices of at least 1500 bytes.
 // Write errors are ignored (best-effort delivery; collector may be down).
 // The returned FlowTickStats are summed by tickAllFlowExporters into the
-// cumulative atomic counters on SimulatorManager.
-func (fe *FlowExporter) Tick(now time.Time, encoder FlowEncoder, conn *net.UDPConn, collectorAddr *net.UDPAddr, bufPool *sync.Pool) FlowTickStats {
+// per-exporter atomic counters and aggregated at status-endpoint read time.
+func (fe *FlowExporter) Tick(now time.Time, sharedConn *net.UDPConn, bufPool *sync.Pool) FlowTickStats {
 	uptimeMs := uint32(now.Sub(fe.startTime).Milliseconds())
 	deviceIP := domainIDtoIP(fe.domainID)
+	encoder := fe.encoder
+	collectorAddr := fe.collectorAddr
 
 	// Prefer the per-device socket (source IP = device IP) when set; fall back
-	// to the shared SimulatorManager socket so callers that don't use
-	// per-device binding (tests, ns-disabled deployments) still work.
+	// to the shared-pool socket so callers that don't use per-device binding
+	// (tests, ns-disabled deployments) still work.
 	// atomic Load pairs with Swap in Close — Tick never observes a torn pointer.
 	writeConn := fe.conn.Load()
 	if writeConn == nil {
-		writeConn = conn
+		writeConn = sharedConn
 	}
-	if writeConn == nil {
+	if writeConn == nil || collectorAddr == nil || encoder == nil {
 		return FlowTickStats{}
 	}
 
@@ -292,18 +334,19 @@ func (fe *FlowExporter) Tick(now time.Time, encoder FlowEncoder, conn *net.UDPCo
 // SetFlowSourcePerDevice toggles per-device UDP source IP binding. When true,
 // each device opens its own UDP socket inside the opensim namespace bound to
 // the device's IP, so collectors see per-device exporter IPs rather than the
-// container host IP. Must be called before InitFlowExport.
+// container host IP. Read at per-device attach time; call before the
+// first call to `CreateDevices` that carries a flow seed.
 func (sm *SimulatorManager) SetFlowSourcePerDevice(enabled bool) {
 	sm.flowSourcePerDevice = enabled
 }
 
 // registerSFlowCounterSources wires per-device CounterSource instances onto
-// the FlowExporter, but only when the active protocol is sFlow. Under
+// the FlowExporter, but only when the device's protocol is sFlow. Under
 // NetFlow/IPFIX/NF5 the sources are never consulted, so skipping registration
 // avoids per-device allocations for the 30,000+ device workloads this
 // simulator is built for.
 func (sm *SimulatorManager) registerSFlowCounterSources(device *DeviceSimulator) {
-	if sm.flowProtocol != "sflow" || device.flowExporter == nil {
+	if device.flowExporter == nil || device.flowExporter.protocol != "sflow" {
 		return
 	}
 	var sources []CounterSource
@@ -321,14 +364,14 @@ func (sm *SimulatorManager) registerSFlowCounterSources(device *DeviceSimulator)
 
 // openFlowConnForDevice opens a per-device UDP socket bound to the device's
 // IP (ephemeral source port) and assigns it to device.flowExporter.conn.
-// Silently falls through to the shared socket when:
+// Silently falls through to the shared-pool socket when:
 //   - per-device mode is disabled,
 //   - namespace isolation is off (device.netNamespace == nil),
 //   - or the bind fails (typically because the opensim ns has no route to
 //     the collector — see issue #36).
 //
 // Best-effort: a failed per-device bind logs once and the exporter keeps
-// working via the shared socket.
+// working via the shared-pool socket.
 func (sm *SimulatorManager) openFlowConnForDevice(device *DeviceSimulator) {
 	if !sm.flowSourcePerDevice || device.flowExporter == nil {
 		return
@@ -339,7 +382,7 @@ func (sm *SimulatorManager) openFlowConnForDevice(device *DeviceSimulator) {
 	addr := &net.UDPAddr{IP: device.IP, Port: 0}
 	conn, err := device.netNamespace.ListenUDPInNamespace(addr)
 	if err != nil {
-		if sm.flowProtocol == "sflow" {
+		if device.flowExporter.protocol == "sflow" {
 			log.Printf("flow export: device %s per-device bind failed, falling back to shared socket: %v (sFlow agent_address may not match UDP source IP observed by collector)", device.IP, err)
 		} else {
 			log.Printf("flow export: device %s per-device bind failed, falling back to shared socket: %v", device.IP, err)
@@ -350,6 +393,89 @@ func (sm *SimulatorManager) openFlowConnForDevice(device *DeviceSimulator) {
 	device.flowExporter.conn.Store(conn)
 }
 
+// flowConnFor returns the shared-pool UDP socket for a (collector, protocol)
+// tuple. First caller for a key opens the socket; subsequent callers reuse
+// it. Returns nil if the socket can't be opened. Safe for concurrent use.
+func (sm *SimulatorManager) flowConnFor(key flowConnKey) *net.UDPConn {
+	if cached, ok := sm.flowConns.Load(key); ok {
+		return cached.(*net.UDPConn)
+	}
+	conn, err := net.ListenUDP("udp", &net.UDPAddr{})
+	if err != nil {
+		log.Printf("flow export: failed to open shared socket for %s/%s: %v", key.collector, key.protocol, err)
+		return nil
+	}
+	actual, loaded := sm.flowConns.LoadOrStore(key, conn)
+	if loaded {
+		// Another goroutine opened a socket for this key first. Close ours.
+		_ = conn.Close()
+		return actual.(*net.UDPConn)
+	}
+	return conn
+}
+
+// closeFlowConnPool closes every pooled shared socket. Called from
+// Shutdown after the ticker goroutine has exited.
+func (sm *SimulatorManager) closeFlowConnPool() {
+	sm.flowConns.Range(func(_, v interface{}) bool {
+		if conn, ok := v.(*net.UDPConn); ok {
+			_ = conn.Close()
+		}
+		return true
+	})
+	sm.flowConns = sync.Map{}
+}
+
+// buildFlowEncoder returns the encoder + canonical protocol name for a
+// configured protocol string. Caller must have already canonicalised via
+// `DeviceFlowConfig.Validate` — this function is strict and returns an
+// error for anything it doesn't recognise. Centralised so the
+// `attachFlowExporter` path and any future REST-validation path share one
+// source of truth.
+func buildFlowEncoder(protocol string) (FlowEncoder, string, error) {
+	switch strings.ToLower(protocol) {
+	case "netflow9", "nf9", "":
+		return NetFlow9Encoder{}, "netflow9", nil
+	case "ipfix", "ipfix10":
+		return IPFIXEncoder{}, "ipfix", nil
+	case "netflow5", "nf5":
+		return &NetFlow5Encoder{}, "netflow5", nil
+	case "sflow", "sflow5":
+		return SFlowEncoder{}, "sflow", nil
+	default:
+		return nil, "", fmt.Errorf("unknown flow protocol %q (supported: netflow9, ipfix, netflow5, sflow)", protocol)
+	}
+}
+
+// attachFlowExporter constructs and wires a FlowExporter for a device that
+// already has `device.flowConfig` populated. Opens the per-device UDP
+// socket if `flowSourcePerDevice` is enabled; registers sFlow counter
+// sources if the device is exporting sFlow. On failure, logs and leaves
+// `device.flowExporter == nil` so the device participates in the
+// simulator but without flow export.
+func (sm *SimulatorManager) attachFlowExporter(device *DeviceSimulator, flowProfile *FlowProfile) error {
+	cfg := device.flowConfig
+	if cfg == nil {
+		return nil
+	}
+	encoder, canonical, err := buildFlowEncoder(cfg.Protocol)
+	if err != nil {
+		return err
+	}
+	collectorAddr, err := net.ResolveUDPAddr("udp", cfg.Collector)
+	if err != nil {
+		return fmt.Errorf("resolve collector %q: %w", cfg.Collector, err)
+	}
+	device.flowExporter = NewFlowExporter(device, flowProfile,
+		time.Duration(cfg.ActiveTimeout),
+		time.Duration(cfg.InactiveTimeout),
+		sm.flowTemplateInterval,
+		cfg.Collector, collectorAddr, canonical, encoder)
+	sm.openFlowConnForDevice(device)
+	sm.registerSFlowCounterSources(device)
+	return nil
+}
+
 // domainIDtoIP converts a uint32 ObservationDomainID back to a net.IP.
 func domainIDtoIP(id uint32) net.IP {
 	ip := make(net.IP, 4)
@@ -357,71 +483,49 @@ func domainIDtoIP(id uint32) net.IP {
 	return ip
 }
 
-// InitFlowExport opens a shared UDP socket, selects an encoder, and starts the
-// shared ticker goroutine. Call once after NewSimulatorManagerWithOptions.
+// initFlowSubsystem sets up the simulator-wide flow export infrastructure
+// that's always live: the 1500-byte buffer pool, the stop channel, and
+// the ticker goroutine. After this runs, per-device attach via
+// `attachFlowExporter` wires up individual exporters; the ticker walks
+// them on every tick interval and no-ops when the list is empty.
 //
-// collectorAddr is "host:port" (e.g. "192.168.1.100:2055").
-// protocol selects the wire format: "netflow9" (default), "ipfix", or
-// "netflow5". Aliases "nf9", "ipfix10", and "nf5" are also accepted.
-//
-// Call SetFlowSourcePerDevice beforehand to enable per-device source IP binding.
-func (sm *SimulatorManager) InitFlowExport(collectorAddr, protocol string, activeTimeout, inactiveTimeout, templateInterval, tickInterval time.Duration) error {
-	if sm.flowActive.Load() {
-		return fmt.Errorf("flow export: already active; call Shutdown() before re-initializing")
-	}
-
-	addr, err := net.ResolveUDPAddr("udp4", collectorAddr)
-	if err != nil {
-		return fmt.Errorf("flow export: invalid collector address %q: %w", collectorAddr, err)
-	}
-
-	conn, err := net.ListenUDP("udp4", &net.UDPAddr{})
-	if err != nil {
-		return fmt.Errorf("flow export: failed to open UDP socket: %w", err)
-	}
-
-	var enc FlowEncoder
-	var canonicalProtocol string
-	switch strings.ToLower(protocol) {
-	case "netflow9", "nf9", "":
-		enc = NetFlow9Encoder{}
-		canonicalProtocol = "netflow9"
-	case "ipfix", "ipfix10":
-		enc = IPFIXEncoder{}
-		canonicalProtocol = "ipfix"
-	case "netflow5", "nf5":
-		enc = &NetFlow5Encoder{}
-		canonicalProtocol = "netflow5"
-	case "sflow", "sflow5":
-		enc = SFlowEncoder{}
-		canonicalProtocol = "sflow"
-	default:
-		conn.Close()
-		return fmt.Errorf("flow export: unknown protocol %q (supported: netflow9, ipfix, netflow5, sflow)", protocol)
-	}
-
-	sm.flowConn = conn
-	sm.flowCollectorAddr = addr
-	sm.flowCollectorStr = collectorAddr
-	sm.flowProtocol = canonicalProtocol
-	sm.flowEncoder = enc
-	sm.flowActiveTimeout = activeTimeout
-	sm.flowInactiveTimeout = inactiveTimeout
-	sm.flowTemplateInterval = templateInterval
-	sm.flowTickInterval = tickInterval
+// Called unconditionally from `NewSimulatorManagerWithOptions` (design
+// §D9: always-on scheduler). The simulator-wide tick / template interval
+// defaults are set here; operators override them via SetFlowTickInterval
+// / SetFlowTemplateInterval before creating devices. Safe to call once.
+func (sm *SimulatorManager) initFlowSubsystem() {
 	sm.flowBufPool.New = func() interface{} {
 		buf := make([]byte, 1500)
 		return buf
 	}
 	sm.flowStopCh = make(chan struct{})
 	sm.flowStopOnce = sync.Once{}
-	sm.flowActive.Store(true)
-
-	log.Printf("Flow export: %s → %s (protocol: %s, tick: %s, active-timeout: %s)",
-		conn.LocalAddr(), collectorAddr, protocol, tickInterval, activeTimeout)
-
+	if sm.flowTickInterval == 0 {
+		sm.flowTickInterval = defaultFlowTickInterval
+	}
+	if sm.flowTemplateInterval == 0 {
+		sm.flowTemplateInterval = 60 * time.Second
+	}
 	sm.startFlowTicker()
-	return nil
+}
+
+// SetFlowTickInterval overrides the simulator-wide flow ticker cadence.
+// Call before device creation. Per-device `TickInterval` fields are
+// stored on DeviceFlowConfig but not yet honored (design debt documented
+// in the per-device-export-config change).
+func (sm *SimulatorManager) SetFlowTickInterval(d time.Duration) {
+	if d > 0 {
+		sm.flowTickInterval = d
+	}
+}
+
+// SetFlowTemplateInterval overrides the simulator-wide template refresh
+// interval (applies to NetFlow v9 / IPFIX). Call before device creation.
+// `template_interval` is global per design §D5.
+func (sm *SimulatorManager) SetFlowTemplateInterval(d time.Duration) {
+	if d > 0 {
+		sm.flowTemplateInterval = d
+	}
 }
 
 // startFlowTicker launches a single background goroutine that calls Tick on
@@ -445,8 +549,10 @@ func (sm *SimulatorManager) startFlowTicker() {
 }
 
 // tickAllFlowExporters calls Tick on every device that has a FlowExporter.
-// It takes a read lock to snapshot the device list, then releases it before
-// calling Tick to avoid holding the lock during I/O.
+// Each exporter supplies its own encoder / collectorAddr; the manager
+// supplies the shared-pool fallback socket (looked up by the exporter's
+// (collector, protocol) key). Stats are accumulated per-exporter and
+// aggregated at status-endpoint read time.
 func (sm *SimulatorManager) tickAllFlowExporters(now time.Time) {
 	sm.mu.RLock()
 	exporters := make([]*FlowExporter, 0, len(sm.devices))
@@ -455,52 +561,71 @@ func (sm *SimulatorManager) tickAllFlowExporters(now time.Time) {
 			exporters = append(exporters, d.flowExporter)
 		}
 	}
-	// Snapshot shared transport fields under the lock to avoid racing with Shutdown.
-	conn := sm.flowConn
-	collectorAddr := sm.flowCollectorAddr
-	encoder := sm.flowEncoder
 	sm.mu.RUnlock()
 
-	if conn == nil {
-		return // flow export was shut down between tick and snapshot
-	}
-
-	var totalPackets, totalBytes, totalRecords uint64
 	var lastTemplMs int64
 	for _, fe := range exporters {
-		s := fe.Tick(now, encoder, conn, collectorAddr, &sm.flowBufPool)
-		totalPackets += s.PacketsSent
-		totalBytes += s.BytesSent
-		totalRecords += s.RecordsSent
+		var sharedConn *net.UDPConn
+		if fe.conn.Load() == nil {
+			sharedConn = sm.flowConnFor(flowConnKey{collector: fe.collectorStr, protocol: fe.protocol})
+		}
+		s := fe.Tick(now, sharedConn, &sm.flowBufPool)
+		if s.PacketsSent > 0 {
+			fe.statPackets.Add(s.PacketsSent)
+			fe.statBytes.Add(s.BytesSent)
+			fe.statRecords.Add(s.RecordsSent)
+		}
 		if s.LastTemplateMs > lastTemplMs {
 			lastTemplMs = s.LastTemplateMs
 		}
-	}
-	if totalPackets > 0 {
-		sm.flowStatPackets.Add(totalPackets)
-		sm.flowStatBytes.Add(totalBytes)
-		sm.flowStatRecords.Add(totalRecords)
 	}
 	if lastTemplMs > 0 {
 		sm.flowStatLastTmpl.Store(lastTemplMs)
 	}
 }
 
-// GetFlowStatus returns a snapshot of the current flow export state and
-// cumulative counters. Returns {Enabled: false} when flow export is off.
+// GetFlowStatus returns the aggregated flow-export snapshot. Devices
+// sharing the same (collector, protocol) tuple collapse into one record
+// in the `Collectors` array; counters are cumulative since each
+// exporter's construction.
+//
+// BREAKING (per-device-export-config phase 3): returns the new
+// array-of-collectors shape. The legacy scalar fields are retired;
+// callers detect "feature off" via `len(collectors) == 0`.
 func (sm *SimulatorManager) GetFlowStatus() FlowStatus {
-	if !sm.flowActive.Load() {
-		return FlowStatus{Enabled: false}
+	type aggKey struct {
+		collector, protocol string
 	}
+	agg := make(map[aggKey]*FlowCollectorStatus)
 
 	sm.mu.RLock()
-	devicesExporting := 0
 	for _, d := range sm.devices {
-		if d.flowExporter != nil {
-			devicesExporting++
+		fe := d.flowExporter
+		if fe == nil {
+			continue
 		}
+		k := aggKey{fe.collectorStr, fe.protocol}
+		rec, ok := agg[k]
+		if !ok {
+			rec = &FlowCollectorStatus{
+				Collector: fe.collectorStr,
+				Protocol:  fe.protocol,
+			}
+			agg[k] = rec
+		}
+		rec.Devices++
+		rec.SentPackets += fe.statPackets.Load()
+		rec.SentBytes += fe.statBytes.Load()
+		rec.SentRecords += fe.statRecords.Load()
 	}
 	sm.mu.RUnlock()
+
+	collectors := make([]FlowCollectorStatus, 0, len(agg))
+	totalDevices := 0
+	for _, rec := range agg {
+		collectors = append(collectors, *rec)
+		totalDevices += rec.Devices
+	}
 
 	var lastTemplate string
 	if ms := sm.flowStatLastTmpl.Load(); ms > 0 {
@@ -508,13 +633,8 @@ func (sm *SimulatorManager) GetFlowStatus() FlowStatus {
 	}
 
 	return FlowStatus{
-		Enabled:            true,
-		Protocol:           sm.flowProtocol,
-		Collector:          sm.flowCollectorStr,
-		TotalFlowsExported: sm.flowStatRecords.Load(),
-		TotalPacketsSent:   sm.flowStatPackets.Load(),
-		TotalBytesSent:     sm.flowStatBytes.Load(),
-		DevicesExporting:   devicesExporting,
-		LastTemplateSend:   lastTemplate,
+		Collectors:       collectors,
+		DevicesExporting: totalDevices,
+		LastTemplateSend: lastTemplate,
 	}
 }

@@ -36,12 +36,15 @@ func makeDeviceID(ip net.IP, typeSlug string) string {
 	return fmt.Sprintf("%s-%s", typeSlug, ip.String())
 }
 
-func (sm *SimulatorManager) CreateDevices(startIP string, count int, netmask string, resourceFile string, v3Config *SNMPv3Config, roundRobin bool, category string, snmpPort int) error {
-	return sm.CreateDevicesWithOptions(startIP, count, netmask, resourceFile, v3Config, true, 0, roundRobin, category, snmpPort)
+func (sm *SimulatorManager) CreateDevices(startIP string, count int, netmask string, resourceFile string, v3Config *SNMPv3Config, roundRobin bool, category string, snmpPort int, seed *ExportSeed) error {
+	return sm.CreateDevicesWithOptions(startIP, count, netmask, resourceFile, v3Config, true, 0, roundRobin, category, snmpPort, seed)
 }
 
-// CreateDevicesWithOptions creates devices with optional pre-allocation control
-func (sm *SimulatorManager) CreateDevicesWithOptions(startIP string, count int, netmask string, resourceFile string, v3Config *SNMPv3Config, preAllocate bool, maxWorkers int, roundRobin bool, category string, snmpPort int) error {
+// CreateDevicesWithOptions creates devices with optional pre-allocation control.
+// `seed`, when non-nil, populates every created device's `flowConfig` /
+// `trapConfig` / `syslogConfig` pointer fields with a copy of the seed's
+// non-nil blocks (per-device-export-config phase 3).
+func (sm *SimulatorManager) CreateDevicesWithOptions(startIP string, count int, netmask string, resourceFile string, v3Config *SNMPv3Config, preAllocate bool, maxWorkers int, roundRobin bool, category string, snmpPort int, seed *ExportSeed) error {
 	if snmpPort == 0 {
 		snmpPort = DEFAULT_SNMP_PORT
 	}
@@ -162,7 +165,7 @@ func (sm *SimulatorManager) CreateDevicesWithOptions(startIP string, count int, 
 
 	if sm.tunPoolSize > 0 {
 		// Pre-allocation was done - create devices in parallel
-		sm.createDevicesParallel(count, netmask, resourceFile, resources, v3Config, &successCount, roundRobin, roundRobinResources, roundRobinResourceFiles, snmpPort)
+		sm.createDevicesParallel(count, netmask, resourceFile, resources, v3Config, &successCount, roundRobin, roundRobinResources, roundRobinResourceFiles, snmpPort, seed)
 	} else {
 		// No pre-allocation - create devices sequentially (original logic)
 		for i := 0; i < count; i++ {
@@ -263,13 +266,18 @@ func (sm *SimulatorManager) CreateDevicesWithOptions(startIP string, count int, 
 			device.metricsCycler.InitGPUMetrics(int64(i), profile.GPU)
 			device.metricsCycler.InitIfCounters(deviceResources, int64(i)^0x4843_0000)
 
-			// Initialize flow exporter if flow export is enabled.
-			if sm.flowActive.Load() {
+			// Apply the batch-level export seed to this device (phase 3).
+			// A nil seed or nil block means "no export of this type for this
+			// device"; a non-nil block is copied so subsequent mutations
+			// don't leak across devices.
+			applyExportSeed(device, seed)
+
+			// Initialize flow exporter if this device has flow config.
+			if device.flowConfig != nil {
 				flowProfile := GetFlowProfile(deviceResourceFile)
-				device.flowExporter = NewFlowExporter(device, flowProfile,
-					sm.flowActiveTimeout, sm.flowInactiveTimeout, sm.flowTemplateInterval)
-				sm.openFlowConnForDevice(device)
-				sm.registerSFlowCounterSources(device)
+				if err := sm.attachFlowExporter(device, flowProfile); err != nil {
+					log.Printf("flow export: skipping device %s: %v", device.IP, err)
+				}
 			}
 
 			// Register device type BEFORE starting exporters. startDevice*Exporter
@@ -380,8 +388,10 @@ func (sm *SimulatorManager) CreateDevicesWithOptions(startIP string, count int, 
 	return nil
 }
 
-// createDevicesParallel creates devices in parallel when pre-allocation was done
-func (sm *SimulatorManager) createDevicesParallel(count int, netmask string, resourceFile string, resources *DeviceResources, v3Config *SNMPv3Config, successCount *int, roundRobin bool, roundRobinResources []*DeviceResources, roundRobinResourceFiles []string, snmpPort int) {
+// createDevicesParallel creates devices in parallel when pre-allocation was done.
+// `seed` is propagated verbatim to every worker; each worker passes it into
+// `createSingleDevice` which copies per-device.
+func (sm *SimulatorManager) createDevicesParallel(count int, netmask string, resourceFile string, resources *DeviceResources, v3Config *SNMPv3Config, successCount *int, roundRobin bool, roundRobinResources []*DeviceResources, roundRobinResourceFiles []string, snmpPort int, seed *ExportSeed) {
 	// Worker pool for parallel device creation
 	sem := make(chan struct{}, sm.maxWorkers) // Limit concurrent workers
 	var wg sync.WaitGroup
@@ -441,7 +451,7 @@ func (sm *SimulatorManager) createDevicesParallel(count int, netmask string, res
 			defer func() { <-sem }()
 
 			// Create device in parallel
-			if sm.createSingleDevice(deviceIndex, ip, devID, netmask, devResourceFile, devResources, v3Config, snmpPort) {
+			if sm.createSingleDevice(deviceIndex, ip, devID, netmask, devResourceFile, devResources, v3Config, snmpPort, seed) {
 				mu.Lock()
 				(*successCount)++
 				progress := *successCount
@@ -465,8 +475,9 @@ func (sm *SimulatorManager) createDevicesParallel(count int, netmask string, res
 	log.Printf("Parallel creation rate: %.2f devices/second", float64(*successCount)/parallelElapsed.Seconds())
 }
 
-// createSingleDevice creates a single device - used by parallel device creation
-func (sm *SimulatorManager) createSingleDevice(deviceIndex int, deviceIP net.IP, deviceID string, netmask string, resourceFile string, resources *DeviceResources, v3Config *SNMPv3Config, snmpPort int) bool {
+// createSingleDevice creates a single device - used by parallel device creation.
+// `seed` propagates the batch-level export configuration (phase 3).
+func (sm *SimulatorManager) createSingleDevice(deviceIndex int, deviceIP net.IP, deviceID string, netmask string, resourceFile string, resources *DeviceResources, v3Config *SNMPv3Config, snmpPort int, seed *ExportSeed) bool {
 	// Check if we have a pre-allocated interface for this IP
 	var tunIface *TunInterface
 
@@ -524,13 +535,17 @@ func (sm *SimulatorManager) createSingleDevice(deviceIndex int, deviceIP net.IP,
 	device.metricsCycler.InitGPUMetrics(int64(deviceIndex), profile.GPU)
 	device.metricsCycler.InitIfCounters(resources, int64(deviceIndex)^0x4843_0000)
 
-	// Initialize flow exporter if flow export is enabled.
-	if sm.flowActive.Load() {
+	// Apply the batch-level export seed (phase 3). Parallel workers see
+	// the same seed pointer; each device gets its own copy via
+	// applyExportSeed so downstream mutations don't race.
+	applyExportSeed(device, seed)
+
+	// Initialize flow exporter if this device has flow config.
+	if device.flowConfig != nil {
 		flowProfile := GetFlowProfile(resourceFile)
-		device.flowExporter = NewFlowExporter(device, flowProfile,
-			sm.flowActiveTimeout, sm.flowInactiveTimeout, sm.flowTemplateInterval)
-		sm.openFlowConnForDevice(device)
-		sm.registerSFlowCounterSources(device)
+		if err := sm.attachFlowExporter(device, flowProfile); err != nil {
+			log.Printf("flow export: skipping device %s: %v", device.IP, err)
+		}
 	}
 
 	// Register device type BEFORE starting exporters so scheduler fires
