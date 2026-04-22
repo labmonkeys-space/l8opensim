@@ -44,12 +44,12 @@ dist: check-go
 	cd $(GO_DIR) && CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o ../dist/$(BINARY)-linux-amd64 ./simulator
 	cd $(GO_DIR) && CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -o ../dist/$(BINARY)-linux-arm64 ./simulator
 
-## test: Run tests (simulator package requires Linux; other packages run on any OS)
+## test: Run tests (simulator package requires Linux)
 test: check-go
 ifneq ($(UNAME_S),Linux)
-	@echo "Note: skipping simulator package on $(UNAME_S) — it uses Linux-only syscalls."
-	@echo "      Running tests/... only. Use a Linux host or container for full coverage."
-	cd $(GO_DIR) && go test ./tests/...
+	@echo "Note: no tests to run on $(UNAME_S) — the simulator package uses"
+	@echo "      Linux-only syscalls (TUN, network namespaces). Use a Linux"
+	@echo "      host or container for test coverage."
 else
 	cd $(GO_DIR) && go test ./...
 endif

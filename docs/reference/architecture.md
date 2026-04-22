@@ -52,8 +52,7 @@ flowchart LR
 
 | Path | Purpose |
 |------|---------|
-| `go/simulator/` | Core simulator — all device simulation logic. |
-| `go/tests/` | Integration tests. |
+| `go/simulator/` | Core simulator — all device simulation logic and tests. |
 | `go/simulator/resources/` | Per-device-type JSON resource files (SNMP / SSH / REST) across 28 device-type directories, plus the `worldcities/` datasets used for `sysLocation`. |
 
 Top-level helper scripts: `diagnose_system.sh`, `ubuntu_setup.sh`,

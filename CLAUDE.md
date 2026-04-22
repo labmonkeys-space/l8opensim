@@ -56,7 +56,7 @@ cd go
 go test ./...
 
 # Run a single test
-go test ./tests/ -run TestDevices
+go test ./simulator/ -run TestSomething
 ```
 
 ## Architecture
@@ -67,8 +67,7 @@ go test ./tests/ -run TestDevices
 
 | Path | Purpose |
 |------|---------|
-| `go/simulator/` | Core simulator — all device simulation logic |
-| `go/tests/` | Integration tests |
+| `go/simulator/` | Core simulator — all device simulation logic and tests |
 | `go/simulator/resources/` | 379 JSON files (28 device types) with SNMP/SSH/REST response data |
 
 ### Core simulator components (`go/simulator/`)
