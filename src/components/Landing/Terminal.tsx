@@ -7,10 +7,13 @@ function useTypewriter(lines: TerminalLine[], speed = 12, lineDelay = 140) {
 
   useEffect(() => {
     if (idx >= lines.length) {
-      const t = setTimeout(() => { setIdx(0); setChars(0); }, 3200);
-      return () => clearTimeout(t);
+      return; // play-once: freeze on the final line
     }
     const line = lines[idx];
+    if (line.k === 'blank') {
+      const t = setTimeout(() => { setIdx(i => i + 1); setChars(0); }, lineDelay);
+      return () => clearTimeout(t);
+    }
     if (line.k === 'bar') {
       let p = 0;
       const id = setInterval(() => {
@@ -55,14 +58,16 @@ export default function Terminal(): JSX.Element {
     } else if (line.k === 'cmd') {
       out.push(
         <div key={i} className="l8-tl l8-tl--cmd">
-          <span className="l8-tl__pfx l8-tl__pfx--prompt">root@opensim</span>
+          <span className="l8-tl__pfx l8-tl__pfx--prompt">noc@laptop</span>
           <span className="l8-tl__colon">:</span>
-          <span className="l8-tl__path">~/go/simulator</span>
-          <span className="l8-tl__colon">#</span>
+          <span className="l8-tl__path">~</span>
+          <span className="l8-tl__colon">$</span>
           <span className="l8-tl__txt">&nbsp;{isCurrent ? line.text.slice(0, chars) : line.text}</span>
           {isCurrent && <span className="l8-tl__caret" />}
         </div>,
       );
+    } else if (line.k === 'blank') {
+      out.push(<div key={i} className="l8-tl l8-tl--blank">&nbsp;</div>);
     } else if (line.k === 'ok') {
       out.push(
         <div key={i} className="l8-tl l8-tl--ok">
@@ -86,8 +91,7 @@ export default function Terminal(): JSX.Element {
     <div className="l8-term">
       <div className="l8-term__hd">
         <span className="l8-term__dots"><i /><i /><i /></span>
-        <span className="l8-term__title">root@opensim — simulator — 132×36</span>
-        <span className="l8-term__badge">live</span>
+        <span className="l8-term__title">noc@laptop — ~ — 132×36</span>
       </div>
       <div className="l8-term__body">{out}</div>
     </div>

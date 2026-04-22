@@ -7,7 +7,8 @@ export type DocGroup = { group: string; body: string; links: { t: string; h: str
 export type StatusGroup = { k: string; items: string[] };
 export type TerminalLine =
   | { k: 'cmd' | 'out' | 'ok'; text: string }
-  | { k: 'bar'; text: string };
+  | { k: 'bar'; text: string }
+  | { k: 'blank' };
 
 export const FEATURES: Feature[] = [
   { icon: 'scale', title: '30,000 devices', body: 'Tested scale on a single host. Parallel TUN pre-allocation, lock-free sync.Map for O(1) OID lookups, pre-computed next-OID mappings.' },
@@ -67,15 +68,20 @@ export const STATUS: StatusGroup[] = [
 ];
 
 export const TERMINAL_SCRIPT: TerminalLine[] = [
-  { k: 'cmd', text: 'sudo ./simulator -auto-start-ip 10.0.0.1 -auto-count 30000' },
-  { k: 'out', text: '[opensim] preflight: TUN module OK · file-descriptors 1048576' },
-  { k: 'out', text: '[opensim] netns  opensim  created' },
-  { k: 'out', text: '[opensim] parallel TUN pre-allocation  (workers=64)' },
-  { k: 'bar', text: 'alloc' },
-  { k: 'out', text: '[opensim] 30000/30000 interfaces up  in 12.4s' },
-  { k: 'out', text: '[opensim] snmp v2c/v3 · ssh (vt100) · https rest · netflow v5/v9/ipfix' },
-  { k: 'out', text: '[opensim] web ui   http://localhost:8080/' },
-  { k: 'ok',  text: 'ready · 30000 devices · mem 77 MB · cpu 0.4%' },
-  { k: 'cmd', text: 'snmpwalk -v2c -c public 10.0.0.1 1.3.6.1.2.1.1.1.0' },
-  { k: 'out', text: 'SNMPv2-MIB::sysDescr.0 = Cisco IOS XR Software, ASR9K v7.9.2' },
+  { k: 'cmd', text: 'snmpwalk -v2c -c public 10.0.0.1 system' },
+  { k: 'out', text: 'SNMPv2-MIB::sysDescr.0 = STRING: Cisco IOS XR Software, ASR9K Series, Version 7.5.2' },
+  { k: 'out', text: 'SNMPv2-MIB::sysObjectID.0 = OID: SNMPv2-SMI::enterprises.9.12.3.1.3.1736' },
+  { k: 'out', text: 'DISMAN-EVENT-MIB::sysUpTimeInstance = Timeticks: (4567890123) 528 days, 16:55:01' },
+  { k: 'out', text: 'SNMPv2-MIB::sysName.0 = STRING: ASR9K-Core-01' },
+  { k: 'out', text: 'SNMPv2-MIB::sysLocation.0 = STRING: Stuttgart, Baden-Wuerttemberg, Europe' },
+  { k: 'blank' },
+  { k: 'cmd', text: 'snmpbulkwalk -v2c -c public 10.0.0.1 ifHCInOctets' },
+  { k: 'out', text: 'IF-MIB::ifHCInOctets.1 = Counter64: 1012345678' },
+  { k: 'out', text: 'IF-MIB::ifHCInOctets.2 = Counter64: 1024691356' },
+  { k: 'out', text: 'IF-MIB::ifHCInOctets.3 = Counter64: 1037037034' },
+  { k: 'blank' },
+  { k: 'cmd', text: 'curl -s http://localhost:8080/api/v1/flows/status | jq -c \'{enabled,protocol,devices_exporting}\'' },
+  { k: 'out', text: '{"enabled":true,"protocol":"ipfix","devices_exporting":30000}' },
+  { k: 'blank' },
+  { k: 'ok',  text: '4 queries · <10ms latency each' },
 ];
