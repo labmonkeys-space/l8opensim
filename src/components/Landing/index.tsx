@@ -268,7 +268,7 @@ export default function Landing(): JSX.Element {
             <div className="l8-cta">
               <div>
                 <div className="l8-cta__eye">→ get started</div>
-                <h2 className="l8-cta__t">Spin up 30,000 devices in&nbsp;under&nbsp;13&nbsp;seconds.</h2>
+                <h2 className="l8-cta__t">Spin up tens of thousands of devices in&nbsp;seconds.</h2>
                 <p className="l8-cta__b">Apache-2.0. No agents, no cloud, no per-device fees. Just TUN interfaces and a little Go.</p>
               </div>
               <div className="l8-cta__r">
