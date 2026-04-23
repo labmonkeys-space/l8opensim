@@ -64,9 +64,9 @@ type trapHeapEntry struct {
 // nextFire is popped first.
 type trapHeap []*trapHeapEntry
 
-func (h trapHeap) Len() int            { return len(h) }
-func (h trapHeap) Less(i, j int) bool  { return h[i].nextFire.Before(h[j].nextFire) }
-func (h trapHeap) Swap(i, j int)       { h[i], h[j] = h[j], h[i]; h[i].index = i; h[j].index = j }
+func (h trapHeap) Len() int           { return len(h) }
+func (h trapHeap) Less(i, j int) bool { return h[i].nextFire.Before(h[j].nextFire) }
+func (h trapHeap) Swap(i, j int)      { h[i], h[j] = h[j], h[i]; h[i].index = i; h[j].index = j }
 func (h *trapHeap) Push(x interface{}) {
 	e := x.(*trapHeapEntry)
 	e.index = len(*h)
@@ -96,10 +96,10 @@ func (s *TrapScheduler) MeanInterval() time.Duration { return s.meanInterval }
 // `trapCatalogsByType`. This keeps per-type catalog lifecycle on the
 // manager, where `_universal` resolution and future per-type metrics live.
 type TrapScheduler struct {
-	mu           sync.Mutex
-	heap         trapHeap
-	byIP         map[string]*trapHeapEntry // lookup for Deregister
-	devices      map[string]trapFirer      // exporter by device IP
+	mu      sync.Mutex
+	heap    trapHeap
+	byIP    map[string]*trapHeapEntry // lookup for Deregister
+	devices map[string]trapFirer      // exporter by device IP
 
 	catalogFor   func(deviceIP net.IP) *Catalog
 	meanInterval time.Duration
@@ -110,7 +110,7 @@ type TrapScheduler struct {
 	now func() time.Time
 	rnd *rand.Rand
 
-	wake     chan struct{}  // signalled by Register/Deregister/Stop to nudge Run
+	wake     chan struct{} // signalled by Register/Deregister/Stop to nudge Run
 	stopCh   chan struct{}
 	stopOnce sync.Once
 }
