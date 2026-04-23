@@ -238,28 +238,29 @@ type SimulatorManager struct {
 	trapScheduler       *TrapScheduler
 	trapEncoder         TrapEncoder
 	trapLimiter         *rate.Limiter // shared global cap (nil = unlimited)
-	trapConns           sync.Map      // key: string collector, value: *net.UDPConn (shared-socket fallback pool, TRAP mode only)
-	trapAggregates      sync.Map      // key: trapAggKey, value: *trapCollectorAggregate — monotonic counters surviving device delete
-	trapFirstAttachLog  sync.Once     // emits a single "trap export active" line on first per-device attach
+	trapConns           sync.Map    // key: string collector, value: *net.UDPConn (shared-socket fallback pool, TRAP mode only)
+	trapAggregates      sync.Map    // key: trapAggKey, value: *trapCollectorAggregate — monotonic counters surviving device delete
+	trapFirstAttachLog  atomic.Bool // CAS-gated so the "trap export active" line fires once per lifecycle; race-free reset on Stop
+	trapIntervalWarned  atomic.Bool // CAS-gated divergence warning — one line per lifecycle, not per device (phase-5 review P13)
 	trapGlobalCap       int
 	trapSourcePerDevice bool
 	trapCatalogPath     string // "" when using embedded catalog
 
-	// UDP syslog export state (nil/zero when disabled; set by StartSyslogExport).
-	// See syslog_manager.go for lifecycle and syslog_exporter.go for per-device state.
+	// UDP syslog export state. Per the per-device-export-config refactor,
+	// each device owns its own collector/format/interval on `syslogConfig`.
+	// The manager retains subsystem-level concerns: catalog, scheduler,
+	// shared limiter, and shared-socket pool for the fallback path.
 	//
 	// syslogCatalogsByType mirrors trapCatalogsByType for the syslog side.
-	syslogActive          atomic.Bool
 	syslogCatalog         *SyslogCatalog
 	syslogCatalogsByType  map[string]*SyslogCatalog
 	syslogScheduler       *SyslogScheduler
-	syslogEncoder         SyslogEncoder
-	syslogLimiter         *rate.Limiter // independent of trap's limiter (design.md §D9)
-	syslogConn            *net.UDPConn  // shared fallback when per-device bind disabled or fails
-	syslogCollectorAddr   *net.UDPAddr
-	syslogCollectorStr    string
-	syslogFormat          SyslogFormat
-	syslogInterval        time.Duration
+	syslogEncodersByFmt   map[SyslogFormat]SyslogEncoder // one encoder per format; lazily populated
+	syslogLimiter         *rate.Limiter                  // independent of trap's limiter (design.md §D9)
+	syslogConns           sync.Map                       // key: syslogConnKey, value: *net.UDPConn (shared-socket fallback pool)
+	syslogAggregates      sync.Map                       // key: syslogConnKey, value: *syslogCollectorAggregate — monotonic counters surviving device delete
+	syslogFirstAttachLog  atomic.Bool                    // CAS-gated so the "syslog export active" line fires once per lifecycle; race-free reset on Stop
+	syslogIntervalWarned  atomic.Bool                    // CAS-gated divergence warning — one line per lifecycle, not per device (phase-5 review P13)
 	syslogGlobalCap       int
 	syslogSourcePerDevice bool
 	syslogCatalogPath     string // "" when using embedded catalog

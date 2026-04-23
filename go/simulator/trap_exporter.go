@@ -270,7 +270,7 @@ func (e *TrapExporter) Mode() TrapMode { return e.mode }
 // WriteTo. Gated by fe.firstWriteErr so a down/misconfigured collector
 // doesn't flood logs at fire cadence × device count.
 func (e *TrapExporter) logFirstWriteErr(err error) {
-	if e == nil {
+	if e == nil || err == nil {
 		return
 	}
 	e.firstWriteErr.Do(func() {

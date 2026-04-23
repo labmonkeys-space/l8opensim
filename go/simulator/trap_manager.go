@@ -57,13 +57,15 @@ func ParseTrapMode(s string) (TrapMode, error) {
 // TrapStatus is the JSON body returned by GET /api/v1/traps/status.
 //
 // BREAKING (per-device-export-config phase 4): the response is now an
-// array-of-collectors aggregated across devices. Callers detect
-// "feature off" via `len(collectors) == 0`. Legacy scalar fields
-// (enabled/mode/collector/community/sent/informs_*) retired.
+// array-of-collectors aggregated across devices. Legacy scalar fields
+// (enabled/mode/collector/community/sent/informs_*) retired. Use
+// `SubsystemActive` to distinguish "never started" from "started with
+// zero devices"; `len(collectors) == 0` no longer implies feature off.
 //
 // CatalogsByType surfaces the per-device-type overlay map — unchanged
 // from phase-4-prior behaviour.
 type TrapStatus struct {
+	SubsystemActive            bool                         `json:"subsystem_active"`
 	Collectors                 []TrapCollectorStatus        `json:"collectors"`
 	DevicesExporting           int                          `json:"devices_exporting"`
 	RateLimiterTokensAvailable int                          `json:"rate_limiter_tokens_available,omitempty"`
@@ -140,6 +142,7 @@ func (sm *SimulatorManager) StartTrapSubsystem(cfg TrapSubsystemConfig) error {
 		return fmt.Errorf("trap export: -trap-global-cap must be non-negative, got %d", cfg.GlobalCap)
 	}
 	if cfg.MeanSchedulerInterval <= 0 {
+		log.Printf("trap export: MeanSchedulerInterval <= 0, defaulting to 30s (phase-5 review P12)")
 		cfg.MeanSchedulerInterval = 30 * time.Second
 	}
 
@@ -240,10 +243,24 @@ func (sm *SimulatorManager) closeTrapConnPool() {
 	})
 }
 
+// getTrapScheduler returns the manager's trap scheduler pointer under
+// sm.mu.RLock so callers cannot race a concurrent StopTrapExport that
+// nils the field (phase-5 review D3 fix). Safe with nil manager.
+func getTrapScheduler(sm *SimulatorManager) *TrapScheduler {
+	if sm == nil {
+		return nil
+	}
+	sm.mu.RLock()
+	defer sm.mu.RUnlock()
+	return sm.trapScheduler
+}
+
 // persistTrapCounters snapshots a TrapExporter's cumulative counters
 // into the simulator-wide per-(collector, mode) aggregate so
-// /traps/status reports monotonic totals even as devices come and go
-// (review decision D1.b applied to trap subsystem). Called from the
+// /traps/status reports monotonic totals across DEVICE CHURN WITHIN
+// ONE SUBSYSTEM LIFECYCLE (review decision D1.b applied to trap). A
+// Stop→Start cycle resets sm.trapAggregates and starts from zero by
+// design (phase-5 review P2 scope clarification). Called from the
 // device lifecycle immediately before `TrapExporter.Close()`. Safe to
 // call with nil exporter; idempotent per exporter (countersPersisted
 // sync.Once) so concurrent Stop paths cannot double-count.
@@ -273,6 +290,17 @@ func (sm *SimulatorManager) persistTrapCounters(fe *TrapExporter) {
 // StopTrapExport stops the scheduler, closes every pooled shared
 // socket, and closes every device's TrapExporter. Safe to call when
 // the subsystem was never started (no-op).
+//
+// CONSTRAINT — process-shutdown only (phase-5 review D1):
+// StopTrapExport is NOT safe to race concurrent device creation.
+// `startDeviceTrapExporter` captures scheduler / pool / encoder
+// pointers under a short RLock and uses them outside that lock; a
+// concurrent StopTrapExport can leave orphan exporters or closed
+// sockets in that window. Today StopTrapExport is only called from
+// the process-exit signal handler (Shutdown), so no live attach can
+// race it. Do not introduce a runtime "restart trap subsystem" path
+// without first tightening the attach-path lock discipline (see the
+// deferred D1 follow-up in the per-device-export-config change).
 func (sm *SimulatorManager) StopTrapExport() {
 	sm.mu.RLock()
 	scheduler := sm.trapScheduler
@@ -314,8 +342,17 @@ func (sm *SimulatorManager) StopTrapExport() {
 	// from the previous lifecycle (review fix P2).
 	sm.trapAggregates = sync.Map{}
 	// Reset the first-attach log gate so the "trap export active" line
-	// fires again on the next Start→first-device cycle (review fix P9).
-	sm.trapFirstAttachLog = sync.Once{}
+	// fires again on the next Start→first-device cycle. atomic.Bool
+	// Store is race-free against concurrent CAS readers — replaces the
+	// earlier sync.Once{} reassignment which was a data race with the
+	// Do() call in startDeviceTrapExporter (phase-5 review P3).
+	sm.trapFirstAttachLog.Store(false)
+	sm.trapIntervalWarned.Store(false)
+	// Reset subsystem-scalar state so a subsequent StartTrapSubsystem
+	// starts from a clean slate (phase-5 review P-E1).
+	sm.trapLimiter = nil
+	sm.trapGlobalCap = 0
+	sm.trapSourcePerDevice = false
 	sm.mu.Unlock()
 }
 
@@ -417,19 +454,27 @@ func (sm *SimulatorManager) startDeviceTrapExporter(device *DeviceSimulator) err
 	// Per-device Interval is stored on cfg but not honored by the
 	// scheduler today — the scheduler draws Poisson fires from its
 	// simulator-wide MeanInterval (design debt, same pattern as flow's
-	// TickInterval). Warn once per device at attach so operators
-	// aren't silently surprised.
+	// TickInterval). Warn ONCE per subsystem lifecycle at the first
+	// divergent attach — per-device logging floods at fleet scale
+	// (phase-5 review P13).
 	if time.Duration(cfg.Interval) != 0 && time.Duration(cfg.Interval) != scheduler.MeanInterval() {
-		log.Printf("trap export: device %s configured interval=%s but the scheduler runs at mean=%s; per-device intervals are not yet honored",
-			device.IP, time.Duration(cfg.Interval), scheduler.MeanInterval())
+		if sm.trapIntervalWarned.CompareAndSwap(false, true) {
+			log.Printf("trap export: device %s configured interval=%s but the scheduler runs at mean=%s; per-device intervals are not yet honored (further divergences suppressed this lifecycle)",
+				device.IP, time.Duration(cfg.Interval), scheduler.MeanInterval())
+		}
 	}
 
 	scheduler.Register(device.IP, exporter)
 
-	sm.trapFirstAttachLog.Do(func() {
+	// CAS-gated first-attach log; race-free vs. StopTrapExport's reset
+	// to false (phase-5 review P3). If the per-device Interval diverges
+	// from the scheduler mean, warn once per subsystem lifecycle instead
+	// of per-device — 30k near-identical lines at scale was noisy
+	// (phase-5 review P13).
+	if sm.trapFirstAttachLog.CompareAndSwap(false, true) {
 		log.Printf("trap export: active; first device %s → %s (mode=%s)",
 			device.IP, canonicalCollector, cfg.Mode)
-	})
+	}
 	return nil
 }
 
@@ -468,7 +513,7 @@ func (sm *SimulatorManager) GetTrapStatus() TrapStatus {
 
 	sm.mu.RLock()
 	limiter := sm.trapLimiter
-	status := TrapStatus{}
+	status := TrapStatus{SubsystemActive: sm.trapScheduler != nil}
 
 	if len(sm.trapCatalogsByType) > 0 {
 		status.CatalogsByType = make(map[string]CatalogSourceInfo, len(sm.trapCatalogsByType))

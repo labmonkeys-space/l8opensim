@@ -15,11 +15,12 @@
 
 // SimulatorManager-level UDP syslog export lifecycle.
 //
-// Parses the SyslogConfig surfaced by CLI flags, loads the catalog (embedded
-// or file override), creates the shared SyslogScheduler + SyslogEncoder, and
-// starts the scheduler goroutine. Wires per-device SyslogExporters into
-// device startup/teardown (see device.go) and exposes GetSyslogStatus +
-// FireSyslogOnDevice for the HTTP API.
+// `StartSyslogSubsystem` loads the catalog (embedded or file override), creates
+// the shared SyslogScheduler and optional rate limiter, and starts the
+// scheduler goroutine. Per-device SyslogExporters are wired in from device
+// startup/teardown (see device.go) against each device's `DeviceSyslogConfig`.
+// GetSyslogStatus exposes the aggregated per-(collector, format) counters to
+// the HTTP API.
 
 package main
 
@@ -31,33 +32,57 @@ import (
 	"net"
 	"net/http"
 	"sort"
+	"sync"
+	"sync/atomic"
 	"time"
 
 	"golang.org/x/time/rate"
 )
 
-// SyslogConfig bundles CLI-derived configuration for the syslog subsystem.
-// Empty Collector disables the feature.
-type SyslogConfig struct {
-	Collector       string
-	Format          SyslogFormat
-	Interval        time.Duration
-	GlobalCap       int // 0 = unlimited
-	CatalogPath     string
-	SourcePerDevice bool
+// SyslogStatus is the JSON body returned by GET /api/v1/syslog/status.
+//
+// Shape matches TrapStatus: per-device-export-config phase 5 returns an
+// array-of-collectors aggregated across devices. Legacy scalar fields
+// (enabled/format/collector/sent/send_failures) retired. Use
+// `SubsystemActive` to distinguish "never started" from "started with
+// zero devices"; `len(collectors) == 0` no longer implies feature off.
+//
+// `CatalogsByType` and `RateLimiterTokensAvailable` remain top-level.
+type SyslogStatus struct {
+	SubsystemActive            bool                         `json:"subsystem_active"`
+	Collectors                 []SyslogCollectorStatus      `json:"collectors"`
+	DevicesExporting           int                          `json:"devices_exporting"`
+	RateLimiterTokensAvailable int                          `json:"rate_limiter_tokens_available,omitempty"`
+	CatalogsByType             map[string]CatalogSourceInfo `json:"catalogs_by_type,omitempty"`
 }
 
-// SyslogStatus is the JSON body returned by GET /api/v1/syslog/status. Field
-// shape matches spec Requirement "Syslog status HTTP endpoint".
-type SyslogStatus struct {
-	Enabled                    bool                         `json:"enabled"`
-	Format                     string                       `json:"format,omitempty"`
-	Collector                  string                       `json:"collector,omitempty"`
-	Sent                       uint64                       `json:"sent"`
-	SendFailures               uint64                       `json:"send_failures"`
-	RateLimiterTokensAvailable int                          `json:"rate_limiter_tokens_available,omitempty"`
-	DevicesExporting           int                          `json:"devices_exporting"`
-	CatalogsByType             map[string]CatalogSourceInfo `json:"catalogs_by_type,omitempty"`
+// SyslogCollectorStatus is one aggregate record in SyslogStatus.Collectors.
+// Devices with the same (collector, format) tuple collapse into one record;
+// counters are cumulative since simulator start (monotonic — persisted
+// counters from deleted devices are merged at read time).
+type SyslogCollectorStatus struct {
+	Collector    string `json:"collector"`
+	Format       string `json:"format"`
+	Devices      int    `json:"devices"`
+	Sent         uint64 `json:"sent"`
+	SendFailures uint64 `json:"send_failures"`
+}
+
+// syslogConnKey identifies a (collector, format) tuple for the shared-socket
+// pool and the monotonic counter aggregate. Format is included because the
+// encoder is per-format — one socket per format-collector pair isolates
+// wire-format interleave on a shared socket.
+type syslogConnKey struct {
+	collector string
+	format    SyslogFormat
+}
+
+// syslogCollectorAggregate holds monotonic counters for a (collector, format)
+// tuple that survive device deletion. Mirror of flowCollectorAggregate /
+// trapCollectorAggregate.
+type syslogCollectorAggregate struct {
+	sent         atomic.Uint64
+	sendFailures atomic.Uint64
 }
 
 // Sentinel errors returned by FireSyslogOnDevice for HTTP status mapping.
@@ -130,46 +155,46 @@ func sortedSyslogEntryNames(cat *SyslogCatalog) []string {
 	return out
 }
 
-// StartSyslogExport validates cfg, loads the catalog, creates the shared
-// scheduler, and starts the scheduler goroutine. Partial state on failure
-// is unwound before returning.
+// SyslogSubsystemConfig bundles the simulator-wide knobs still owned by the
+// manager after the per-device-export-config refactor. Per-device knobs
+// (collector / format / interval) live on each `DeviceSyslogConfig`.
+type SyslogSubsystemConfig struct {
+	CatalogPath     string
+	GlobalCap       int  // 0 = unlimited
+	SourcePerDevice bool // bind per-device UDP socket in opensim ns
+	// MeanSchedulerInterval seeds the scheduler's Poisson draw when no
+	// device-specific intervals are known. Individual devices still
+	// register with their own per-device interval on the heap.
+	MeanSchedulerInterval time.Duration
+}
+
+// StartSyslogSubsystem loads the catalog, creates the shared scheduler
+// and optional rate limiter, and starts the scheduler goroutine. The
+// subsystem is always-on after this runs — per-device attach via
+// `startDeviceSyslogExporter` later wires individual exporters in.
 //
-// Preconditions:
-//   - Called after manager construction, before any device creation that
-//     should participate in syslog export.
-func (sm *SimulatorManager) StartSyslogExport(cfg SyslogConfig) error {
-	if sm.syslogActive.Load() {
-		return fmt.Errorf("syslog export: already active; Shutdown before re-initializing")
-	}
-	if cfg.Collector == "" {
-		return fmt.Errorf("syslog export: -syslog-collector required to enable feature")
-	}
-	if cfg.Interval <= 0 {
-		return fmt.Errorf("syslog export: -syslog-interval must be positive, got %s", cfg.Interval)
-	}
-	// Mirror NewSyslogScheduler's own floor: sub-millisecond intervals
-	// busy-loop the scheduler when no global cap is set. Catch it here with
-	// a clean startup error rather than let the scheduler constructor panic.
-	if cfg.Interval < time.Millisecond {
-		return fmt.Errorf("syslog export: -syslog-interval must be >= 1ms, got %s", cfg.Interval)
+// Replaces pre-phase-5 `StartSyslogExport`: the per-device collector /
+// format / interval settings are now on each `DeviceSyslogConfig`. The
+// manager no longer holds those values simulator-wide.
+func (sm *SimulatorManager) StartSyslogSubsystem(cfg SyslogSubsystemConfig) error {
+	if sm.syslogScheduler != nil {
+		return fmt.Errorf("syslog export: subsystem already started")
 	}
 	if cfg.GlobalCap < 0 {
 		return fmt.Errorf("syslog export: -syslog-global-cap must be non-negative, got %d", cfg.GlobalCap)
 	}
-	if cfg.Format == "" {
-		cfg.Format = SyslogFormat5424
+	if cfg.MeanSchedulerInterval <= 0 {
+		log.Printf("syslog export: MeanSchedulerInterval <= 0, defaulting to 10s (phase-5 review P12)")
+		cfg.MeanSchedulerInterval = 10 * time.Second
 	}
-	encoder, err := NewSyslogEncoder(cfg.Format)
-	if err != nil {
-		return fmt.Errorf("syslog export: %w", err)
-	}
-
-	addr, err := net.ResolveUDPAddr("udp4", cfg.Collector)
-	if err != nil {
-		return fmt.Errorf("syslog export: invalid collector address %q: %w", cfg.Collector, err)
+	// Mirror the scheduler's sub-millisecond floor — sub-ms intervals
+	// busy-loop when no global cap is set.
+	if cfg.MeanSchedulerInterval < time.Millisecond {
+		return fmt.Errorf("syslog export: MeanSchedulerInterval must be >= 1ms, got %s", cfg.MeanSchedulerInterval)
 	}
 
 	var catalog *SyslogCatalog
+	var err error
 	if cfg.CatalogPath == "" {
 		catalog, err = LoadEmbeddedSyslogCatalog()
 	} else {
@@ -179,7 +204,6 @@ func (sm *SimulatorManager) StartSyslogExport(cfg SyslogConfig) error {
 		return err
 	}
 
-	// Per-device-type overlay scan. Skipped when `-syslog-catalog` is set.
 	catalogsByType := map[string]*SyslogCatalog{
 		universalCatalogKey: catalog,
 	}
@@ -193,12 +217,6 @@ func (sm *SimulatorManager) StartSyslogExport(cfg SyslogConfig) error {
 		}
 	}
 
-	// Shared fallback socket: used when per-device binding is off or fails.
-	conn, err := net.ListenUDP("udp4", &net.UDPAddr{})
-	if err != nil {
-		return fmt.Errorf("syslog export: failed to open shared UDP socket: %w", err)
-	}
-
 	var limiter *rate.Limiter
 	if cfg.GlobalCap > 0 {
 		limiter = rate.NewLimiter(rate.Limit(cfg.GlobalCap), cfg.GlobalCap)
@@ -206,7 +224,7 @@ func (sm *SimulatorManager) StartSyslogExport(cfg SyslogConfig) error {
 
 	scheduler := NewSyslogScheduler(SyslogSchedulerOptions{
 		CatalogFor:         func(ip net.IP) *SyslogCatalog { return sm.SyslogCatalogFor(ip.String()) },
-		MeanInterval:       cfg.Interval,
+		MeanInterval:       cfg.MeanSchedulerInterval,
 		GlobalCapPerSecond: cfg.GlobalCap,
 	})
 
@@ -214,18 +232,12 @@ func (sm *SimulatorManager) StartSyslogExport(cfg SyslogConfig) error {
 	sm.syslogCatalog = catalog
 	sm.syslogCatalogsByType = catalogsByType
 	sm.syslogScheduler = scheduler
-	sm.syslogEncoder = encoder
+	sm.syslogEncodersByFmt = map[SyslogFormat]SyslogEncoder{}
 	sm.syslogLimiter = limiter
-	sm.syslogConn = conn
-	sm.syslogCollectorAddr = addr
-	sm.syslogCollectorStr = cfg.Collector
-	sm.syslogFormat = cfg.Format
-	sm.syslogInterval = cfg.Interval
 	sm.syslogGlobalCap = cfg.GlobalCap
 	sm.syslogSourcePerDevice = cfg.SourcePerDevice
 	sm.syslogCatalogPath = cfg.CatalogPath
 	sm.mu.Unlock()
-	sm.syslogActive.Store(true)
 
 	capStr := "unlimited"
 	if cfg.GlobalCap > 0 {
@@ -235,28 +247,137 @@ func (sm *SimulatorManager) StartSyslogExport(cfg SyslogConfig) error {
 	if cfg.CatalogPath != "" {
 		catStr = cfg.CatalogPath
 	}
-	log.Printf("Syslog export: %s → %s (format=%s, interval=%s, cap=%s, catalog=%s, per-device-source=%v)",
-		conn.LocalAddr(), cfg.Collector, cfg.Format, cfg.Interval, capStr, catStr, cfg.SourcePerDevice)
+	log.Printf("Syslog subsystem: ready (cap=%s, catalog=%s, per-device-source=%v) — awaiting per-device config",
+		capStr, catStr, cfg.SourcePerDevice)
 
 	go scheduler.Run(context.Background())
 
 	return nil
 }
 
-// StopSyslogExport stops the scheduler, closes the shared socket, and closes
-// every device's SyslogExporter. Safe to call when syslog export is inactive
-// (no-op).
-func (sm *SimulatorManager) StopSyslogExport() {
-	if !sm.syslogActive.Load() {
+// syslogEncoderFor returns the shared encoder for a given wire format.
+// Lazily constructs and caches so StartSyslogSubsystem doesn't need to
+// know which formats will be used at boot. Safe for concurrent use.
+func (sm *SimulatorManager) syslogEncoderFor(format SyslogFormat) (SyslogEncoder, error) {
+	sm.mu.RLock()
+	if enc, ok := sm.syslogEncodersByFmt[format]; ok {
+		sm.mu.RUnlock()
+		return enc, nil
+	}
+	sm.mu.RUnlock()
+	enc, err := NewSyslogEncoder(format)
+	if err != nil {
+		return nil, err
+	}
+	sm.mu.Lock()
+	defer sm.mu.Unlock()
+	// Double-check after re-acquiring the write lock in case another
+	// goroutine raced us.
+	if existing, ok := sm.syslogEncodersByFmt[format]; ok {
+		return existing, nil
+	}
+	sm.syslogEncodersByFmt[format] = enc
+	return enc, nil
+}
+
+// syslogConnFor returns the shared-pool UDP socket for a (collector, format)
+// tuple. First caller for a key opens the socket; subsequent callers reuse
+// it. Returns nil if the socket can't be opened. Safe for concurrent use.
+func (sm *SimulatorManager) syslogConnFor(key syslogConnKey) *net.UDPConn {
+	if cached, ok := sm.syslogConns.Load(key); ok {
+		return cached.(*net.UDPConn)
+	}
+	conn, err := net.ListenUDP("udp4", &net.UDPAddr{})
+	if err != nil {
+		log.Printf("syslog export: failed to open shared socket for %s (format=%s): %v",
+			key.collector, key.format, err)
+		return nil
+	}
+	actual, loaded := sm.syslogConns.LoadOrStore(key, conn)
+	if loaded {
+		_ = conn.Close()
+		return actual.(*net.UDPConn)
+	}
+	return conn
+}
+
+// closeSyslogConnPool closes every pooled shared socket and removes its
+// map entry so a subsequent `syslogConnFor` after `StartSyslogSubsystem`
+// cannot return a closed *net.UDPConn.
+func (sm *SimulatorManager) closeSyslogConnPool() {
+	sm.syslogConns.Range(func(k, v interface{}) bool {
+		if conn, ok := v.(*net.UDPConn); ok {
+			_ = conn.Close()
+		}
+		sm.syslogConns.Delete(k)
+		return true
+	})
+}
+
+// getSyslogScheduler returns the manager's syslog scheduler pointer
+// under sm.mu.RLock so callers cannot race a concurrent
+// StopSyslogExport that nils the field (phase-5 review D3 fix). Safe
+// with nil manager.
+func getSyslogScheduler(sm *SimulatorManager) *SyslogScheduler {
+	if sm == nil {
+		return nil
+	}
+	sm.mu.RLock()
+	defer sm.mu.RUnlock()
+	return sm.syslogScheduler
+}
+
+// persistSyslogCounters snapshots a SyslogExporter's cumulative counters
+// into the simulator-wide per-(collector, format) aggregate so
+// /syslog/status reports monotonic totals across DEVICE CHURN WITHIN
+// ONE SUBSYSTEM LIFECYCLE (create/delete a device — counters persist).
+// A Stop→Start cycle resets sm.syslogAggregates and starts from zero by
+// design (phase-5 review P2 scope clarification).
+//
+// Idempotent per exporter via countersPersisted sync.Once, so
+// concurrent Stop paths cannot double-count. Safe to call with nil
+// exporter.
+func (sm *SimulatorManager) persistSyslogCounters(fe *SyslogExporter) {
+	if fe == nil {
 		return
 	}
-	sm.syslogActive.Store(false)
+	collector := fe.CollectorString()
+	if collector == "" {
+		return
+	}
+	fe.countersPersisted.Do(func() {
+		key := syslogConnKey{collector: collector, format: fe.Format()}
+		v, _ := sm.syslogAggregates.LoadOrStore(key, &syslogCollectorAggregate{})
+		agg := v.(*syslogCollectorAggregate)
+		stats := fe.Stats()
+		agg.sent.Add(stats.Sent.Load())
+		agg.sendFailures.Add(stats.SendFailures.Load())
+	})
+}
 
-	// Snapshot per-device exporters under each device's own mutex so we
-	// don't race `startDeviceSyslogExporter` (which writes under d.mu) or
-	// direct reads from `GetSyslogStatus` / `FireSyslogOnDevice`.
+// StopSyslogExport stops the scheduler, closes every pooled shared socket,
+// and closes every device's SyslogExporter. Safe to call when the subsystem
+// was never started (no-op).
+//
+// CONSTRAINT — process-shutdown only (phase-5 review D1):
+// StopSyslogExport is NOT safe to race concurrent device creation. See
+// the equivalent note on StopTrapExport. Today it is only called from
+// the process-exit signal handler (Shutdown). Do not introduce a
+// runtime "restart syslog subsystem" path without first tightening the
+// attach-path lock discipline (deferred D1 follow-up in the
+// per-device-export-config change).
+func (sm *SimulatorManager) StopSyslogExport() {
 	sm.mu.RLock()
 	scheduler := sm.syslogScheduler
+	sm.mu.RUnlock()
+
+	if scheduler == nil {
+		return // subsystem never started
+	}
+
+	// Snapshot per-device exporters under each device's own mutex so we
+	// don't race `startDeviceSyslogExporter` (which writes under d.mu).
+	sm.mu.RLock()
 	type devExp struct {
 		d   *DeviceSimulator
 		exp *SyslogExporter
@@ -271,87 +392,153 @@ func (sm *SimulatorManager) StopSyslogExport() {
 			captured = append(captured, devExp{d: d, exp: exp})
 		}
 	}
-	conn := sm.syslogConn
 	sm.mu.RUnlock()
 
-	if scheduler != nil {
-		scheduler.Stop()
-	}
+	scheduler.Stop()
 	for _, ce := range captured {
+		sm.persistSyslogCounters(ce.exp)
 		_ = ce.exp.Close()
 	}
-	if conn != nil {
-		_ = conn.Close()
-	}
+	sm.closeSyslogConnPool()
 
 	sm.mu.Lock()
 	sm.syslogScheduler = nil
-	sm.syslogConn = nil
-	// Clear per-type catalog state so a subsequent StartSyslogExport
-	// rebuilds it from scratch rather than inheriting stale overlays.
 	sm.syslogCatalog = nil
 	sm.syslogCatalogsByType = nil
 	sm.syslogCatalogPath = ""
+	sm.syslogEncodersByFmt = nil
+	// Reset monotonic counter aggregates + first-attach log so a
+	// subsequent StartSyslogSubsystem starts from zero and logs the
+	// first attach again. atomic.Bool Store is race-free against
+	// concurrent CAS readers — replaces the earlier sync.Once{}
+	// reassignment which was a data race with the Do() call in
+	// startDeviceSyslogExporter (phase-5 review P3).
+	sm.syslogAggregates = sync.Map{}
+	sm.syslogFirstAttachLog.Store(false)
+	sm.syslogIntervalWarned.Store(false)
+	// Reset subsystem-scalar state so a subsequent StartSyslogSubsystem
+	// starts from a clean slate (phase-5 review P-E1).
+	sm.syslogLimiter = nil
+	sm.syslogGlobalCap = 0
+	sm.syslogSourcePerDevice = false
 	sm.mu.Unlock()
 }
 
-// startDeviceSyslogExporter creates a SyslogExporter for the device, opens a
-// per-device UDP socket when enabled, and registers the exporter with the
-// scheduler. Called from device creation sites in device.go (mirrors the
-// trap-export hook).
+// startDeviceSyslogExporter creates a SyslogExporter for a device that
+// already has `device.syslogConfig` populated. Opens a per-device UDP
+// socket when `-syslog-source-per-device=true`, falls back to the
+// shared-pool socket keyed by (collector, format) otherwise. Registers
+// the exporter with the central scheduler.
 //
-// Unlike the trap counterpart, per-device bind failure is never fatal for
-// syslog — there is no ack path that requires symmetric source IPs. On bind
-// failure we log a warning and fall back to the shared socket. Every error
-// scenario inside this function is handled internally (logged + degraded),
-// so the function has no error return; the trap-style signature was trimmed
-// after a review noted the call-site `err != nil` log branches were dead.
-func (sm *SimulatorManager) startDeviceSyslogExporter(device *DeviceSimulator) {
-	if !sm.syslogActive.Load() || device == nil {
-		return
+// Per-device bind failure is NEVER fatal for syslog — the device falls
+// back to the shared socket and a warning is logged (preserves the
+// existing syslog bind-failure semantic per spec). Other error paths —
+// subsystem not started, bad format, unresolvable collector — return an
+// error so the caller can clear `device.syslogConfig` and skip the
+// device cleanly.
+//
+// Must be called only after `StartSyslogSubsystem` — caller enforces.
+func (sm *SimulatorManager) startDeviceSyslogExporter(device *DeviceSimulator) error {
+	if device == nil || device.syslogConfig == nil {
+		return nil
 	}
-	// `device.sysName` is written once at device construction and never
-	// mutated (the simulator doesn't expose sysName-set via the admin API),
-	// so reading it here without holding `device.mu` is safe. Capture it
-	// into the exporter options as a plain string; subsequent runtime
-	// changes to `device.sysName` — if ever introduced — would not be
-	// reflected in emitted syslog messages until the exporter is rebuilt.
+	cfg := device.syslogConfig
+
+	format, err := ParseSyslogFormat(cfg.Format)
+	if err != nil {
+		return fmt.Errorf("syslog export: parse format: %w", err)
+	}
+
 	sm.mu.RLock()
-	deviceIPStr := device.IP.String()
-	opts := SyslogExporterOptions{
-		DeviceIP:   device.IP,
-		Encoder:    sm.syslogEncoder,
-		Collector:  sm.syslogCollectorAddr,
-		SharedConn: sm.syslogConn,
-		SysName:    device.sysName,
-		Model:      modelLabelForSlug(sm.deviceTypesByIP[deviceIPStr]),
-		Serial:     synthSerial(device.IP),
-		ChassisID:  synthChassisID(device.IP),
-		IfIndexFn:  deviceIfIndexFn(device),
-		IfNameFn:   deviceIfNameFn(device),
-	}
 	sourcePerDevice := sm.syslogSourcePerDevice
 	scheduler := sm.syslogScheduler
+	deviceIPStr := device.IP.String()
+	modelLabel := modelLabelForSlug(sm.deviceTypesByIP[deviceIPStr])
 	sm.mu.RUnlock()
 
-	exporter := NewSyslogExporter(opts)
+	if scheduler == nil {
+		return fmt.Errorf("syslog export: subsystem not started; call StartSyslogSubsystem first")
+	}
 
+	encoder, err := sm.syslogEncoderFor(format)
+	if err != nil {
+		return fmt.Errorf("syslog export: encoder: %w", err)
+	}
+
+	collectorAddr, err := net.ResolveUDPAddr("udp4", cfg.Collector)
+	if err != nil {
+		return fmt.Errorf("syslog export: resolve collector %q: %w", cfg.Collector, err)
+	}
+	canonicalCollector := collectorAddr.String()
+
+	// Open per-device socket first (when enabled) so we know whether to
+	// wire in the shared-pool fallback; passing SharedConn at
+	// construction avoids an unsynchronised post-hoc field write.
+	var perDeviceConn *net.UDPConn
 	if sourcePerDevice {
-		conn := openSyslogConnForDevice(device)
-		if conn == nil {
-			log.Printf("syslog export: device %s per-device bind failed, falling back to shared socket", device.IP)
-		} else {
-			exporter.SetConn(conn)
+		perDeviceConn = openSyslogConnForDevice(device)
+		if perDeviceConn == nil {
+			log.Printf("syslog export: device %s per-device bind failed, falling back to shared-pool socket", device.IP)
 		}
+	}
+	var sharedConn *net.UDPConn
+	if perDeviceConn == nil {
+		sharedConn = sm.syslogConnFor(syslogConnKey{collector: canonicalCollector, format: format})
+		if sharedConn == nil {
+			// Both per-device bind and shared-pool open failed — refuse
+			// the attach so the caller clears device.syslogConfig.
+			// Constructing an exporter with nil sockets would silently
+			// drop every fire via errNoSyslogSocket (phase-5 review P10).
+			return fmt.Errorf("syslog export: no UDP socket available for device %s → %s", device.IP, canonicalCollector)
+		}
+	}
+
+	opts := SyslogExporterOptions{
+		DeviceIP:     device.IP,
+		Encoder:      encoder,
+		Collector:    collectorAddr,
+		CollectorStr: canonicalCollector,
+		Format:       format,
+		SharedConn:   sharedConn,
+		SysName:      device.sysName,
+		Model:        modelLabel,
+		Serial:       synthSerial(device.IP),
+		ChassisID:    synthChassisID(device.IP),
+		IfIndexFn:    deviceIfIndexFn(device),
+		IfNameFn:     deviceIfNameFn(device),
+	}
+
+	exporter := NewSyslogExporter(opts)
+	if perDeviceConn != nil {
+		exporter.SetConn(perDeviceConn)
 	}
 
 	device.mu.Lock()
 	device.syslogExporter = exporter
 	device.mu.Unlock()
 
-	if scheduler != nil {
-		scheduler.Register(device.IP, exporter)
+	// Per-device Interval is stored on cfg but not honored by the
+	// scheduler today — the scheduler draws Poisson fires from its
+	// simulator-wide MeanInterval (design debt, same pattern as trap
+	// Interval and flow TickInterval). Warn ONCE per subsystem
+	// lifecycle — per-device logging floods at fleet scale (phase-5
+	// review P13).
+	if time.Duration(cfg.Interval) != 0 && time.Duration(cfg.Interval) != scheduler.MeanInterval() {
+		if sm.syslogIntervalWarned.CompareAndSwap(false, true) {
+			log.Printf("syslog export: device %s configured interval=%s but the scheduler runs at mean=%s; per-device intervals are not yet honored (further divergences suppressed this lifecycle)",
+				device.IP, time.Duration(cfg.Interval), scheduler.MeanInterval())
+		}
 	}
+
+	scheduler.Register(device.IP, exporter)
+
+	// CAS-gated first-attach log; race-free vs. StopSyslogExport's
+	// reset to false (phase-5 review P3).
+	if sm.syslogFirstAttachLog.CompareAndSwap(false, true) {
+		log.Printf("syslog export: active; first device %s → %s (format=%s)",
+			device.IP, canonicalCollector, format)
+	}
+	return nil
 }
 
 // deviceIfNameFn returns the ifName for a given ifIndex on the device.
@@ -399,20 +586,27 @@ func lookupIfDescr(device *DeviceSimulator, ifIndex int) string {
 	return s
 }
 
-// GetSyslogStatus returns a JSON-serializable snapshot of the syslog export
-// state. Exposed via GET /api/v1/syslog/status.
+// GetSyslogStatus returns a JSON-serializable snapshot of the syslog
+// export state. Exposed via GET /api/v1/syslog/status.
+//
+// Shape matches GetFlowStatus / GetTrapStatus: live per-device exporters
+// aggregated by (collector, format); counters from deleted devices
+// persisted in sm.syslogAggregates are folded in so totals remain
+// monotonic within the current subsystem lifecycle.
+//
+// `SubsystemActive` is the authoritative "is the feature live?" signal —
+// true when StartSyslogSubsystem has run and StopSyslogExport has not.
+// `len(Collectors) == 0` is NOT sufficient on its own: it also occurs
+// when the subsystem is running but no device has opted in, or after a
+// Stop (which clears the catalog + aggregate maps). After Stop, this
+// function returns `{SubsystemActive: false, Collectors: [], …}`.
 func (sm *SimulatorManager) GetSyslogStatus() SyslogStatus {
-	if !sm.syslogActive.Load() {
-		return SyslogStatus{Enabled: false}
-	}
+	agg := make(map[syslogConnKey]*SyslogCollectorStatus)
 
 	sm.mu.RLock()
-	status := SyslogStatus{
-		Enabled:   true,
-		Format:    string(sm.syslogFormat),
-		Collector: sm.syslogCollectorStr,
-	}
 	limiter := sm.syslogLimiter
+	status := SyslogStatus{SubsystemActive: sm.syslogScheduler != nil}
+
 	if len(sm.syslogCatalogsByType) > 0 {
 		status.CatalogsByType = make(map[string]CatalogSourceInfo, len(sm.syslogCatalogsByType))
 		for slug, cat := range sm.syslogCatalogsByType {
@@ -423,30 +617,69 @@ func (sm *SimulatorManager) GetSyslogStatus() SyslogStatus {
 		}
 	}
 
-	var sent, failures uint64
-	devicesExporting := 0
 	for _, d := range sm.devices {
 		// Snapshot the exporter pointer under d.mu so a concurrent Stop
-		// path (which nils it under d.mu.Lock) can't race this read.
+		// path can't race this read.
 		d.mu.RLock()
 		exp := d.syslogExporter
 		d.mu.RUnlock()
 		if exp == nil {
 			continue
 		}
-		devicesExporting++
+		key := syslogConnKey{collector: exp.CollectorString(), format: exp.Format()}
+		rec, ok := agg[key]
+		if !ok {
+			rec = &SyslogCollectorStatus{
+				Collector: exp.CollectorString(),
+				Format:    string(exp.Format()),
+			}
+			agg[key] = rec
+		}
+		rec.Devices++
 		st := exp.Stats()
-		sent += st.Sent.Load()
-		failures += st.SendFailures.Load()
+		rec.Sent += st.Sent.Load()
+		rec.SendFailures += st.SendFailures.Load()
 	}
+
 	var tokens int
 	if limiter != nil {
 		tokens = int(limiter.Tokens())
 	}
 	sm.mu.RUnlock()
 
-	status.Sent = sent
-	status.SendFailures = failures
+	// Fold persisted counters for tuples whose devices have since been
+	// deleted. A tuple with no live exporters still surfaces so operators
+	// keep seeing cumulative totals.
+	sm.syslogAggregates.Range(func(k, v interface{}) bool {
+		key := k.(syslogConnKey)
+		pers := v.(*syslogCollectorAggregate)
+		rec, ok := agg[key]
+		if !ok {
+			rec = &SyslogCollectorStatus{
+				Collector: key.collector,
+				Format:    string(key.format),
+			}
+			agg[key] = rec
+		}
+		rec.Sent += pers.sent.Load()
+		rec.SendFailures += pers.sendFailures.Load()
+		return true
+	})
+
+	collectors := make([]SyslogCollectorStatus, 0, len(agg))
+	devicesExporting := 0
+	for _, rec := range agg {
+		collectors = append(collectors, *rec)
+		devicesExporting += rec.Devices
+	}
+	sort.Slice(collectors, func(i, j int) bool {
+		if collectors[i].Collector != collectors[j].Collector {
+			return collectors[i].Collector < collectors[j].Collector
+		}
+		return collectors[i].Format < collectors[j].Format
+	})
+
+	status.Collectors = collectors
 	status.DevicesExporting = devicesExporting
 	if limiter != nil {
 		status.RateLimiterTokensAvailable = tokens
@@ -465,7 +698,10 @@ func (sm *SimulatorManager) GetSyslogStatus() SyslogStatus {
 //   - ErrSyslogDeviceNotFound → 404
 //   - ErrSyslogEntryNotFound  → 400
 func (sm *SimulatorManager) FireSyslogOnDevice(ip, entryName string, overrides map[string]string) error {
-	if !sm.syslogActive.Load() {
+	sm.mu.RLock()
+	schedulerStarted := sm.syslogScheduler != nil
+	sm.mu.RUnlock()
+	if !schedulerStarted {
 		return ErrSyslogExportDisabled
 	}
 	device := sm.FindDeviceByIP(ip)
@@ -512,4 +748,3 @@ func (sm *SimulatorManager) SyslogCatalogFor(ip string) *SyslogCatalog {
 	cat, _ := sm.syslogCatalogWithLabelFor(ip)
 	return cat
 }
-

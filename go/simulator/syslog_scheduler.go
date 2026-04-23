@@ -82,6 +82,11 @@ func (h *syslogHeap) Pop() interface{} {
 	return e
 }
 
+// MeanInterval returns the simulator-wide mean firing interval. Exposed
+// for per-device-attach divergence warnings — per-device intervals are
+// stored on DeviceSyslogConfig but not yet honored by the scheduler.
+func (s *SyslogScheduler) MeanInterval() time.Duration { return s.meanInterval }
+
 // SyslogScheduler coordinates per-device syslog firing with a single
 // goroutine and a global token-bucket rate limiter. All fields are private;
 // callers interact via Register / Deregister / Run / Stop.

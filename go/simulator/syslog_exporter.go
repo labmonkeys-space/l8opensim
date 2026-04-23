@@ -35,6 +35,7 @@ import (
 	"fmt"
 	"log"
 	"net"
+	"sync"
 	"sync/atomic"
 	"time"
 )
@@ -54,9 +55,22 @@ type SyslogStats struct {
 // been bound inside the device's network namespace. Close releases the
 // socket and marks the exporter as closing (subsequent Fire calls no-op).
 type SyslogExporter struct {
-	deviceIP  net.IP
-	encoder   SyslogEncoder
-	collector *net.UDPAddr
+	deviceIP     net.IP
+	encoder      SyslogEncoder
+	collector    *net.UDPAddr
+	collectorStr string       // canonical "host:port" for status aggregation keying
+	format       SyslogFormat // wire format this exporter is emitting
+
+	// firstWriteErr gates at most one log line per exporter on a failed
+	// write (review fix pattern from trap phase 4 P8).
+	firstWriteErr sync.Once
+
+	// countersPersisted ensures SimulatorManager.persistSyslogCounters adds
+	// this exporter's counters into the simulator-wide aggregate at most
+	// once. Both device.Stop / stopListenersOnly and StopSyslogExport can
+	// invoke persistence; the sync.Once makes it race-free without
+	// per-callsite locking.
+	countersPersisted sync.Once
 
 	// conn is the per-device UDP socket. Nil when per-device binding was
 	// disabled or failed and the fallback shared socket is used. Stored as
@@ -97,11 +111,13 @@ type SyslogExporter struct {
 
 // SyslogExporterOptions bundles per-device exporter configuration.
 type SyslogExporterOptions struct {
-	DeviceIP   net.IP
-	Encoder    SyslogEncoder
-	Collector  *net.UDPAddr
-	SharedConn *net.UDPConn // fallback; may be nil
-	SysName    string       // device's sysName.0 value — empty falls back to DeviceIP at encode time
+	DeviceIP     net.IP
+	Encoder      SyslogEncoder
+	Collector    *net.UDPAddr
+	CollectorStr string       // canonical "host:port"; used for status aggregation key
+	Format       SyslogFormat // wire format; used for status aggregation key
+	SharedConn   *net.UDPConn // fallback; may be nil
+	SysName      string       // device's sysName.0 value — empty falls back to DeviceIP at encode time
 	// Class 1 device-context fields. Constant for the device's lifetime;
 	// consumed by `{{.Model}}` / `{{.Serial}}` / `{{.ChassisID}}` in the
 	// unified template vocabulary.
@@ -138,19 +154,44 @@ func NewSyslogExporter(opts SyslogExporterOptions) *SyslogExporter {
 		opts.IfNameFn = func(int) string { return "" }
 	}
 	return &SyslogExporter{
-		deviceIP:   append(net.IP(nil), opts.DeviceIP...),
-		encoder:    opts.Encoder,
-		collector:  opts.Collector,
-		sharedConn: opts.SharedConn,
-		sysName:    opts.SysName,
-		model:      opts.Model,
-		serial:     opts.Serial,
-		chassisID:  opts.ChassisID,
-		ifIndexFn:  opts.IfIndexFn,
-		ifNameFn:   opts.IfNameFn,
-		startTime:  time.Now(),
-		stats:      &SyslogStats{},
+		deviceIP:     append(net.IP(nil), opts.DeviceIP...),
+		encoder:      opts.Encoder,
+		collector:    opts.Collector,
+		collectorStr: opts.CollectorStr,
+		format:       opts.Format,
+		sharedConn:   opts.SharedConn,
+		sysName:      opts.SysName,
+		model:        opts.Model,
+		serial:       opts.Serial,
+		chassisID:    opts.ChassisID,
+		ifIndexFn:    opts.IfIndexFn,
+		ifNameFn:     opts.IfNameFn,
+		startTime:    time.Now(),
+		stats:        &SyslogStats{},
 	}
+}
+
+// CollectorString returns the canonical "host:port" string identifying
+// this exporter's destination. Used as the (collector, format) key for
+// the shared-socket pool and the status-endpoint aggregate.
+func (e *SyslogExporter) CollectorString() string { return e.collectorStr }
+
+// Format returns the exporter's wire format (5424 or 3164). Used as the
+// (collector, format) key for the status-endpoint aggregate.
+func (e *SyslogExporter) Format() SyslogFormat { return e.format }
+
+// logFirstWriteErr emits at most one log line per exporter on a failed
+// write. Gated by e.firstWriteErr so a down/misconfigured collector
+// doesn't flood logs at fire cadence × device count (mirror of
+// TrapExporter.logFirstWriteErr from trap phase 4 P8).
+func (e *SyslogExporter) logFirstWriteErr(err error) {
+	if e == nil || err == nil {
+		return
+	}
+	e.firstWriteErr.Do(func() {
+		log.Printf("syslog export: device %s write to %s failed: %v (further errors suppressed for this exporter)",
+			e.deviceIP, e.collectorStr, err)
+	})
 }
 
 // SetConn installs the per-device UDP socket. Must be called before the
@@ -260,8 +301,10 @@ func (e *SyslogExporter) writeDatagram(pdu []byte) error {
 	}
 	if e.sharedConn == nil {
 		if primaryErr != nil {
+			e.logFirstWriteErr(primaryErr)
 			return primaryErr
 		}
+		e.logFirstWriteErr(errNoSyslogSocket)
 		return errNoSyslogSocket
 	}
 	_, err := e.sharedConn.WriteToUDP(pdu, e.collector)
@@ -275,10 +318,14 @@ func (e *SyslogExporter) writeDatagram(pdu []byte) error {
 		return nil
 	}
 	sharedErr := fmt.Errorf("shared socket: %w", err)
+	var finalErr error
 	if primaryErr != nil {
-		return errors.Join(primaryErr, sharedErr)
+		finalErr = errors.Join(primaryErr, sharedErr)
+	} else {
+		finalErr = sharedErr
 	}
-	return sharedErr
+	e.logFirstWriteErr(finalErr)
+	return finalErr
 }
 
 // uptimeHundredths returns device uptime in 1/100-second ticks, matching
