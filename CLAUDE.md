@@ -111,11 +111,12 @@ The `FlowEncoder` interface has a `MaxRecordSize() int` extension point: fixed-s
 - Optional top-level `snmpTrapEnterprise` field (string, dotted OID) per entry. When set, the encoder emits an additional `snmpTrapEnterprise.0` varbind (OID `1.3.6.1.6.3.1.1.4.3.0`) after the two mandatory ones — useful for v1↔v2c cross-compatibility on collectors that expect the enterprise OID per SNMPv2-MIB §10. Catalog-loader rejects reserved OIDs (`sysUpTime.0`, `snmpTrapOID.0`, `snmpTrapEnterprise.0`) as enterprise values. Omit the field to keep the backward-compatible 2-varbind prefix.
 
 **Trap operational notes:**
-- INFORM mode (`-trap-mode inform`) requires `-trap-source-per-device=true` (the default) so the per-device UDP socket can demux acks without a global request-id table. Startup fails with a clear error if the operator explicitly sets the flag false.
+- INFORM mode (`-trap-mode inform`) requires `-trap-source-per-device=true` (the default) so the per-device UDP socket can demux acks without a global request-id table. Enforced at device-attach time (phase 4 moved it out of startup).
 - Pending-inform map is bounded at 100 per device with oldest-drop overflow policy (exposed as `informsDropped` in `GET /api/v1/traps/status`).
 - Retransmissions consume global-cap tokens (design decision to prevent retry-storm amplification when the collector is unreachable).
 - Collector-side `rp_filter` may need relaxing (`net.ipv4.conf.*.rp_filter=0` or `2`) to accept UDP/162 with 10.42.0.0/16 source IPs — same caveat already documented for flow export.
 - Per-device UDP source binding reuses the same `setupVethPair` + `FORWARD -i veth-sim-host -j ACCEPT` iptables rule that flow export already relies on. No new netns / iptables surface.
+- **`StopTrapExport` is shutdown-only** (phase-5 review D1). It is not safe to race concurrent device creation: `startDeviceTrapExporter` captures scheduler / pool / encoder pointers under a short RLock and uses them outside that lock, so a concurrent Stop can leave orphan exporters or closed sockets. Today it is only called from the process-exit signal handler. Do not introduce a runtime "restart trap subsystem" control path without first tightening the attach-path lock discipline.
 
 **Trap HTTP endpoints:**
 - `GET /api/v1/traps/status` — JSON with `enabled`, `mode`, `sent`, INFORM counters (`informs_pending`, `informs_acked`, `informs_failed`, `informs_dropped` when mode=inform), `rate_limiter_tokens_available` (when `-trap-global-cap` is set), `devices_exporting`.
@@ -194,11 +195,12 @@ In every branch the result is run through `sanitiseHostname`: spaces become hyph
   Out-of-range integers or unknown names are rejected at catalog load.
 
 **Syslog operational notes:**
-- Only one format on the wire at a time — `-syslog-format 5424` (default) or `3164`. Mixed formats on one socket break auto-detecting parsers downstream; operators select one per deployment.
+- The format is per-device post-phase-5 — each device's `syslogConfig.Format` sets its own wire format. The shared-socket pool is keyed by `(collector, format)` so 5424 and 3164 streams never interleave on the same socket.
 - Per-device UDP source binding reuses the same `setupVethPair` + `FORWARD -i veth-sim-host -j ACCEPT` rule shared by flow / trap. No new netns / iptables surface.
-- Per-device bind failure is **non-fatal** for syslog (unlike INFORM): exporter logs a warning and falls back to the shared socket. When the primary per-device write fails but the shared fallback succeeds, the primary failure is logged and stats count the send as successful.
+- Per-device bind failure is **non-fatal** for syslog (unlike INFORM): exporter logs a warning and falls back to the shared socket. When the primary per-device write fails but the shared fallback succeeds, the primary failure is logged and stats count the send as successful. If **both** per-device bind and shared-pool open fail, the attach is rejected so `ListDevices` doesn't show a ghost entry.
 - The collector-side `rp_filter` caveat is the same as flow / trap — accept UDP from device IPs with `net.ipv4.conf.*.rp_filter=0` or `2`.
 - On-demand HTTP fires **bypass the global rate limiter** (test-harness use case; scheduler-driven traffic still honours `-syslog-global-cap`).
+- **`StopSyslogExport` is shutdown-only** (phase-5 review D1). Same constraint as trap: `startDeviceSyslogExporter` uses captured pointers outside the short RLock. Only called from the process-exit path today. Tightening is a pre-requisite for any runtime "restart" control plane.
 
 **Syslog HTTP endpoints:**
 - `GET /api/v1/syslog/status` — JSON with `enabled`, `format` (`5424` or `3164`), `collector`, `sent`, `send_failures`, `rate_limiter_tokens_available` (when `-syslog-global-cap` is set), `devices_exporting`.

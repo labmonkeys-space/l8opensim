@@ -306,12 +306,19 @@ func (sm *SimulatorManager) CreateDevicesWithOptions(startIP string, count int, 
 				}
 			}
 
-			// Initialize UDP syslog exporter if syslog export is enabled.
-			// Per-device bind failure is non-fatal (no ack path that requires
-			// symmetric source IPs); exporter falls back to the shared socket
-			// with an in-function warning log.
-			if sm.syslogActive.Load() {
-				sm.startDeviceSyslogExporter(device)
+			// Initialize UDP syslog exporter if this device has syslog
+			// config (set by applyExportSeed). Per-device bind failure
+			// is non-fatal for syslog — exporter falls back to the
+			// shared-pool socket with an in-function warning log. Other
+			// errors (bad format, unresolvable collector) nil the config
+			// so ListDevices doesn't show a ghost entry.
+			if device.syslogConfig != nil {
+				if err := sm.startDeviceSyslogExporter(device); err != nil {
+					log.Printf("syslog export: skipping device %s: %v", device.IP, err)
+					device.mu.Lock()
+					device.syslogConfig = nil
+					device.mu.Unlock()
+				}
 			}
 
 			// Cache the dynamic values using atomic for lock-free access
@@ -574,9 +581,14 @@ func (sm *SimulatorManager) createSingleDevice(deviceIndex int, deviceIP net.IP,
 		}
 	}
 
-	// Initialize UDP syslog exporter if syslog export is enabled.
-	if sm.syslogActive.Load() {
-		sm.startDeviceSyslogExporter(device)
+	// Initialize UDP syslog exporter if this device has syslog config.
+	if device.syslogConfig != nil {
+		if err := sm.startDeviceSyslogExporter(device); err != nil {
+			log.Printf("syslog export: skipping device %s: %v", device.IP, err)
+			device.mu.Lock()
+			device.syslogConfig = nil
+			device.mu.Unlock()
+		}
 	}
 
 	// Cache the dynamic values using atomic for lock-free access
@@ -731,16 +743,26 @@ func (d *DeviceSimulator) Stop() error {
 			manager.persistTrapCounters(d.trapExporter)
 		}
 		_ = d.trapExporter.Close()
-		if manager != nil && manager.trapScheduler != nil {
-			manager.trapScheduler.Deregister(d.IP)
+		// Snapshot the scheduler under manager.mu so the nil-check and
+		// the Deregister call can't split across a concurrent Stop*Export
+		// that nils the field (phase-5 review D3).
+		if sched := getTrapScheduler(manager); sched != nil {
+			sched.Deregister(d.IP)
 		}
 		d.trapExporter = nil
 	}
 
 	if d.syslogExporter != nil {
+		// Persist counters into the simulator-wide per-(collector,
+		// format) aggregate so /syslog/status reports monotonic totals
+		// across device churn. sync.Once-gated so it's single-shot even
+		// if StopSyslogExport also persists the same exporter.
+		if manager != nil {
+			manager.persistSyslogCounters(d.syslogExporter)
+		}
 		_ = d.syslogExporter.Close()
-		if manager != nil && manager.syslogScheduler != nil {
-			manager.syslogScheduler.Deregister(d.IP)
+		if sched := getSyslogScheduler(manager); sched != nil {
+			sched.Deregister(d.IP)
 		}
 		d.syslogExporter = nil
 	}
@@ -798,6 +820,10 @@ func (d *DeviceSimulator) stopListenersOnly() {
 		d.trapExporter = nil
 	}
 	if d.syslogExporter != nil {
+		// Persist counters before Close (sync.Once-gated).
+		if manager != nil {
+			manager.persistSyslogCounters(d.syslogExporter)
+		}
 		_ = d.syslogExporter.Close()
 		d.syslogExporter = nil
 	}

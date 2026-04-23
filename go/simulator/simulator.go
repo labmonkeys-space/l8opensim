@@ -264,24 +264,35 @@ func main() {
 		}
 	}
 
-	// Enable UDP syslog export if a collector address was provided.
-	// Must run before device creation so per-device SyslogExporters are
-	// wired during startup.
+	// Start the UDP syslog subsystem unconditionally so REST-created
+	// devices can opt in to syslog even when no CLI seed is provided.
+	// Phase 5 of per-device-export-config: simulator-wide knobs
+	// (catalog, global cap, per-device-source, scheduler mean interval)
+	// live on the manager; per-device knobs (collector, format,
+	// interval) live on each DeviceSyslogConfig.
+	if err := manager.StartSyslogSubsystem(SyslogSubsystemConfig{
+		CatalogPath:           *syslogCatalog,
+		GlobalCap:             *syslogGlobalCap,
+		SourcePerDevice:       *syslogSourcePerDevice,
+		MeanSchedulerInterval: *syslogInterval,
+	}); err != nil {
+		log.Fatalf("Failed to initialize syslog subsystem: %v", err)
+	}
+
+	// Build the CLI-seed syslog config for the auto-start batch. Mirrors
+	// the flow-seed and trap-seed patterns. `DeviceSyslogConfig.Validate`
+	// canonicalises Format via ParseSyslogFormat, so a malformed
+	// -syslog-format surfaces here.
+	var syslogSeed *DeviceSyslogConfig
 	if *syslogCollector != "" {
-		format, err := ParseSyslogFormat(*syslogFormat)
-		if err != nil {
-			log.Fatalf("Failed to initialize syslog export: %v", err)
+		syslogSeed = &DeviceSyslogConfig{
+			Collector: *syslogCollector,
+			Format:    *syslogFormat,
+			Interval:  jsonDuration(*syslogInterval),
 		}
-		cfg := SyslogConfig{
-			Collector:       *syslogCollector,
-			Format:          format,
-			Interval:        *syslogInterval,
-			GlobalCap:       *syslogGlobalCap,
-			CatalogPath:     *syslogCatalog,
-			SourcePerDevice: *syslogSourcePerDevice,
-		}
-		if err := manager.StartSyslogExport(cfg); err != nil {
-			log.Fatalf("Failed to initialize syslog export: %v", err)
+		syslogSeed.ApplyDefaults()
+		if err := syslogSeed.Validate(); err != nil {
+			log.Fatalf("syslog export: invalid -syslog-* CLI seed: %v", err)
 		}
 	}
 
@@ -338,7 +349,7 @@ func main() {
 					*snmpv3EngineID, *snmpv3AuthProto, *snmpv3PrivProto)
 			}
 
-			err := manager.CreateDevices(*autoStartIP, *autoCount, *autoNetmask, "", v3Config, false, "", *snmpPort, &ExportSeed{Flow: flowSeed, Traps: trapSeed})
+			err := manager.CreateDevices(*autoStartIP, *autoCount, *autoNetmask, "", v3Config, false, "", *snmpPort, &ExportSeed{Flow: flowSeed, Traps: trapSeed, Syslog: syslogSeed})
 			if err != nil {
 				log.Printf("Failed to auto-create devices: %v", err)
 			} else {
