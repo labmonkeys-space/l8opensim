@@ -12,6 +12,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net"
+	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
@@ -322,6 +323,43 @@ func TestInformInvariant_AtExporterLevel(t *testing.T) {
 				attempt, pending, acked, failed, dropped, originated)
 		}
 		time.Sleep(50 * time.Millisecond)
+	}
+}
+
+// TestCreateDevicesHandler_RejectsInformWithoutPerDeviceBinding asserts
+// the phase-4.6 batch-level guard: when the trap subsystem is configured
+// without per-device source binding and a POST body sets
+// traps.mode=inform, the entire batch should fail with 400 rather than
+// allow some devices through and silently drop the rest at attach time.
+func TestCreateDevicesHandler_RejectsInformWithoutPerDeviceBinding(t *testing.T) {
+	sm := newTestSimulatorManager()
+	if err := sm.StartTrapSubsystem(TrapSubsystemConfig{
+		SourcePerDevice:       false,
+		MeanSchedulerInterval: time.Second,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(sm.StopTrapExport)
+	withManager(t, sm)
+
+	body := strings.NewReader(`{
+		"start_ip": "10.0.0.1",
+		"device_count": 1,
+		"traps": {
+			"collector": "127.0.0.1:16201",
+			"mode":      "inform",
+			"community": "public"
+		}
+	}`)
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/devices", body)
+	rr := httptest.NewRecorder()
+	setupRoutes().ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("status code: got %d, want 400 — body=%q", rr.Code, rr.Body.String())
+	}
+	if !strings.Contains(rr.Body.String(), "inform") || !strings.Contains(rr.Body.String(), "trap-source-per-device") {
+		t.Errorf("body should mention inform + trap-source-per-device: %q", rr.Body.String())
 	}
 }
 
