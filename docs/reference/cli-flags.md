@@ -59,21 +59,44 @@ editing resource files.
 Scenario 4 uses a deterministic rule (`ifIndex % 100 < n`) so test runs are
 reproducible across restarts.
 
+## Export flag scope
+
+Export flags (flow / trap / syslog) fall into two categories:
+
+- **seed** — applies only to devices created by the `-auto-start-ip` batch at
+  startup. Devices subsequently created via `POST /api/v1/devices` do NOT
+  inherit these values; they must opt in by including a `flow` / `traps` /
+  `syslog` block in the request body.
+- **global** — applies simulator-wide regardless of how the device was
+  created. Shared sockets, catalogs, rate-limiter, and network-namespace
+  bind policy sit here.
+
+**Duration units differ between CLI and REST:** CLI flags that express a
+duration take **integer seconds** (e.g. `-flow-tick-interval 5`,
+`-trap-interval 30`), while the REST per-device blocks require **Go
+duration strings** (`"tick_interval": "5s"`, `"interval": "30s"`).
+Passing an integer in the REST body (`"interval": 30`) is rejected with
+400 by design — the two forms are not interchangeable.
+
+See [Web API](web-api.md) for the per-device block schema and
+[Migration](../ops/migration-per-device-exports.md) for converting
+pre-per-device-config invocations.
+
 ## Flow export flags
 
 See [Flow export (operator guide)](../ops/flow-export.md) for prerequisites and
 collector setup, and [Flow export reference](flow-export.md) for protocol
 details.
 
-| Flag | Type | Default | Purpose |
-|------|------|---------|---------|
-| `-flow-collector` | string | — | Enable flow export to this UDP collector (e.g. `192.168.1.10:2055`). |
-| `-flow-protocol` | `netflow9` \| `ipfix` \| `netflow5` \| `sflow` | `netflow9` | Flow export protocol (alias: `sflow5`). |
-| `-flow-tick-interval` | int (seconds) | `5` | Flow ticker interval. |
-| `-flow-active-timeout` | int (seconds) | `30` | Active flow timeout. |
-| `-flow-inactive-timeout` | int (seconds) | `15` | Inactive flow timeout. |
-| `-flow-template-interval` | int (seconds) | `60` | Template retransmission interval (NetFlow v9 / IPFIX only). |
-| `-flow-source-per-device` | bool | `true` | Use each device's IP as the UDP source address. |
+| Flag | Type | Default | Scope | Purpose |
+|------|------|---------|-------|---------|
+| `-flow-collector` | string | — | **seed** | Enable flow export to this UDP collector (e.g. `192.168.1.10:2055`) for the auto-start batch. |
+| `-flow-protocol` | `netflow9` \| `ipfix` \| `netflow5` \| `sflow` | `netflow9` | **seed** | Flow export protocol (alias: `sflow5`). |
+| `-flow-tick-interval` | int (seconds) | `5` | **seed** | Flow ticker interval. |
+| `-flow-active-timeout` | int (seconds) | `30` | **seed** | Active flow timeout. |
+| `-flow-inactive-timeout` | int (seconds) | `15` | **seed** | Inactive flow timeout. |
+| `-flow-template-interval` | int (seconds) | `60` | **global** | Template retransmission interval (NetFlow v9 / IPFIX only). |
+| `-flow-source-per-device` | bool | `true` | **global** | Use each device's IP as the UDP source address. |
 
 ## SNMP trap / INFORM export flags
 
@@ -81,17 +104,17 @@ See [SNMP trap / INFORM export (operator guide)](../ops/snmp-traps.md) for
 prerequisites and `snmptrapd` smoke-test, and
 [SNMP trap reference](snmp-traps.md) for wire format and catalog JSON.
 
-| Flag | Type | Default | Purpose |
-|------|------|---------|---------|
-| `-trap-collector` | string | — | Enable trap export to this UDP collector (e.g. `192.168.1.10:162`). Empty disables the feature. |
-| `-trap-mode` | `trap` \| `inform` | `trap` | Notification mode. TRAP is fire-and-forget; INFORM is acknowledged and retried. |
-| `-trap-interval` | duration | `30s` | Per-device mean firing interval (Poisson-distributed, not periodic). |
-| `-trap-global-cap` | int (tps) | `0` | Simulator-wide rate ceiling across fires + INFORM retries. `0` is unlimited. |
-| `-trap-catalog` | string | — | Path to a JSON catalog; empty uses the embedded universal 5-trap catalog + per-type overlays from `resources/<slug>/traps.json`. Setting this flag **disables per-type overlays** — the file becomes the sole catalog for every device. |
-| `-trap-community` | string | `public` | SNMPv2c community string. |
-| `-trap-source-per-device` | bool | `true` | Use each device's IP as the UDP source address. **Required** when `-trap-mode inform`. |
-| `-trap-inform-timeout` | duration | `5s` | Per-retry timeout in INFORM mode. |
-| `-trap-inform-retries` | int | `2` | Maximum retransmissions per INFORM before it's declared failed. |
+| Flag | Type | Default | Scope | Purpose |
+|------|------|---------|-------|---------|
+| `-trap-collector` | string | — | **seed** | Enable trap export to this UDP collector (e.g. `192.168.1.10:162`) for the auto-start batch. Empty disables seeding; REST-created devices can still opt in via the `traps` block. |
+| `-trap-mode` | `trap` \| `inform` | `trap` | **seed** | Notification mode. TRAP is fire-and-forget; INFORM is acknowledged and retried. |
+| `-trap-interval` | duration | `30s` | **seed** | Per-device mean firing interval (Poisson-distributed, not periodic). |
+| `-trap-global-cap` | int (tps) | `0` | **global** | Simulator-wide rate ceiling across fires + INFORM retries. `0` is unlimited. |
+| `-trap-catalog` | string | — | **global** | Path to a JSON catalog; empty uses the embedded universal 5-trap catalog + per-type overlays from `resources/<slug>/traps.json`. Setting this flag **disables per-type overlays** — the file becomes the sole catalog for every device. |
+| `-trap-community` | string | `public` | **seed** | SNMPv2c community string. |
+| `-trap-source-per-device` | bool | `true` | **global** | Use each device's IP as the UDP source address. **Required** when a device is configured `mode=inform` — enforced at device-attach time: the attach fails per-device and the device's `trapConfig` is cleared. |
+| `-trap-inform-timeout` | duration | `5s` | **seed** | Per-retry timeout in INFORM mode. |
+| `-trap-inform-retries` | int | `2` | **seed** | Maximum retransmissions per INFORM before it's declared failed. |
 
 ## UDP syslog export flags
 
@@ -99,14 +122,14 @@ See [UDP syslog export (operator guide)](../ops/syslog-export.md) for
 prerequisites and `netcat` smoke-test, and
 [UDP syslog reference](syslog-export.md) for wire format and catalog JSON.
 
-| Flag | Type | Default | Purpose |
-|------|------|---------|---------|
-| `-syslog-collector` | string | — | Enable syslog export to this UDP collector (e.g. `192.168.1.10:514`). Empty disables the feature. |
-| `-syslog-format` | `5424` \| `3164` | `5424` | Wire format. RFC 5424 is structured (recommended); RFC 3164 is legacy BSD. One format per process — they don't mix on a single UDP socket. |
-| `-syslog-interval` | duration | `10s` | Per-device mean firing interval (Poisson-distributed, not periodic). |
-| `-syslog-global-cap` | int (rate) | `0` | Simulator-wide rate ceiling across scheduled fires. On-demand HTTP fires bypass the cap. `0` is unlimited. |
-| `-syslog-catalog` | string | — | Path to a JSON catalog; empty uses the embedded universal 6-entry catalog + per-type overlays from `resources/<slug>/syslog.json`. Setting this flag **disables per-type overlays** — the file becomes the sole catalog for every device. |
-| `-syslog-source-per-device` | bool | `true` | Use each device's IP as the UDP source address. Per-device bind failures are non-fatal (unlike INFORM mode on the trap side) — the exporter falls back to the shared socket with a warning. |
+| Flag | Type | Default | Scope | Purpose |
+|------|------|---------|-------|---------|
+| `-syslog-collector` | string | — | **seed** | Enable syslog export to this UDP collector (e.g. `192.168.1.10:514`) for the auto-start batch. Empty disables seeding; REST-created devices can still opt in via the `syslog` block. |
+| `-syslog-format` | `5424` \| `3164` | `5424` | **seed** | Wire format. RFC 5424 is structured (recommended); RFC 3164 is legacy BSD. Per-device as of phase 5 — different devices can emit different formats to the same collector; the shared-socket pool is keyed by `(collector, format)` so streams never interleave. |
+| `-syslog-interval` | duration | `10s` | **seed** | Per-device mean firing interval (Poisson-distributed, not periodic). |
+| `-syslog-global-cap` | int (rate) | `0` | **global** | Simulator-wide rate ceiling across scheduled fires. On-demand HTTP fires bypass the cap. `0` is unlimited. |
+| `-syslog-catalog` | string | — | **global** | Path to a JSON catalog; empty uses the embedded universal 6-entry catalog + per-type overlays from `resources/<slug>/syslog.json`. Setting this flag **disables per-type overlays** — the file becomes the sole catalog for every device. |
+| `-syslog-source-per-device` | bool | `true` | **global** | Use each device's IP as the UDP source address. Per-device bind failures are non-fatal (unlike INFORM mode on the trap side) — the exporter falls back to the shared socket with a warning. |
 
 ## Examples
 

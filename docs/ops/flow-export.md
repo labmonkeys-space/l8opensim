@@ -49,6 +49,83 @@ sudo ./simulator -auto-start-ip 10.0.0.1 -auto-count 100 \
   -flow-collector 192.168.1.10:2055 -flow-source-per-device=false
 ```
 
+## Heterogeneous-fleet operation (multiple collectors / protocols)
+
+The `-flow-*` CLI flags seed a **single** collector / protocol for the
+auto-start batch. To stand up a fleet that points at more than one
+collector — or mixes protocols — start the simulator with just the
+global flags and drive device creation via
+[`POST /api/v1/devices`](../reference/web-api.md#per-device-export-blocks),
+one batch per collector / protocol.
+
+### Example: two collectors, three protocols
+
+```bash
+# 1. Boot with NO flow seed — only the global knobs (tick cadence,
+#    template cadence, source-per-device policy).
+sudo ./simulator \
+  -flow-tick-interval 1 \
+  -flow-template-interval 300 \
+  -flow-source-per-device=true
+
+# 2. Batch A → NetFlow v9 to collector A.
+curl -X POST http://localhost:8080/api/v1/devices \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "start_ip": "10.0.0.1",
+    "device_count": 50,
+    "flow": {"collector": "192.168.1.10:2055", "protocol": "netflow9"}
+  }'
+
+# 3. Batch B → IPFIX to collector A (different protocol, same host).
+curl -X POST http://localhost:8080/api/v1/devices \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "start_ip": "10.0.1.1",
+    "device_count": 30,
+    "flow": {"collector": "192.168.1.10:4739", "protocol": "ipfix"}
+  }'
+
+# 4. Batch C → sFlow to collector B.
+curl -X POST http://localhost:8080/api/v1/devices \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "start_ip": "10.0.2.1",
+    "device_count": 20,
+    "flow": {"collector": "192.168.1.20:6343", "protocol": "sflow"}
+  }'
+```
+
+`GET /api/v1/flows/status` then reports three collector records, one
+per `(collector, protocol)` tuple:
+
+```json
+{
+  "subsystem_active": true,
+  "collectors": [
+    {"collector": "192.168.1.10:2055", "protocol": "netflow9", "devices": 50, "..." },
+    {"collector": "192.168.1.10:4739", "protocol": "ipfix",    "devices": 30, "..." },
+    {"collector": "192.168.1.20:6343", "protocol": "sflow",    "devices": 20, "..." }
+  ],
+  "devices_exporting": 100
+}
+```
+
+### Notes
+
+- The same device IP can belong to only one flow config (one `flow` block
+  per device). If you need the same device to appear on multiple
+  collectors, run multiple simulator processes — the `opensim` netns +
+  per-device-source-IP scheme isn't designed to multicast.
+- The global `-flow-tick-interval` and `-flow-template-interval` are
+  simulator-wide — every exporter ticks at the same cadence regardless
+  of batch. Per-device `tick_interval` in the REST body is accepted and
+  validated but not yet honored; a single warning is logged per
+  subsystem lifecycle if any device's value diverges from the global
+  (phase-4+5 design debt).
+- Collector-side `rp_filter` tuning applies per collector host, not
+  per protocol — see the next section.
+
 ## Prerequisites for per-device source IP
 
 When `-flow-source-per-device` is enabled (the default), flow packets

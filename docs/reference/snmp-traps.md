@@ -222,6 +222,82 @@ content depends on Class 2 random fields deferred to a follow-up.
 Family-catalog concept (one catalog shared by all `cisco_*` slugs) is
 also a follow-up refactor.
 
+## Starting trap export
+
+Trap export is opt-in per device. There are two ways to configure it:
+
+### 1. CLI seed (auto-start batch)
+
+The `-trap-*` flags seed auto-created devices. Every device in the
+auto-start batch gets the same collector, mode, community, and interval.
+
+```bash
+# SNMPv2c TRAP → 192.168.1.10:162, 100 auto-created devices, default
+# interval=30s / community=public
+sudo ./simulator \
+  -auto-start-ip 10.0.0.1 -auto-count 100 \
+  -trap-collector 192.168.1.10:162
+
+# INFORM mode (acknowledged) — requires -trap-source-per-device=true
+# (the default). The check is enforced at device-attach time: if it's
+# disabled, attach fails per-device and trapConfig is cleared.
+sudo ./simulator \
+  -auto-start-ip 10.0.0.1 -auto-count 50 \
+  -trap-collector 192.168.1.10:162 \
+  -trap-mode inform \
+  -trap-inform-timeout 3s -trap-inform-retries 5
+```
+
+### 2. REST body (per-device)
+
+`POST /api/v1/devices` accepts an optional `traps` block per request.
+Different batches can target different collectors or mix TRAP and INFORM.
+
+```bash
+# A: 50 TRAP-mode devices → collector A, community public
+curl -X POST http://localhost:8080/api/v1/devices \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "start_ip": "10.0.0.1",
+    "device_count": 50,
+    "traps": {
+      "collector": "192.168.1.10:162",
+      "mode": "trap",
+      "community": "public",
+      "interval": "30s"
+    }
+  }'
+
+# B: 20 INFORM-mode devices → collector B, tight retry budget
+curl -X POST http://localhost:8080/api/v1/devices \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "start_ip": "10.0.1.1",
+    "device_count": 20,
+    "traps": {
+      "collector": "192.168.1.20:162",
+      "mode": "inform",
+      "community": "private",
+      "interval": "60s",
+      "inform_timeout": "2s",
+      "inform_retries": 3
+    }
+  }'
+```
+
+`/api/v1/traps/status` reports both batches as separate records keyed by
+`(collector, mode)`.
+
+The `traps` block is **optional** on every request — omit it and the
+device doesn't fire traps. See
+[Web API → POST /api/v1/devices](web-api.md#create-devices) for the full
+per-device schema.
+
+**Duration fields** (`interval`, `inform_timeout`) require **Go duration
+strings** (`"30s"`, `"5m"`, `"1m30s"`). Integer seconds (`"interval": 30`)
+are rejected with 400 — a deliberate mismatch with the `-trap-interval`
+CLI flag, which takes integer seconds.
+
 ## HTTP endpoints
 
 ### Fire a trap on demand
@@ -250,7 +326,7 @@ Responses:
 | `400 Bad Request` | `{"error": "...", "catalog": "<slug>", "availableEntries": [...]}` | Unknown catalog entry for the device. The enriched body tells the caller which catalog the device resolved to (`cisco_ios`, `_universal`, etc.) and lists its entries alphabetically so a scripted caller can self-service when it targeted the wrong vendor. For malformed JSON or missing `name`, the legacy envelope form `{"success": false, "message": "..."}` applies. |
 | `404 Not Found` | `{"success": false, "message": "..."}` | Unknown device IP. |
 | `500 Internal Server Error` | `{"success": false, "message": "..."}` | `Fire` failed for a non-lookup reason — template resolve error, catalog resolution returned nil despite feature active (pathological manager state), or write failure. Logs on the simulator side carry the detail. |
-| `503 Service Unavailable` | `{"success": false, "message": "..."}` | Trap export is disabled (`-trap-collector` not set). |
+| `503 Service Unavailable` | `{"success": false, "message": "..."}` | The trap subsystem has not started **or** the target device has no trap config (i.e. it was created without a `traps` block and didn't inherit the CLI seed). |
 
 The endpoint is fire-and-forget — it does **not** block waiting for an
 INFORM ack.
@@ -261,22 +337,33 @@ INFORM ack.
 
 Unlike `/api/v1/flows/status`, this endpoint does **not** wrap its body
 in the `{success, message, data}` envelope — `TrapStatus` is serialised
-directly at the top level. When enabled in INFORM mode (the most complete
-response shape):
+directly at the top level.
+
+**Response shape** (array-of-collectors aggregated by `(collector, mode)`):
 
 ```json
 {
-  "enabled": true,
-  "mode": "inform",
-  "collector": "192.168.1.10:162",
-  "community": "public",
-  "sent": 182430,
-  "informs_pending": 17,
-  "informs_acked": 182380,
-  "informs_failed": 33,
-  "informs_dropped": 0,
-  "rate_limiter_tokens_available": 94,
+  "subsystem_active": true,
+  "collectors": [
+    {
+      "collector": "192.168.1.10:162",
+      "mode":      "inform",
+      "devices":   80,
+      "sent":      182430,
+      "informs_pending": 17,
+      "informs_acked":   182380,
+      "informs_failed":  33,
+      "informs_dropped": 0
+    },
+    {
+      "collector": "192.168.1.20:162",
+      "mode":      "trap",
+      "devices":   20,
+      "sent":      6000
+    }
+  ],
   "devices_exporting": 100,
+  "rate_limiter_tokens_available": 94,
   "catalogs_by_type": {
     "_universal":    {"entries": 5,  "source": "embedded"},
     "cisco_ios":     {"entries": 12, "source": "file:resources/cisco_ios/traps.json"},
@@ -285,23 +372,33 @@ response shape):
 }
 ```
 
-`catalogs_by_type` is present whenever the feature is enabled. Keys
+The **four `informs_*` fields appear only on records whose `mode == inform`**.
+TRAP-mode records omit them.
+
+`subsystem_active` is the authoritative "is the feature live?" signal —
+`true` after `StartTrapSubsystem` runs. During normal operation of the
+HTTP server this value is always `true`: the subsystem initialises in
+`main()` and the only path that flips it to `false` is `StopTrapExport`,
+which runs at process exit alongside the HTTP server. A `false` value
+is therefore only observable programmatically (test harness, embedded
+use). Clients should still branch on `subsystem_active` rather than
+length-checking `collectors`. `subsystem_active=true` with
+`collectors=[]` means the subsystem is running but no device has opted
+in.
+
+Counters are **monotonic within a subsystem lifecycle**: deleting a
+device does not zero its collector's `sent` counter; the aggregate
+persists via `sm.trapAggregates` until `StopTrapExport` (which is
+today's process-exit path). A `devices=0` record therefore means "no
+live devices for this tuple, but historical fires still counted."
+
+`catalogs_by_type` is present whenever `subsystem_active=true`. Keys
 are device-type slugs with the reserved `_universal` entry for the
 fallback catalog. Values include the merged entry count and the
 catalog's provenance: `"embedded"` (compiled-in universal),
 `"file:<path>"` (per-type overlay on disk), or
 `"override:<path>"` when `-trap-catalog` was supplied (in which case
 `catalogs_by_type` contains a single `_universal` entry).
-
-When enabled in TRAP mode, the four `informs_*` fields are omitted (no
-INFORM state to report). When disabled the response is:
-
-```json
-{"enabled": false, "sent": 0, "devices_exporting": 0}
-```
-
-(`sent` and `devices_exporting` are not tagged `omitempty` so they are
-always present; their values are zero when the feature is off.)
 
 `rate_limiter_tokens_available` is present only when `-trap-global-cap`
 is set; it's a best-effort instantaneous snapshot, not synchronised with
