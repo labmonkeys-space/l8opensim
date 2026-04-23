@@ -22,6 +22,7 @@ import (
 	"fmt"
 	"net/http"
 	"runtime/pprof"
+	"strings"
 	"time"
 
 	"github.com/gorilla/mux"
@@ -51,12 +52,11 @@ func createDevicesHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Parse and validate per-device export blocks (phase 3 task 3.7).
-	// Each block is optional; missing or nil → export disabled for batch.
-	// Validation failures return 400 with the underlying error so the
-	// operator can see what went wrong. `Traps` and `Syslog` blocks pass
-	// through into the seed but the subsystems themselves still run off
-	// the old globals until phases 4/5 land.
+	// Parse and validate per-device export blocks. Each block is
+	// optional; missing or nil → export disabled for batch. Validation
+	// failures return 400 with the underlying error so the operator
+	// can see what went wrong. After phases 4 and 5 each block now
+	// drives a real per-device exporter via the always-on subsystem.
 	seed := &ExportSeed{Flow: req.Flow, Traps: req.Traps, Syslog: req.Syslog}
 	if seed.Flow != nil {
 		seed.Flow.ApplyDefaults()
@@ -69,6 +69,16 @@ func createDevicesHandler(w http.ResponseWriter, r *http.Request) {
 		seed.Traps.ApplyDefaults()
 		if err := seed.Traps.Validate(); err != nil {
 			sendErrorResponse(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		// INFORM mode requires per-device UDP source binding so the
+		// exporter can demux acks without a global request-id table.
+		// Reject the whole batch with 400 here rather than letting
+		// each device fail the attach individually (phase 4.6) — atomic
+		// batch failure matches the contract for every other validation
+		// rule on this endpoint.
+		if strings.EqualFold(seed.Traps.Mode, "inform") && !manager.TrapSourcePerDevice() {
+			sendErrorResponse(w, "traps: mode=inform requires the simulator-wide -trap-source-per-device flag (default true) to be enabled", http.StatusBadRequest)
 			return
 		}
 	}

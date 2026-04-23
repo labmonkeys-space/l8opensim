@@ -243,6 +243,20 @@ func (sm *SimulatorManager) closeTrapConnPool() {
 	})
 }
 
+// TrapSourcePerDevice returns the simulator-wide
+// `-trap-source-per-device` flag. Exposed so HTTP handlers can pre-flight
+// reject INFORM-mode batches when per-device binding is disabled
+// (phase 4.6) — keeping the access read-locked so a concurrent Stop /
+// Start cannot mid-flight a partial value.
+func (sm *SimulatorManager) TrapSourcePerDevice() bool {
+	if sm == nil {
+		return false
+	}
+	sm.mu.RLock()
+	defer sm.mu.RUnlock()
+	return sm.trapSourcePerDevice
+}
+
 // getTrapScheduler returns the manager's trap scheduler pointer under
 // sm.mu.RLock so callers cannot race a concurrent StopTrapExport that
 // nils the field (phase-5 review D3 fix). Safe with nil manager.
