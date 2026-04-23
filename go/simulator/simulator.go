@@ -226,27 +226,41 @@ func main() {
 		}
 	}
 
-	// Enable SNMP trap / INFORM export if a collector address was provided.
-	// Must run before device creation so per-device TrapExporters are wired
-	// during startup, not post-hoc.
+	// Start the SNMP trap subsystem unconditionally so REST-created
+	// devices can opt in to traps even when no CLI seed is provided.
+	// Phase 4 of per-device-export-config: simulator-wide knobs
+	// (catalog, global cap, per-device-source, scheduler mean interval)
+	// live on the manager; per-device knobs (collector, mode, community,
+	// interval, inform-*) live on each DeviceTrapConfig.
+	if err := manager.StartTrapSubsystem(TrapSubsystemConfig{
+		CatalogPath:           *trapCatalog,
+		GlobalCap:             *trapGlobalCap,
+		SourcePerDevice:       *trapSourcePerDevice,
+		MeanSchedulerInterval: *trapInterval,
+	}); err != nil {
+		log.Fatalf("Failed to initialize trap subsystem: %v", err)
+	}
+
+	// Build the CLI-seed trap config for the auto-start batch. Mirrors
+	// the flow-seed pattern: flags seed auto-start devices only;
+	// REST-created devices must opt in via POST /api/v1/devices.
+	var trapSeed *DeviceTrapConfig
 	if *trapCollector != "" {
-		mode, err := ParseTrapMode(*trapMode)
-		if err != nil {
-			log.Fatalf("Failed to initialize trap export: %v", err)
+		// Validate trap mode up front so a bad -trap-mode fails startup.
+		if _, err := ParseTrapMode(*trapMode); err != nil {
+			log.Fatalf("trap export: invalid -trap-mode: %v", err)
 		}
-		cfg := TrapConfig{
-			Collector:       *trapCollector,
-			Mode:            mode,
-			Community:       *trapCommunity,
-			Interval:        *trapInterval,
-			GlobalCap:       *trapGlobalCap,
-			CatalogPath:     *trapCatalog,
-			InformTimeout:   *trapInformTimeout,
-			InformRetries:   *trapInformRetries,
-			SourcePerDevice: *trapSourcePerDevice,
+		trapSeed = &DeviceTrapConfig{
+			Collector:     *trapCollector,
+			Mode:          *trapMode,
+			Community:     *trapCommunity,
+			Interval:      jsonDuration(*trapInterval),
+			InformTimeout: jsonDuration(*trapInformTimeout),
+			InformRetries: *trapInformRetries,
 		}
-		if err := manager.StartTrapExport(cfg); err != nil {
-			log.Fatalf("Failed to initialize trap export: %v", err)
+		trapSeed.ApplyDefaults()
+		if err := trapSeed.Validate(); err != nil {
+			log.Fatalf("trap export: invalid -trap-* CLI seed: %v", err)
 		}
 	}
 
@@ -324,7 +338,7 @@ func main() {
 					*snmpv3EngineID, *snmpv3AuthProto, *snmpv3PrivProto)
 			}
 
-			err := manager.CreateDevices(*autoStartIP, *autoCount, *autoNetmask, "", v3Config, false, "", *snmpPort, &ExportSeed{Flow: flowSeed})
+			err := manager.CreateDevices(*autoStartIP, *autoCount, *autoNetmask, "", v3Config, false, "", *snmpPort, &ExportSeed{Flow: flowSeed, Traps: trapSeed})
 			if err != nil {
 				log.Printf("Failed to auto-create devices: %v", err)
 			} else {

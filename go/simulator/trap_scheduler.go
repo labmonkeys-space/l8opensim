@@ -82,6 +82,11 @@ func (h *trapHeap) Pop() interface{} {
 	return e
 }
 
+// MeanInterval returns the simulator-wide mean firing interval. Exposed
+// for per-device-attach divergence warnings — per-device intervals are
+// stored on DeviceTrapConfig but not yet honored by the scheduler.
+func (s *TrapScheduler) MeanInterval() time.Duration { return s.meanInterval }
+
 // TrapScheduler coordinates per-device trap firing with a single goroutine
 // and a global token-bucket rate limiter. All fields are private; callers
 // interact via Register / Deregister / Run / Stop.

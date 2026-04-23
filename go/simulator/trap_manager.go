@@ -15,11 +15,11 @@
 
 // SimulatorManager-level SNMP trap export lifecycle.
 //
-// Parses the TrapConfig surfaced by CLI flags, loads the catalog (embedded or
-// file override), creates the shared TrapScheduler + TrapEncoder, and starts
-// the scheduler goroutine. Wires per-device TrapExporters into device
-// startup/teardown (see trap_exporter.go) and exposes GetTrapStatus for the
-// HTTP API.
+// `StartTrapSubsystem` loads the catalog (embedded or file override), creates
+// the shared TrapScheduler + TrapEncoder, and starts the scheduler goroutine.
+// Per-device TrapExporters are wired in from device startup/teardown (see
+// trap_exporter.go) against each device's `DeviceTrapConfig`. GetTrapStatus
+// exposes the aggregated per-(collector, mode) counters to the HTTP API.
 
 package main
 
@@ -33,24 +33,12 @@ import (
 	"net/http"
 	"sort"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"time"
 
 	"golang.org/x/time/rate"
 )
-
-// TrapConfig bundles CLI-derived configuration for the trap subsystem.
-// Empty Collector disables the feature.
-type TrapConfig struct {
-	Collector       string
-	Mode            TrapMode
-	Community       string
-	Interval        time.Duration
-	GlobalCap       int // 0 = unlimited
-	CatalogPath     string
-	InformTimeout   time.Duration
-	InformRetries   int
-	SourcePerDevice bool
-}
 
 // ParseTrapMode converts a case-insensitive string to TrapMode. Empty defaults
 // to TrapModeTrap so operators that pass -trap-collector without -trap-mode
@@ -66,27 +54,51 @@ func ParseTrapMode(s string) (TrapMode, error) {
 	}
 }
 
-// TrapStatus is the JSON body returned by GET /api/v1/traps/status. Fields
-// follow the shape required by spec.md ("Trap status HTTP endpoint").
+// TrapStatus is the JSON body returned by GET /api/v1/traps/status.
 //
-// CatalogsByType surfaces the per-device-type overlay map so operators can
-// see at a glance which vendor catalogs are active. Keys are device-type
-// slugs (plus the reserved `_fallback` entry for the universal catalog);
-// values describe each catalog's entry count and source (embedded vs file
-// override).
+// BREAKING (per-device-export-config phase 4): the response is now an
+// array-of-collectors aggregated across devices. Callers detect
+// "feature off" via `len(collectors) == 0`. Legacy scalar fields
+// (enabled/mode/collector/community/sent/informs_*) retired.
+//
+// CatalogsByType surfaces the per-device-type overlay map — unchanged
+// from phase-4-prior behaviour.
 type TrapStatus struct {
-	Enabled                    bool                          `json:"enabled"`
-	Mode                       string                        `json:"mode,omitempty"`
-	Collector                  string                        `json:"collector,omitempty"`
-	Community                  string                        `json:"community,omitempty"`
-	Sent                       uint64                        `json:"sent"`
-	InformsPending             uint64                        `json:"informs_pending,omitempty"`
-	InformsAcked               uint64                        `json:"informs_acked,omitempty"`
-	InformsFailed              uint64                        `json:"informs_failed,omitempty"`
-	InformsDropped             uint64                        `json:"informs_dropped,omitempty"`
-	RateLimiterTokensAvailable int                           `json:"rate_limiter_tokens_available,omitempty"`
-	DevicesExporting           int                           `json:"devices_exporting"`
-	CatalogsByType             map[string]CatalogSourceInfo  `json:"catalogs_by_type,omitempty"`
+	Collectors                 []TrapCollectorStatus        `json:"collectors"`
+	DevicesExporting           int                          `json:"devices_exporting"`
+	RateLimiterTokensAvailable int                          `json:"rate_limiter_tokens_available,omitempty"`
+	CatalogsByType             map[string]CatalogSourceInfo `json:"catalogs_by_type,omitempty"`
+}
+
+// TrapCollectorStatus is one aggregate record in TrapStatus.Collectors.
+// Devices with the same (collector, mode) tuple collapse into one
+// record; counters are cumulative since simulator start (monotonic —
+// persisted counters from deleted devices are merged at read time).
+type TrapCollectorStatus struct {
+	Collector      string `json:"collector"`
+	Mode           string `json:"mode"`
+	Devices        int    `json:"devices"`
+	Sent           uint64 `json:"sent"`
+	InformsPending uint64 `json:"informs_pending,omitempty"`
+	InformsAcked   uint64 `json:"informs_acked,omitempty"`
+	InformsFailed  uint64 `json:"informs_failed,omitempty"`
+	InformsDropped uint64 `json:"informs_dropped,omitempty"`
+}
+
+// trapAggKey identifies a (collector, mode) tuple for the shared-socket
+// pool and the monotonic counter aggregate.
+type trapAggKey struct {
+	collector string
+	mode      TrapMode
+}
+
+// trapCollectorAggregate holds monotonic counters for a (collector, mode)
+// tuple that survive device deletion (review decision D1.b pattern).
+type trapCollectorAggregate struct {
+	sent           atomic.Uint64
+	informsAcked   atomic.Uint64
+	informsFailed  atomic.Uint64
+	informsDropped atomic.Uint64
 }
 
 // CatalogSourceInfo describes one entry in TrapStatus.CatalogsByType /
@@ -97,47 +109,42 @@ type CatalogSourceInfo struct {
 	Source  string `json:"source"` // "embedded", "file:<path>", or "override:<path>"
 }
 
-// StartTrapExport validates cfg, loads the catalog, creates the shared
-// scheduler, and starts the scheduler goroutine. Idempotent on error —
-// partial state is unwound before returning.
+// TrapSubsystemConfig bundles the simulator-wide knobs still owned by
+// the manager after the per-device-export-config refactor. Per-device
+// knobs (collector / mode / community / interval / inform-*) live on
+// each `DeviceTrapConfig`.
+type TrapSubsystemConfig struct {
+	CatalogPath     string
+	GlobalCap       int  // 0 = unlimited
+	SourcePerDevice bool // bind per-device UDP socket in opensim ns
+	// MeanSchedulerInterval seeds the scheduler's Poisson draw when no
+	// device-specific intervals are known. Individual devices still
+	// register with their own per-device interval on the heap.
+	MeanSchedulerInterval time.Duration
+}
+
+// StartTrapSubsystem loads the catalog, creates the shared scheduler
+// and optional rate limiter, and starts the scheduler goroutine. The
+// subsystem is always-on after this runs — per-device attach via
+// `startDeviceTrapExporter` later wires individual exporters in.
 //
-// Preconditions:
-//   - Called after manager construction, before any device creation that
-//     should participate in trap export.
-//   - Mode=inform requires SourcePerDevice=true (spec: "Explicit conflict
-//     fails startup").
-func (sm *SimulatorManager) StartTrapExport(cfg TrapConfig) error {
-	if sm.trapActive.Load() {
-		return fmt.Errorf("trap export: already active; Shutdown before re-initializing")
-	}
-	if cfg.Collector == "" {
-		return fmt.Errorf("trap export: -trap-collector required to enable feature")
-	}
-	if cfg.Mode == TrapModeInform && !cfg.SourcePerDevice {
-		return fmt.Errorf("trap export: -trap-mode inform requires -trap-source-per-device=true")
-	}
-	if cfg.Interval <= 0 {
-		return fmt.Errorf("trap export: -trap-interval must be positive, got %s", cfg.Interval)
-	}
-	if cfg.InformRetries < 0 {
-		return fmt.Errorf("trap export: -trap-inform-retries must be non-negative, got %d", cfg.InformRetries)
+// Replaces pre-phase-4 `StartTrapExport`: the per-device collector /
+// mode / community / interval settings are now on each
+// `DeviceTrapConfig`. The manager no longer holds those values
+// simulator-wide.
+func (sm *SimulatorManager) StartTrapSubsystem(cfg TrapSubsystemConfig) error {
+	if sm.trapScheduler != nil {
+		return fmt.Errorf("trap export: subsystem already started")
 	}
 	if cfg.GlobalCap < 0 {
 		return fmt.Errorf("trap export: -trap-global-cap must be non-negative, got %d", cfg.GlobalCap)
 	}
-	if cfg.Community == "" {
-		cfg.Community = "public"
-	}
-	if cfg.InformTimeout <= 0 {
-		cfg.InformTimeout = 5 * time.Second
-	}
-
-	addr, err := net.ResolveUDPAddr("udp4", cfg.Collector)
-	if err != nil {
-		return fmt.Errorf("trap export: invalid collector address %q: %w", cfg.Collector, err)
+	if cfg.MeanSchedulerInterval <= 0 {
+		cfg.MeanSchedulerInterval = 30 * time.Second
 	}
 
 	var catalog *Catalog
+	var err error
 	if cfg.CatalogPath == "" {
 		catalog, err = LoadEmbeddedCatalog()
 	} else {
@@ -147,9 +154,6 @@ func (sm *SimulatorManager) StartTrapExport(cfg TrapConfig) error {
 		return err
 	}
 
-	// Per-device-type overlay scan. Skipped when `-trap-catalog` is set —
-	// the flag preserves today's full-replacement contract: every device
-	// uses the single file supplied.
 	catalogsByType := map[string]*Catalog{
 		universalCatalogKey: catalog,
 	}
@@ -163,13 +167,6 @@ func (sm *SimulatorManager) StartTrapExport(cfg TrapConfig) error {
 		}
 	}
 
-	// Shared fallback socket: used only when per-device binding is off or
-	// fails in TRAP mode (INFORM mode disallows fallback).
-	conn, err := net.ListenUDP("udp4", &net.UDPAddr{})
-	if err != nil {
-		return fmt.Errorf("trap export: failed to open shared UDP socket: %w", err)
-	}
-
 	var limiter *rate.Limiter
 	if cfg.GlobalCap > 0 {
 		limiter = rate.NewLimiter(rate.Limit(cfg.GlobalCap), cfg.GlobalCap)
@@ -177,7 +174,7 @@ func (sm *SimulatorManager) StartTrapExport(cfg TrapConfig) error {
 
 	scheduler := NewTrapScheduler(SchedulerOptions{
 		CatalogFor:         func(ip net.IP) *Catalog { return sm.CatalogFor(ip.String()) },
-		MeanInterval:       cfg.Interval,
+		MeanInterval:       cfg.MeanSchedulerInterval,
 		GlobalCapPerSecond: cfg.GlobalCap,
 	})
 
@@ -187,24 +184,11 @@ func (sm *SimulatorManager) StartTrapExport(cfg TrapConfig) error {
 	sm.trapScheduler = scheduler
 	sm.trapEncoder = SNMPv2cEncoder{}
 	sm.trapLimiter = limiter
-	sm.trapConn = conn
-	sm.trapCollectorAddr = addr
-	sm.trapCollectorStr = cfg.Collector
-	sm.trapMode = cfg.Mode
-	sm.trapCommunity = cfg.Community
-	sm.trapInterval = cfg.Interval
 	sm.trapGlobalCap = cfg.GlobalCap
-	sm.trapInformTimeout = cfg.InformTimeout
-	sm.trapInformRetries = cfg.InformRetries
 	sm.trapSourcePerDevice = cfg.SourcePerDevice
 	sm.trapCatalogPath = cfg.CatalogPath
 	sm.mu.Unlock()
-	sm.trapActive.Store(true)
 
-	modeStr := "trap"
-	if cfg.Mode == TrapModeInform {
-		modeStr = "inform"
-	}
 	capStr := "unlimited"
 	if cfg.GlobalCap > 0 {
 		capStr = fmt.Sprintf("%d/s", cfg.GlobalCap)
@@ -213,23 +197,83 @@ func (sm *SimulatorManager) StartTrapExport(cfg TrapConfig) error {
 	if cfg.CatalogPath != "" {
 		catStr = cfg.CatalogPath
 	}
-	log.Printf("Trap export: %s → %s (mode=%s, interval=%s, cap=%s, catalog=%s, per-device-source=%v)",
-		conn.LocalAddr(), cfg.Collector, modeStr, cfg.Interval, capStr, catStr, cfg.SourcePerDevice)
+	log.Printf("Trap subsystem: ready (cap=%s, catalog=%s, per-device-source=%v) — awaiting per-device config",
+		capStr, catStr, cfg.SourcePerDevice)
 
 	go scheduler.Run(context.Background())
 
 	return nil
 }
 
-// StopTrapExport stops the scheduler, closes the shared socket, and closes
-// every device's TrapExporter. Safe to call when trap export is inactive
-// (no-op).
-func (sm *SimulatorManager) StopTrapExport() {
-	if !sm.trapActive.Load() {
+// trapConnFor returns the shared-pool UDP socket for a collector.
+// First caller for a key opens the socket; subsequent callers reuse
+// it. Returns nil if the socket can't be opened. Safe for concurrent use.
+// Only used for TRAP mode — INFORM requires per-device binding so
+// callers must reject that combination at create-time.
+func (sm *SimulatorManager) trapConnFor(collector string) *net.UDPConn {
+	if cached, ok := sm.trapConns.Load(collector); ok {
+		return cached.(*net.UDPConn)
+	}
+	conn, err := net.ListenUDP("udp4", &net.UDPAddr{})
+	if err != nil {
+		log.Printf("trap export: failed to open shared socket for %s: %v", collector, err)
+		return nil
+	}
+	actual, loaded := sm.trapConns.LoadOrStore(collector, conn)
+	if loaded {
+		_ = conn.Close()
+		return actual.(*net.UDPConn)
+	}
+	return conn
+}
+
+// closeTrapConnPool closes every pooled shared socket and removes its map
+// entry so a subsequent `trapConnFor` after `StartTrapSubsystem` cannot
+// return a closed *net.UDPConn (review fix P2).
+func (sm *SimulatorManager) closeTrapConnPool() {
+	sm.trapConns.Range(func(k, v interface{}) bool {
+		if conn, ok := v.(*net.UDPConn); ok {
+			_ = conn.Close()
+		}
+		sm.trapConns.Delete(k)
+		return true
+	})
+}
+
+// persistTrapCounters snapshots a TrapExporter's cumulative counters
+// into the simulator-wide per-(collector, mode) aggregate so
+// /traps/status reports monotonic totals even as devices come and go
+// (review decision D1.b applied to trap subsystem). Called from the
+// device lifecycle immediately before `TrapExporter.Close()`. Safe to
+// call with nil exporter; idempotent per exporter (countersPersisted
+// sync.Once) so concurrent Stop paths cannot double-count.
+func (sm *SimulatorManager) persistTrapCounters(fe *TrapExporter) {
+	if fe == nil {
 		return
 	}
-	sm.trapActive.Store(false)
+	collector := fe.CollectorString()
+	if collector == "" {
+		return
+	}
+	// Use the exporter's countersPersisted sync.Once so concurrent
+	// StopTrapExport + device.Stop paths can both call us safely without
+	// double-counting (review fix P3).
+	fe.countersPersisted.Do(func() {
+		key := trapAggKey{collector: collector, mode: fe.Mode()}
+		v, _ := sm.trapAggregates.LoadOrStore(key, &trapCollectorAggregate{})
+		agg := v.(*trapCollectorAggregate)
+		stats := fe.Stats()
+		agg.sent.Add(stats.Sent.Load())
+		agg.informsAcked.Add(stats.InformsAcked.Load())
+		agg.informsFailed.Add(stats.InformsFailed.Load())
+		agg.informsDropped.Add(stats.InformsDropped.Load())
+	})
+}
 
+// StopTrapExport stops the scheduler, closes every pooled shared
+// socket, and closes every device's TrapExporter. Safe to call when
+// the subsystem was never started (no-op).
+func (sm *SimulatorManager) StopTrapExport() {
 	sm.mu.RLock()
 	scheduler := sm.trapScheduler
 	devices := make([]*DeviceSimulator, 0, len(sm.devices))
@@ -238,83 +282,130 @@ func (sm *SimulatorManager) StopTrapExport() {
 			devices = append(devices, d)
 		}
 	}
-	conn := sm.trapConn
 	sm.mu.RUnlock()
 
-	if scheduler != nil {
-		scheduler.Stop()
+	if scheduler == nil {
+		return // subsystem never started
 	}
+	scheduler.Stop()
 	for _, d := range devices {
-		if d.trapExporter != nil {
-			_ = d.trapExporter.Close()
-			d.trapExporter = nil
+		// Take d.mu to synchronise with a concurrent device.Stop path.
+		// persistTrapCounters is sync.Once-gated so it's safe either
+		// way, but nil-ing d.trapExporter here without the lock would
+		// race with device.Stop()'s own nil-write.
+		d.mu.Lock()
+		te := d.trapExporter
+		d.trapExporter = nil
+		d.mu.Unlock()
+		if te != nil {
+			sm.persistTrapCounters(te)
+			_ = te.Close()
 		}
 	}
-	if conn != nil {
-		_ = conn.Close()
-	}
+	sm.closeTrapConnPool()
 
 	sm.mu.Lock()
 	sm.trapScheduler = nil
-	sm.trapConn = nil
-	// Clear per-type catalog state so a subsequent StartTrapExport
-	// rebuilds it from scratch rather than inheriting stale overlays.
 	sm.trapCatalog = nil
 	sm.trapCatalogsByType = nil
 	sm.trapCatalogPath = ""
+	// Reset monotonic counter aggregates so a subsequent
+	// StartTrapSubsystem starts from zero rather than inheriting totals
+	// from the previous lifecycle (review fix P2).
+	sm.trapAggregates = sync.Map{}
+	// Reset the first-attach log gate so the "trap export active" line
+	// fires again on the next Start→first-device cycle (review fix P9).
+	sm.trapFirstAttachLog = sync.Once{}
 	sm.mu.Unlock()
 }
 
-// startDeviceTrapExporter creates a TrapExporter for device, opens a
-// per-device UDP socket when enabled, and registers the exporter with the
-// scheduler. Called from device creation sites in device.go (mirrors the
-// flow-export hook).
+// startDeviceTrapExporter creates a TrapExporter for a device that
+// already has `device.trapConfig` populated. Opens a per-device UDP
+// socket when `-trap-source-per-device=true`, falls back to the
+// shared-pool socket keyed by collector otherwise. Registers the
+// exporter with the central scheduler carrying the device's own
+// per-device Poisson mean interval.
 //
-// Returns an error for INFORM mode when per-device binding fails (startup
-// refusal per spec). TRAP mode falls back to the shared socket with a warning.
+// Returns an error if INFORM mode is requested but the simulator-wide
+// `-trap-source-per-device` is false, or if per-device bind fails in
+// INFORM mode (spec: INFORM requires per-device binding).
+//
+// Must be called only after `StartTrapSubsystem` — caller enforces.
 func (sm *SimulatorManager) startDeviceTrapExporter(device *DeviceSimulator) error {
-	if !sm.trapActive.Load() || device == nil {
+	if device == nil || device.trapConfig == nil {
 		return nil
 	}
+	cfg := device.trapConfig
+
+	mode, err := ParseTrapMode(cfg.Mode)
+	if err != nil {
+		return fmt.Errorf("trap export: parse mode: %w", err)
+	}
+
 	sm.mu.RLock()
-	mode := sm.trapMode
+	sourcePerDevice := sm.trapSourcePerDevice
+	scheduler := sm.trapScheduler
+	encoder := sm.trapEncoder
+	limiter := sm.trapLimiter
 	deviceIPStr := device.IP.String()
-	// Class 1 device-context fields are captured once here because they
-	// are stable for the device's lifetime. IfName varies with IfIndex
-	// and stays a per-fire callback.
+	modelLabel := modelLabelForSlug(sm.deviceTypesByIP[deviceIPStr])
+	sm.mu.RUnlock()
+
+	if scheduler == nil {
+		return fmt.Errorf("trap export: subsystem not started; call StartTrapSubsystem first")
+	}
+	if mode == TrapModeInform && !sourcePerDevice {
+		return fmt.Errorf("trap export: INFORM mode requires -trap-source-per-device=true")
+	}
+
+	collectorAddr, err := net.ResolveUDPAddr("udp4", cfg.Collector)
+	if err != nil {
+		return fmt.Errorf("resolve collector %q: %w", cfg.Collector, err)
+	}
+	canonicalCollector := collectorAddr.String()
+
+	// Open the per-device UDP socket first (if enabled) so we know whether
+	// we need the shared-pool fallback before constructing the exporter.
+	// Wiring SharedConn at construction avoids an unsynchronised post-hoc
+	// write to `exporter.sharedConn` that Fire-path goroutines could
+	// observe (review fix: pass via Options).
+	var perDeviceConn *net.UDPConn
+	if sourcePerDevice {
+		perDeviceConn = openTrapConnForDevice(device)
+		if perDeviceConn == nil && mode == TrapModeInform {
+			return fmt.Errorf("trap export: per-device bind failed for %s (required by INFORM mode)", device.IP)
+		}
+		if perDeviceConn == nil {
+			log.Printf("trap export: device %s per-device bind failed, falling back to shared-pool socket", device.IP)
+		}
+	}
+	var sharedConn *net.UDPConn
+	if perDeviceConn == nil && mode != TrapModeInform {
+		sharedConn = sm.trapConnFor(canonicalCollector)
+	}
+
 	opts := TrapExporterOptions{
 		DeviceIP:      device.IP,
-		Community:     sm.trapCommunity,
-		Encoder:       sm.trapEncoder,
+		Community:     cfg.Community,
+		Encoder:       encoder,
 		Mode:          mode,
-		Collector:     sm.trapCollectorAddr,
-		Limiter:       sm.trapLimiter,
-		SharedConn:    sm.trapConn,
-		InformTimeout: sm.trapInformTimeout,
-		InformRetries: sm.trapInformRetries,
+		Collector:     collectorAddr,
+		CollectorStr:  canonicalCollector,
+		Limiter:       limiter,
+		SharedConn:    sharedConn,
+		InformTimeout: time.Duration(cfg.InformTimeout),
+		InformRetries: cfg.InformRetries,
 		IfIndexFn:     deviceIfIndexFn(device),
 		IfNameFn:      deviceIfNameFn(device),
 		SysName:       device.sysName,
-		Model:         modelLabelForSlug(sm.deviceTypesByIP[deviceIPStr]),
+		Model:         modelLabel,
 		Serial:        synthSerial(device.IP),
 		ChassisID:     synthChassisID(device.IP),
 	}
-	sourcePerDevice := sm.trapSourcePerDevice
-	scheduler := sm.trapScheduler
-	sm.mu.RUnlock()
 
 	exporter := NewTrapExporter(opts)
-
-	if sourcePerDevice {
-		conn := openTrapConnForDevice(device)
-		if conn == nil {
-			if mode == TrapModeInform {
-				return fmt.Errorf("trap export: per-device bind failed for %s (required by INFORM mode)", device.IP)
-			}
-			log.Printf("trap export: device %s per-device bind failed, falling back to shared socket", device.IP)
-		} else {
-			exporter.SetConn(conn)
-		}
+	if perDeviceConn != nil {
+		exporter.SetConn(perDeviceConn)
 	}
 
 	exporter.StartBackgroundLoops(context.Background())
@@ -323,9 +414,22 @@ func (sm *SimulatorManager) startDeviceTrapExporter(device *DeviceSimulator) err
 	device.trapExporter = exporter
 	device.mu.Unlock()
 
-	if scheduler != nil {
-		scheduler.Register(device.IP, exporter)
+	// Per-device Interval is stored on cfg but not honored by the
+	// scheduler today — the scheduler draws Poisson fires from its
+	// simulator-wide MeanInterval (design debt, same pattern as flow's
+	// TickInterval). Warn once per device at attach so operators
+	// aren't silently surprised.
+	if time.Duration(cfg.Interval) != 0 && time.Duration(cfg.Interval) != scheduler.MeanInterval() {
+		log.Printf("trap export: device %s configured interval=%s but the scheduler runs at mean=%s; per-device intervals are not yet honored",
+			device.IP, time.Duration(cfg.Interval), scheduler.MeanInterval())
 	}
+
+	scheduler.Register(device.IP, exporter)
+
+	sm.trapFirstAttachLog.Do(func() {
+		log.Printf("trap export: active; first device %s → %s (mode=%s)",
+			device.IP, canonicalCollector, cfg.Mode)
+	})
 	return nil
 }
 
@@ -347,29 +451,25 @@ func deviceIfIndexFn(device *DeviceSimulator) func() int {
 	}
 }
 
-// GetTrapStatus returns a JSON-serializable snapshot of the trap export state.
-// Exposed via GET /api/v1/traps/status. All reads of manager trap state happen
-// under the RLock; downstream-only data (status fields, atomic counters) is
-// populated from local snapshots after RUnlock.
+// GetTrapStatus returns a JSON-serializable snapshot of the trap export
+// state. Exposed via GET /api/v1/traps/status.
+//
+// Shape matches GetFlowStatus: live per-device exporters are aggregated by
+// (collector, mode) tuple; counters from deleted devices persisted in
+// sm.trapAggregates are folded in so totals remain monotonic across the
+// device lifecycle. A tuple with no live exporters still appears in the
+// array — its `Devices` field is 0 but cumulative counters survive.
+//
+// When the subsystem was never started the returned status has an empty
+// Collectors slice and no catalogs; callers detect "feature off" via
+// `len(status.Collectors) == 0`.
 func (sm *SimulatorManager) GetTrapStatus() TrapStatus {
-	if !sm.trapActive.Load() {
-		return TrapStatus{Enabled: false}
-	}
+	agg := make(map[trapAggKey]*TrapCollectorStatus)
 
 	sm.mu.RLock()
-	mode := sm.trapMode
-	status := TrapStatus{
-		Enabled:   true,
-		Collector: sm.trapCollectorStr,
-		Community: sm.trapCommunity,
-	}
-	if mode == TrapModeInform {
-		status.Mode = "inform"
-	} else {
-		status.Mode = "trap"
-	}
 	limiter := sm.trapLimiter
-	// Snapshot catalogs-by-type under the lock so reads are race-free.
+	status := TrapStatus{}
+
 	if len(sm.trapCatalogsByType) > 0 {
 		status.CatalogsByType = make(map[string]CatalogSourceInfo, len(sm.trapCatalogsByType))
 		for slug, cat := range sm.trapCatalogsByType {
@@ -380,42 +480,88 @@ func (sm *SimulatorManager) GetTrapStatus() TrapStatus {
 		}
 	}
 
-	var sent, pending, acked, failed, dropped uint64
-	devicesExporting := 0
 	for _, d := range sm.devices {
-		if d.trapExporter == nil {
+		te := d.trapExporter
+		if te == nil {
 			continue
 		}
-		devicesExporting++
-		st := d.trapExporter.Stats()
-		sent += st.Sent.Load()
-		if mode == TrapModeInform {
-			pending += uint64(d.trapExporter.PendingInformsLen())
-			acked += st.InformsAcked.Load()
-			failed += st.InformsFailed.Load()
-			dropped += st.InformsDropped.Load()
+		key := trapAggKey{collector: te.CollectorString(), mode: te.Mode()}
+		rec, ok := agg[key]
+		if !ok {
+			rec = &TrapCollectorStatus{
+				Collector: te.CollectorString(),
+				Mode:      trapModeString(te.Mode()),
+			}
+			agg[key] = rec
+		}
+		rec.Devices++
+		st := te.Stats()
+		rec.Sent += st.Sent.Load()
+		if te.Mode() == TrapModeInform {
+			rec.InformsPending += uint64(te.PendingInformsLen())
+			rec.InformsAcked += st.InformsAcked.Load()
+			rec.InformsFailed += st.InformsFailed.Load()
+			rec.InformsDropped += st.InformsDropped.Load()
 		}
 	}
-	// Sample limiter tokens under the lock so we can't race with a concurrent
-	// Shutdown that nils sm.trapLimiter after sm.mu.Lock.
+
 	var tokens int
 	if limiter != nil {
 		tokens = int(limiter.Tokens())
 	}
 	sm.mu.RUnlock()
 
-	status.Sent = sent
-	status.DevicesExporting = devicesExporting
-	if mode == TrapModeInform {
-		status.InformsPending = pending
-		status.InformsAcked = acked
-		status.InformsFailed = failed
-		status.InformsDropped = dropped
+	// Fold persisted counters for tuples whose devices have since been
+	// deleted. A tuple with no live exporters still surfaces so operators
+	// keep seeing cumulative totals.
+	sm.trapAggregates.Range(func(k, v interface{}) bool {
+		key := k.(trapAggKey)
+		pers := v.(*trapCollectorAggregate)
+		rec, ok := agg[key]
+		if !ok {
+			rec = &TrapCollectorStatus{
+				Collector: key.collector,
+				Mode:      trapModeString(key.mode),
+			}
+			agg[key] = rec
+		}
+		rec.Sent += pers.sent.Load()
+		if key.mode == TrapModeInform {
+			rec.InformsAcked += pers.informsAcked.Load()
+			rec.InformsFailed += pers.informsFailed.Load()
+			rec.InformsDropped += pers.informsDropped.Load()
+		}
+		return true
+	})
+
+	collectors := make([]TrapCollectorStatus, 0, len(agg))
+	devicesExporting := 0
+	for _, rec := range agg {
+		collectors = append(collectors, *rec)
+		devicesExporting += rec.Devices
 	}
+	sort.Slice(collectors, func(i, j int) bool {
+		if collectors[i].Collector != collectors[j].Collector {
+			return collectors[i].Collector < collectors[j].Collector
+		}
+		return collectors[i].Mode < collectors[j].Mode
+	})
+
+	status.Collectors = collectors
+	status.DevicesExporting = devicesExporting
 	if limiter != nil {
 		status.RateLimiterTokensAvailable = tokens
 	}
 	return status
+}
+
+// trapModeString maps TrapMode to the canonical lowercase string used on
+// the wire-config JSON (status endpoint, device create/list bodies).
+func trapModeString(m TrapMode) string {
+	if m == TrapModeInform {
+		return "inform"
+	}
+	return "trap"
 }
 
 // FindDeviceByIP returns the first device with the given IP, or nil if none
@@ -513,7 +659,10 @@ func trapCatalogSource(slug, catalogFlagPath string) string {
 //   - ErrTrapDeviceNotFound → 404
 //   - ErrTrapEntryNotFound  → 400
 func (sm *SimulatorManager) FireTrapOnDevice(ip, trapName string, overrides map[string]string) (uint32, error) {
-	if !sm.trapActive.Load() {
+	sm.mu.RLock()
+	schedulerStarted := sm.trapScheduler != nil
+	sm.mu.RUnlock()
+	if !schedulerStarted {
 		return 0, ErrTrapExportDisabled
 	}
 	device := sm.FindDeviceByIP(ip)
@@ -579,7 +728,7 @@ func (e *TrapEntryNotFoundError) Unwrap() error { return ErrTrapEntryNotFound }
 // Sentinel errors returned by FireTrapOnDevice for HTTP status mapping.
 //
 // ErrTrapCatalogUnavailable signals a pathological internal state where
-// trap export reports active (`trapActive=true`) but neither the
+// the trap subsystem is started (scheduler non-nil) but neither the
 // per-type catalog map nor the legacy single-catalog pointer resolves
 // to a catalog. This cannot happen under normal operation — it would
 // mean the manager is mid-reinitialisation or something overwrote the

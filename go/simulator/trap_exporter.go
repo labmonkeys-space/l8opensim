@@ -80,11 +80,24 @@ type pendingInform struct {
 // and call StartBackgroundLoops to launch the reader and retry goroutines
 // (INFORM mode only). Close shuts down the background loops and the socket.
 type TrapExporter struct {
-	deviceIP  net.IP
-	community string
-	encoder   TrapEncoder
-	mode      TrapMode
-	collector *net.UDPAddr
+	deviceIP     net.IP
+	community    string
+	encoder      TrapEncoder
+	mode         TrapMode
+	collector    *net.UDPAddr
+	collectorStr string // canonical "host:port" for status aggregation keying (review fix P1 pattern)
+
+	// firstWriteErr gates at most one log line per exporter on a failed
+	// WriteTo (review fix P6 pattern from phase 3).
+	firstWriteErr sync.Once
+
+	// countersPersisted ensures SimulatorManager.persistTrapCounters adds
+	// this exporter's counters into the simulator-wide aggregate at most
+	// once. Both `device.Stop()` / `device.stopListenersOnly()` and
+	// `SimulatorManager.StopTrapExport` can invoke persistence; the
+	// sync.Once makes the persist hot-path race-free without per-callsite
+	// locking.
+	countersPersisted sync.Once
 
 	// limiter is the global rate limiter shared by all exporters and the
 	// scheduler. Used here for retry-token consumption (design.md §D7).
@@ -140,8 +153,9 @@ type TrapExporterOptions struct {
 	Encoder       TrapEncoder
 	Mode          TrapMode
 	Collector     *net.UDPAddr
+	CollectorStr  string // canonical "host:port" string; used for status aggregation key
 	Limiter       *rate.Limiter
-	SharedConn    *net.UDPConn // fallback; may be nil
+	SharedConn    *net.UDPConn // fallback; may be nil. Wired post-construction by manager (see startDeviceTrapExporter)
 	InformTimeout time.Duration
 	InformRetries int
 	PendingCap    int // 0 → DefaultInformPendingCap
@@ -197,6 +211,7 @@ func NewTrapExporter(opts TrapExporterOptions) *TrapExporter {
 		encoder:       opts.Encoder,
 		mode:          opts.Mode,
 		collector:     opts.Collector,
+		collectorStr:  opts.CollectorStr,
 		limiter:       opts.Limiter,
 		sharedConn:    opts.SharedConn,
 		startTime:     time.Now(),
@@ -242,6 +257,27 @@ func (e *TrapExporter) StartBackgroundLoops(ctx context.Context) {
 // counters are safe to read concurrently; the returned pointer is stable
 // for the exporter's lifetime.
 func (e *TrapExporter) Stats() *TrapStats { return e.stats }
+
+// CollectorString returns the canonical "host:port" string identifying
+// this exporter's destination. Used as the key for the shared-socket
+// pool and for the status-endpoint aggregation.
+func (e *TrapExporter) CollectorString() string { return e.collectorStr }
+
+// Mode returns the exporter's PDU mode (TRAP or INFORM).
+func (e *TrapExporter) Mode() TrapMode { return e.mode }
+
+// logFirstWriteErr emits at most one log line per exporter on a failed
+// WriteTo. Gated by fe.firstWriteErr so a down/misconfigured collector
+// doesn't flood logs at fire cadence × device count.
+func (e *TrapExporter) logFirstWriteErr(err error) {
+	if e == nil {
+		return
+	}
+	e.firstWriteErr.Do(func() {
+		log.Printf("trap export: device %s write to %s failed: %v (further errors suppressed for this exporter)",
+			e.deviceIP, e.collectorStr, err)
+	})
+}
 
 // PendingInformsLen returns the current size of the pending-inform map.
 // Used by GET /api/v1/traps/status.
@@ -326,19 +362,30 @@ func (e *TrapExporter) Fire(entry *CatalogEntry, overrides map[string]string) ui
 }
 
 // writePDU sends pdu to the collector using the per-device socket (preferred)
-// or the shared fallback. Returns true on success.
+// or the shared fallback. Returns true on success. On failure the last error
+// observed is reported at most once per exporter via logFirstWriteErr so a
+// down or misconfigured collector cannot flood logs at fire cadence × device
+// count (review fix P8, mirrors flow-export phase-3 P6).
 func (e *TrapExporter) writePDU(pdu []byte) bool {
+	var lastErr error
 	conn := e.conn.Load()
 	if conn != nil {
 		if _, err := conn.WriteToUDP(pdu, e.collector); err == nil {
 			return true
+		} else {
+			lastErr = err
 		}
 		// Per-device write failed; try shared fallback.
 	}
 	if e.sharedConn != nil {
 		if _, err := e.sharedConn.WriteToUDP(pdu, e.collector); err == nil {
 			return true
+		} else {
+			lastErr = err
 		}
+	}
+	if lastErr != nil {
+		e.logFirstWriteErr(lastErr)
 	}
 	return false
 }

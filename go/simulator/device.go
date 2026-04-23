@@ -292,13 +292,17 @@ func (sm *SimulatorManager) CreateDevicesWithOptions(startIP string, count int, 
 			sm.deviceTypesByIP[currentIP.String()] = resourceDirName(deviceResourceFile)
 			sm.mu.Unlock()
 
-			// Initialize SNMP trap exporter if trap export is enabled.
-			// In INFORM mode a per-device bind failure is fatal for this
-			// device (but not for the simulator as a whole — we log and
-			// skip enabling traps on this one device).
-			if sm.trapActive.Load() {
+			// Initialize SNMP trap exporter if this device has trap
+			// config (set by applyExportSeed). In INFORM mode a
+			// per-device bind failure is fatal for this device (but
+			// not for the simulator as a whole — we log and clear
+			// trapConfig so ListDevices doesn't expose a ghost entry).
+			if device.trapConfig != nil {
 				if err := sm.startDeviceTrapExporter(device); err != nil {
 					log.Printf("trap export: skipping device %s: %v", device.IP, err)
+					device.mu.Lock()
+					device.trapConfig = nil
+					device.mu.Unlock()
 				}
 			}
 
@@ -560,10 +564,13 @@ func (sm *SimulatorManager) createSingleDevice(deviceIndex int, deviceIP net.IP,
 	sm.deviceTypesByIP[deviceIP.String()] = resourceDirName(resourceFile)
 	sm.mu.Unlock()
 
-	// Initialize SNMP trap exporter if trap export is enabled.
-	if sm.trapActive.Load() {
+	// Initialize SNMP trap exporter if this device has trap config.
+	if device.trapConfig != nil {
 		if err := sm.startDeviceTrapExporter(device); err != nil {
 			log.Printf("trap export: skipping device %s: %v", device.IP, err)
+			device.mu.Lock()
+			device.trapConfig = nil
+			device.mu.Unlock()
 		}
 	}
 
@@ -716,6 +723,13 @@ func (d *DeviceSimulator) Stop() error {
 	}
 
 	if d.trapExporter != nil {
+		// Persist cumulative counters into the simulator-wide
+		// per-(collector, mode) aggregate (review decision D1.b) BEFORE
+		// closing the exporter so /traps/status reports monotonic totals.
+		// The `if !d.running` guard above makes this single-shot.
+		if manager != nil {
+			manager.persistTrapCounters(d.trapExporter)
+		}
 		_ = d.trapExporter.Close()
 		if manager != nil && manager.trapScheduler != nil {
 			manager.trapScheduler.Deregister(d.IP)
@@ -776,6 +790,10 @@ func (d *DeviceSimulator) stopListenersOnly() {
 		d.flowExporter.Close() //nolint:errcheck
 	}
 	if d.trapExporter != nil {
+		// Persist counters before Close (review decision D1.b).
+		if manager != nil {
+			manager.persistTrapCounters(d.trapExporter)
+		}
 		_ = d.trapExporter.Close()
 		d.trapExporter = nil
 	}
