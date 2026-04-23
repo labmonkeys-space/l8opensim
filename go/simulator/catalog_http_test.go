@@ -53,8 +53,8 @@ func TestFireTrapOnDevice_UnknownEntryIncludesAvailableEntries(t *testing.T) {
 func TestGetTrapStatus_CatalogsByTypePresent(t *testing.T) {
 	sm, _, _ := startTrapForTest(t, TrapModeTrap)
 	status := sm.GetTrapStatus()
-	if !status.Enabled {
-		t.Fatal("status.Enabled: got false, want true")
+	if len(status.Collectors) == 0 {
+		t.Fatal("status.Collectors: empty, want at least one entry for the test harness device")
 	}
 	if status.CatalogsByType == nil {
 		t.Fatal("status.CatalogsByType: nil, want populated")

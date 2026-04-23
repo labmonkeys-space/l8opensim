@@ -223,28 +223,25 @@ type SimulatorManager struct {
 	// itself and are aggregated at GetFlowStatus read time.
 	flowStatLastTmpl atomic.Int64 // unix milliseconds of the most recent template transmission
 
-	// SNMP trap export state (nil/zero when disabled; set by StartTrapExport).
-	// See trap_manager.go for lifecycle and trap_exporter.go for per-device state.
+	// SNMP trap export state. Per the per-device-export-config refactor,
+	// each device owns its own collector/mode/community/interval/inform-*
+	// settings on `trapConfig`. The manager retains the subsystem-level
+	// concerns: catalog, scheduler, shared limiter, and shared-socket
+	// pool for the per-device-binding fallback path.
 	//
 	// trapCatalogsByType is the per-device-type overlay map populated at
-	// startup. Key `_universal` holds the universal catalog; other keys are
-	// device-type slugs (e.g., "cisco_ios"). `trapCatalog` remains as a
-	// legacy alias for the fallback, preserved for test compatibility.
-	trapActive          atomic.Bool
+	// startup. Key `_universal` holds the universal catalog; other keys
+	// are device-type slugs (e.g., "cisco_ios"). `trapCatalog` remains
+	// as a legacy alias for the fallback.
 	trapCatalog         *Catalog
 	trapCatalogsByType  map[string]*Catalog
 	trapScheduler       *TrapScheduler
 	trapEncoder         TrapEncoder
 	trapLimiter         *rate.Limiter // shared global cap (nil = unlimited)
-	trapConn            *net.UDPConn  // shared fallback when per-device bind disabled
-	trapCollectorAddr   *net.UDPAddr
-	trapCollectorStr    string
-	trapMode            TrapMode
-	trapCommunity       string
-	trapInterval        time.Duration
+	trapConns           sync.Map      // key: string collector, value: *net.UDPConn (shared-socket fallback pool, TRAP mode only)
+	trapAggregates      sync.Map      // key: trapAggKey, value: *trapCollectorAggregate — monotonic counters surviving device delete
+	trapFirstAttachLog  sync.Once     // emits a single "trap export active" line on first per-device attach
 	trapGlobalCap       int
-	trapInformTimeout   time.Duration
-	trapInformRetries   int
 	trapSourcePerDevice bool
 	trapCatalogPath     string // "" when using embedded catalog
 

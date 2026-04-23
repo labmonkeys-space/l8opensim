@@ -44,125 +44,95 @@ func TestParseTrapMode_AllCases(t *testing.T) {
 	}
 }
 
-func TestStartTrapExport_RejectsInformWithoutPerDeviceBinding(t *testing.T) {
-	sm := &SimulatorManager{
+// TestStartTrapSubsystem_RejectsNegativeGlobalCap asserts the subsystem-level
+// guard. Per-device-config validation lives in DeviceTrapConfig.Validate and
+// is covered in export_config_test.go.
+func TestStartTrapSubsystem_RejectsNegativeGlobalCap(t *testing.T) {
+	sm := newTestSimulatorManager()
+	err := sm.StartTrapSubsystem(TrapSubsystemConfig{GlobalCap: -1})
+	if err == nil || !strings.Contains(err.Error(), "global-cap") {
+		t.Fatalf("want global-cap error, got %v", err)
+	}
+}
+
+// TestStartTrapSubsystem_DoubleStartRejected confirms idempotency: a second
+// Start without StopTrapExport in between returns an error instead of
+// silently replacing the scheduler.
+func TestStartTrapSubsystem_DoubleStartRejected(t *testing.T) {
+	sm := newTestSimulatorManager()
+	if err := sm.StartTrapSubsystem(TrapSubsystemConfig{MeanSchedulerInterval: time.Second}); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(sm.StopTrapExport)
+
+	err := sm.StartTrapSubsystem(TrapSubsystemConfig{MeanSchedulerInterval: time.Second})
+	if err == nil || !strings.Contains(err.Error(), "already started") {
+		t.Fatalf("want already-started error, got %v", err)
+	}
+}
+
+// TestStartDeviceTrapExporter_RejectsInformWithoutPerDeviceBinding asserts the
+// per-device-attach guard carried forward from phase-3 StartTrapExport: INFORM
+// mode requires per-device UDP socket binding for ack demux.
+func TestStartDeviceTrapExporter_RejectsInformWithoutPerDeviceBinding(t *testing.T) {
+	sm := newTestSimulatorManager()
+	if err := sm.StartTrapSubsystem(TrapSubsystemConfig{
+		SourcePerDevice:       false,
+		MeanSchedulerInterval: time.Second,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(sm.StopTrapExport)
+
+	device := &DeviceSimulator{
+		ID: "test-device",
+		IP: net.IPv4(127, 0, 0, 1),
+		trapConfig: &DeviceTrapConfig{
+			Collector:     "127.0.0.1:16200",
+			Mode:          "inform",
+			Community:     "public",
+			Interval:      jsonDuration(time.Second),
+			InformTimeout: jsonDuration(200 * time.Millisecond),
+		},
+	}
+	err := sm.startDeviceTrapExporter(device)
+	if err == nil {
+		t.Fatal("want error, got nil")
+	}
+	if !strings.Contains(err.Error(), "INFORM") || !strings.Contains(err.Error(), "per-device") {
+		t.Errorf("error should mention INFORM + per-device: %v", err)
+	}
+}
+
+// newTestSimulatorManager returns a SimulatorManager initialised with the
+// maps the test helpers read from. It does NOT start any subsystem.
+func newTestSimulatorManager() *SimulatorManager {
+	return &SimulatorManager{
 		devices:          make(map[string]*DeviceSimulator),
 		deviceIPs:        make(map[string]struct{}),
 		resourcesCache:   make(map[string]*DeviceResources),
 		tunInterfacePool: make(map[string]*TunInterface),
-	}
-	err := sm.StartTrapExport(TrapConfig{
-		Collector:       "127.0.0.1:16200",
-		Mode:            TrapModeInform,
-		SourcePerDevice: false, // explicit conflict
-		Interval:        time.Second,
-	})
-	if err == nil {
-		t.Fatal("want error, got nil")
-	}
-	if !strings.Contains(err.Error(), "inform") || !strings.Contains(err.Error(), "per-device") {
-		t.Errorf("error should mention inform + per-device: %v", err)
-	}
-	if sm.trapActive.Load() {
-		t.Error("trapActive should remain false after failed StartTrapExport")
+		deviceTypesByIP:  make(map[string]string),
 	}
 }
 
-func TestStartTrapExport_RejectsEmptyCollector(t *testing.T) {
-	sm := &SimulatorManager{
-		devices:          make(map[string]*DeviceSimulator),
-		resourcesCache:   make(map[string]*DeviceResources),
-		tunInterfacePool: make(map[string]*TunInterface),
-	}
-	err := sm.StartTrapExport(TrapConfig{Interval: time.Second})
-	if err == nil || !strings.Contains(err.Error(), "-trap-collector") {
-		t.Fatalf("want empty-collector error, got %v", err)
-	}
-}
-
-func TestStartTrapExport_RejectsNonPositiveInterval(t *testing.T) {
-	sm := &SimulatorManager{
-		devices:          make(map[string]*DeviceSimulator),
-		resourcesCache:   make(map[string]*DeviceResources),
-		tunInterfacePool: make(map[string]*TunInterface),
-	}
-	err := sm.StartTrapExport(TrapConfig{
-		Collector:       "127.0.0.1:16201",
-		Mode:            TrapModeTrap,
-		SourcePerDevice: true,
-		Interval:        0,
-	})
-	if err == nil || !strings.Contains(err.Error(), "-trap-interval") {
-		t.Fatalf("want interval error, got %v", err)
-	}
-}
-
-func TestStartTrapExport_RejectsNegativeRetries(t *testing.T) {
-	sm := &SimulatorManager{
-		devices:          make(map[string]*DeviceSimulator),
-		resourcesCache:   make(map[string]*DeviceResources),
-		tunInterfacePool: make(map[string]*TunInterface),
-	}
-	err := sm.StartTrapExport(TrapConfig{
-		Collector:       "127.0.0.1:16202",
-		Mode:            TrapModeTrap,
-		SourcePerDevice: true,
-		Interval:        time.Second,
-		InformRetries:   -1,
-	})
-	if err == nil || !strings.Contains(err.Error(), "retries") {
-		t.Fatalf("want retries error, got %v", err)
-	}
-}
-
-// startTrapForTest stands up a minimal SimulatorManager with trap export
-// active, pointing at a mock collector. Returns the mock (must Close) and the
-// manager. A single fake device is registered so FindDeviceByIP / the HTTP
-// handlers can resolve it.
+// startTrapForTest stands up a minimal SimulatorManager with the trap
+// subsystem running and a single fake device whose TrapExporter writes to
+// `mc`. Always uses TrapModeTrap on the exporter (INFORM mode requires
+// per-device binding, which tests can't set up without netns); the `mode`
+// parameter controls only mock-collector auto-ack behavior.
 func startTrapForTest(t *testing.T, mode TrapMode) (*SimulatorManager, *mockCollector, *DeviceSimulator) {
 	t.Helper()
 	mc := newMockCollector(t, mode == TrapModeInform)
 
-	sm := &SimulatorManager{
-		devices:          make(map[string]*DeviceSimulator),
-		deviceIPs:        make(map[string]struct{}),
-		resourcesCache:   make(map[string]*DeviceResources),
-		tunInterfacePool: make(map[string]*TunInterface),
-	}
-
-	err := sm.StartTrapExport(TrapConfig{
-		Collector:       mc.addr.String(),
-		Mode:            mode,
-		Community:       "public",
-		Interval:        time.Second,
-		InformTimeout:   200 * time.Millisecond,
-		InformRetries:   0,
-		SourcePerDevice: false, // TRAP mode only in this helper; INFORM would need netns
-	})
-	if mode == TrapModeInform {
-		// INFORM mode requires per-device binding, which we can't do without
-		// netns. Rewrite StartTrapExport to allow an explicit test-only path.
-		if err == nil {
-			t.Fatal("expected inform + non-per-device to fail")
-		}
-		err = sm.StartTrapExport(TrapConfig{
-			Collector:       mc.addr.String(),
-			Mode:            TrapModeTrap, // fall back to trap mode for test
-			Community:       "public",
-			Interval:        time.Second,
-			InformTimeout:   200 * time.Millisecond,
-			SourcePerDevice: true,
-		})
-		if err != nil {
-			t.Fatal(err)
-		}
-	}
-	if err != nil {
+	sm := newTestSimulatorManager()
+	if err := sm.StartTrapSubsystem(TrapSubsystemConfig{
+		SourcePerDevice:       false,
+		MeanSchedulerInterval: time.Second,
+	}); err != nil {
 		t.Fatal(err)
 	}
 
-	// Insert a fake device with a TrapExporter so FindDeviceByIP has
-	// something to find. This mirrors what device.go does.
 	device := &DeviceSimulator{
 		ID: "test-device",
 		IP: net.IPv4(127, 0, 0, 1),
@@ -170,13 +140,13 @@ func startTrapForTest(t *testing.T, mode TrapMode) (*SimulatorManager, *mockColl
 	conn := openTestUDPConn(t)
 	exp := NewTrapExporter(TrapExporterOptions{
 		DeviceIP:      device.IP,
-		Community:     sm.trapCommunity,
+		Community:     "public",
 		Encoder:       sm.trapEncoder,
-		Mode:          sm.trapMode,
-		Collector:     sm.trapCollectorAddr,
+		Mode:          TrapModeTrap,
+		Collector:     mc.addr,
+		CollectorStr:  mc.addr.String(),
 		Limiter:       sm.trapLimiter,
-		SharedConn:    sm.trapConn,
-		InformTimeout: sm.trapInformTimeout,
+		InformTimeout: 200 * time.Millisecond,
 	})
 	exp.SetConn(conn)
 	exp.StartBackgroundLoops(context.Background())
@@ -230,35 +200,37 @@ func TestFireTrapOnDevice_UnknownDeviceIP(t *testing.T) {
 	}
 }
 
+// TestFireTrapOnDevice_WhenDisabled asserts that firing before the
+// subsystem is started returns ErrTrapExportDisabled. Phase 4: "disabled"
+// means "no scheduler" (subsystem never booted) rather than the old
+// trapActive=false atomic flag.
 func TestFireTrapOnDevice_WhenDisabled(t *testing.T) {
-	sm := &SimulatorManager{
-		devices:          make(map[string]*DeviceSimulator),
-		deviceIPs:        make(map[string]struct{}),
-		resourcesCache:   make(map[string]*DeviceResources),
-		tunInterfacePool: make(map[string]*TunInterface),
-	}
+	sm := newTestSimulatorManager()
 	_, err := sm.FireTrapOnDevice("10.0.0.1", "linkDown", nil)
 	if !errors.Is(err, ErrTrapExportDisabled) {
 		t.Errorf("want ErrTrapExportDisabled, got %v", err)
 	}
 }
 
+// TestGetTrapStatus_Disabled asserts the "feature off" shape after
+// phase 4: an empty Collectors array and no catalogs_by_type.
 func TestGetTrapStatus_Disabled(t *testing.T) {
-	sm := &SimulatorManager{
-		devices:          make(map[string]*DeviceSimulator),
-		deviceIPs:        make(map[string]struct{}),
-		resourcesCache:   make(map[string]*DeviceResources),
-		tunInterfacePool: make(map[string]*TunInterface),
-	}
+	sm := newTestSimulatorManager()
 	s := sm.GetTrapStatus()
-	if s.Enabled {
-		t.Errorf("Enabled = true, want false")
+	if len(s.Collectors) != 0 {
+		t.Errorf("Collectors = %v, want empty when subsystem not started", s.Collectors)
 	}
-	if s.Mode != "" {
-		t.Errorf("Mode = %q, want empty when disabled", s.Mode)
+	if s.DevicesExporting != 0 {
+		t.Errorf("DevicesExporting = %d, want 0", s.DevicesExporting)
+	}
+	if s.CatalogsByType != nil {
+		t.Errorf("CatalogsByType = %v, want nil when subsystem not started", s.CatalogsByType)
 	}
 }
 
+// TestGetTrapStatus_TRAPMode_Shape asserts the Collectors array is populated
+// with the device's (collector, mode) tuple and that cumulative counters
+// reflect at least one fired trap.
 func TestGetTrapStatus_TRAPMode_Shape(t *testing.T) {
 	sm, _, device := startTrapForTest(t, TrapModeTrap)
 	_, err := sm.FireTrapOnDevice(device.IP.String(), "linkUp", nil)
@@ -268,41 +240,40 @@ func TestGetTrapStatus_TRAPMode_Shape(t *testing.T) {
 	time.Sleep(50 * time.Millisecond)
 
 	s := sm.GetTrapStatus()
-	if !s.Enabled {
-		t.Fatal("Enabled = false, want true")
+	if len(s.Collectors) != 1 {
+		t.Fatalf("Collectors length = %d, want 1: %+v", len(s.Collectors), s.Collectors)
 	}
-	if s.Mode != "trap" {
-		t.Errorf("Mode = %q, want trap", s.Mode)
+	c := s.Collectors[0]
+	if c.Mode != "trap" {
+		t.Errorf("Mode = %q, want trap", c.Mode)
 	}
-	if s.Sent == 0 {
+	if c.Devices != 1 {
+		t.Errorf("Devices = %d, want 1", c.Devices)
+	}
+	if c.Sent == 0 {
 		t.Error("Sent = 0, want ≥ 1")
 	}
 	// INFORM-specific fields must be absent in TRAP mode.
-	if s.InformsAcked != 0 || s.InformsFailed != 0 || s.InformsDropped != 0 || s.InformsPending != 0 {
-		t.Errorf("INFORM counters should all be zero in TRAP mode: %+v", s)
+	if c.InformsAcked != 0 || c.InformsFailed != 0 || c.InformsDropped != 0 || c.InformsPending != 0 {
+		t.Errorf("INFORM counters should all be zero in TRAP mode: %+v", c)
 	}
 }
 
 func TestWriteTrapStatusJSON_ContentType(t *testing.T) {
-	sm := &SimulatorManager{
-		devices:          make(map[string]*DeviceSimulator),
-		deviceIPs:        make(map[string]struct{}),
-		resourcesCache:   make(map[string]*DeviceResources),
-		tunInterfacePool: make(map[string]*TunInterface),
-	}
+	sm := newTestSimulatorManager()
 	rec := httptest.NewRecorder()
 	sm.WriteTrapStatusJSON(rec)
 	if got := rec.Header().Get("Content-Type"); got != "application/json" {
 		t.Errorf("Content-Type = %q, want application/json", got)
 	}
 	var body struct {
-		Enabled bool `json:"enabled"`
+		Collectors []TrapCollectorStatus `json:"collectors"`
 	}
 	if err := json.NewDecoder(rec.Body).Decode(&body); err != nil {
 		t.Fatal(err)
 	}
-	if body.Enabled {
-		t.Errorf("Enabled = true on fresh manager")
+	if len(body.Collectors) != 0 {
+		t.Errorf("Collectors = %v, want empty on fresh manager", body.Collectors)
 	}
 }
 
