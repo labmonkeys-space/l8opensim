@@ -190,6 +190,7 @@ function renderDevices() {
         '<th>Interface</th>' +
         '<th>Device Type</th>' +
         '<th>Ports</th>' +
+        '<th>Exports</th>' +
         '<th>Status</th>' +
         '<th>Actions</th>' +
         '</tr>' +
@@ -202,6 +203,7 @@ function renderDevices() {
             '<td><span class="device-interface">' + (device.interface || 'N/A') + '</span></td>' +
             '<td><span class="device-type">' + (device.device_type || 'Unknown') + '</span></td>' +
             '<td><span class="device-ports">SNMP ' + device.snmp_port + ' · SSH ' + device.ssh_port + '</span></td>' +
+            '<td>' + renderExportBadges(device) + '</td>' +
             '<td><span class="device-status ' + (device.running ? 'status-running' : 'status-stopped') + '">' +
             (device.running ? 'Running' : 'Stopped') + '</span></td>' +
             '<td><div class="device-actions">' +
@@ -243,6 +245,32 @@ function renderDevices() {
     updatePaginationControls();
 }
 
+// renderExportBadges returns an inline-HTML snippet showing three
+// per-subsystem badges (F/T/S). Configured subsystems render with the
+// accent colour; unconfigured render muted. Each tile carries an
+// `aria-label` describing the state + destination so screen readers
+// don't just hear "F T S" with no context (color-only state
+// communication fails WCAG 1.1.1 / 1.4.1). The `title` attribute
+// duplicates the label as a sighted-user hover-tooltip.
+function renderExportBadges(device) {
+    return '<div class="device-exports" role="group" aria-label="Export configuration">' +
+        renderOneBadge('F', 'Flow', device.flow, b => (b.protocol || 'netflow9')) +
+        renderOneBadge('T', 'SNMP traps', device.traps, b => (b.mode || 'trap')) +
+        renderOneBadge('S', 'Syslog', device.syslog, b => (b.format || '5424')) +
+        '</div>';
+}
+
+function renderOneBadge(letter, kind, block, kindSuffix) {
+    if (block && block.collector) {
+        const desc = kind + ' export to ' + block.collector + ' (' + kindSuffix(block) + ')';
+        return '<span class="device-export-badge" role="img" aria-label="' + escapeHtml(desc) +
+            '" title="' + escapeHtml(desc) + '">' + letter + '</span>';
+    }
+    const desc = kind + ' export disabled';
+    return '<span class="device-export-badge device-export-badge-muted" role="img" aria-label="' + escapeHtml(desc) +
+        '" title="' + escapeHtml(desc) + '">' + letter + '</span>';
+}
+
 function updateStats() {
     const total = devices.length;
     const running = devices.filter(d => d.running).length;
@@ -277,6 +305,7 @@ function updateSystemStatsDisplay(stats) {
 // Event listeners
 elements.createForm.addEventListener('submit', async (e) => {
     e.preventDefault();
+    const submitBtn = elements.createForm.querySelector('button[type="submit"]');
     const startIp = document.getElementById('startIp').value;
     const deviceCount = document.getElementById('deviceCount').value;
     const netmask = document.getElementById('netmask').value;
@@ -285,11 +314,39 @@ elements.createForm.addEventListener('submit', async (e) => {
         showAlert('Please fill in all required fields', 'error');
         return;
     }
-    await createDevices(startIp, deviceCount, netmask, resourceFile);
+    // Snapshot the three per-device export blocks ONCE so the
+    // validator and the request body see identical input. Without this,
+    // an operator typing into a field between validate and POST could
+    // slip unvalidated data past the client check.
+    const exportSnapshot = readAllExportBlocks();
+    const exportError = validateExportBlocksSnapshot(exportSnapshot);
+    if (exportError) {
+        showAlert(exportError, 'error');
+        return;
+    }
+    // Disable the submit button + mark aria-busy for the duration of
+    // the POST so a double-click can't fire two device-create batches.
+    if (submitBtn) {
+        submitBtn.disabled = true;
+        submitBtn.setAttribute('aria-busy', 'true');
+    }
+    try {
+        await createDevices(startIp, deviceCount, netmask, resourceFile, exportSnapshot);
+    } finally {
+        if (submitBtn) {
+            submitBtn.disabled = false;
+            submitBtn.removeAttribute('aria-busy');
+        }
+    }
     elements.createForm.reset();
     document.getElementById('deviceCount').value = '1';
     document.getElementById('netmask').value = '24';
     document.getElementById('resourceFile').value = '';
+    // Reset the export sections: close the <details> and clear inputs.
+    ['flowSection', 'trapSection', 'syslogSection'].forEach(id => {
+        const el = document.getElementById(id);
+        if (el) el.open = false;
+    });
 });
 
 elements.exportBtn.addEventListener('click', exportDevicesCSV);
@@ -312,12 +369,34 @@ elements.filterPorts.addEventListener('input', applyFilters);
 elements.filterStatus.addEventListener('change', applyFilters);
 elements.clearFiltersBtn.addEventListener('click', clearAllFilters);
 
-setInterval(loadDevices, 30000);
-setInterval(loadSystemStats, 5000); // Refresh system stats every 5 seconds
+// Each periodic poller is wrapped so it no-ops when the tab is hidden
+// (background tabs don't need fresh device lists / system stats /
+// telemetry aggregates). The first refresh on visibility-restore is
+// triggered by the visibilitychange handler below.
+function whenVisible(fn) {
+    return () => {
+        if (!document.hidden) fn();
+    };
+}
+
+setInterval(whenVisible(loadDevices), 30000);
+setInterval(whenVisible(loadSystemStats), 5000); // Refresh system stats every 5 seconds
+setInterval(whenVisible(loadExportStatuses), 10000); // Per-subsystem aggregate poll (phase 6)
+
+document.addEventListener('visibilitychange', () => {
+    if (!document.hidden) {
+        // Catch up immediately on focus; the next interval tick will
+        // resume normal cadence.
+        loadDevices();
+        loadSystemStats();
+        loadExportStatuses();
+    }
+});
 
 document.addEventListener('DOMContentLoaded', () => {
     loadDevices();
     loadResources();
     loadSystemStats(); // Initial system stats load
+    loadExportStatuses(); // Initial export-status load (phase 6)
     checkStatus(); // Initial status check
 });
