@@ -95,6 +95,137 @@ curl -X POST http://localhost:8080/api/v1/devices \
   }'
 ```
 
+### Per-device export blocks
+
+`POST /api/v1/devices` accepts three optional top-level blocks —
+`flow`, `traps`, `syslog` — that attach export configuration to every
+device created by the request. Any block can be omitted; omitted blocks
+mean "this batch does not participate in that export subsystem."
+
+The subsystems are always-on after `main()` — flow / trap / syslog
+scheduler goroutines and catalog loaders run regardless of whether any
+CLI seed was supplied, so REST-created devices can opt in to any
+combination.
+
+**`flow` block:**
+
+```json
+"flow": {
+  "collector":        "192.168.1.10:2055",      // required; host:port
+  "protocol":         "netflow9",               // optional; "netflow9" | "ipfix" | "netflow5" | "sflow" (alias: "sflow5"); default "netflow9"
+  "tick_interval":    "5s",                      // optional; global ticker used, per-device value validated and logged if divergent
+  "active_timeout":   "30s",                     // optional; default 30s
+  "inactive_timeout": "15s"                      // optional; default 15s
+}
+```
+
+No per-device override exists for `source_per_device` — the
+`-flow-source-per-device` CLI flag is simulator-wide (see
+[CLI flags → Flow export](cli-flags.md#flow-export-flags)). Setting
+`"source_per_device"` in the REST body is rejected by
+`DisallowUnknownFields`.
+
+**`traps` block:**
+
+```json
+"traps": {
+  "collector":       "192.168.1.10:162",        // required; host:port
+  "mode":            "trap",                     // optional; "trap" | "inform"; default "trap"
+  "community":       "public",                   // optional; SNMPv2c community; default "public"
+  "interval":        "30s",                      // optional; per-device mean Poisson firing interval; default 30s
+  "inform_timeout":  "5s",                       // optional; INFORM retry timeout; default 5s
+  "inform_retries":  2                           // optional; max retransmissions per INFORM; default 2
+}
+```
+
+INFORM mode requires the simulator-wide `-trap-source-per-device=true`
+(the default). The check is **enforced at device-attach time**: if a
+request sets `mode: "inform"` while the flag is false, the attach
+fails per-device and the device's `trapConfig` is cleared so
+`ListDevices` doesn't show a ghost entry. This is distinct from
+request-level validation (which would fail the whole batch) — INFORM
+without per-device binding is a runtime attach failure, not a 400.
+
+**`syslog` block:**
+
+```json
+"syslog": {
+  "collector": "192.168.1.10:514",              // required; host:port
+  "format":    "5424",                           // optional; "5424" | "3164"; default "5424"
+  "interval":  "10s"                             // optional; per-device mean Poisson firing interval; default 10s
+}
+```
+
+Durations accept Go duration strings (`"10s"`, `"5m"`, `"1m30s"`);
+integer seconds are rejected.
+
+**Combined example — flow + traps + syslog on the same batch:**
+
+```bash
+curl -X POST http://localhost:8080/api/v1/devices \
+  -H "Content-Type: application/json" \
+  -d '{
+    "start_ip": "10.0.0.1",
+    "device_count": 100,
+    "netmask": "24",
+    "flow": {
+      "collector": "192.168.1.10:4739",
+      "protocol":  "ipfix"
+    },
+    "traps": {
+      "collector": "192.168.1.10:162",
+      "mode":      "trap",
+      "community": "public"
+    },
+    "syslog": {
+      "collector": "192.168.1.10:514",
+      "format":    "5424"
+    }
+  }'
+```
+
+**Heterogeneous fleet — two batches pointing at different collectors:**
+
+```bash
+# Batch A: 50 devices → collector A, 5424
+curl -X POST http://localhost:8080/api/v1/devices \
+  -H "Content-Type: application/json" \
+  -d '{
+    "start_ip": "10.0.0.1",
+    "device_count": 50,
+    "syslog": {"collector": "192.168.1.10:514", "format": "5424"}
+  }'
+
+# Batch B: 20 devices → collector A, 3164 (same host, different format)
+curl -X POST http://localhost:8080/api/v1/devices \
+  -H "Content-Type: application/json" \
+  -d '{
+    "start_ip": "10.0.1.1",
+    "device_count": 20,
+    "syslog": {"collector": "192.168.1.10:514", "format": "3164"}
+  }'
+
+# Batch C: 30 devices → collector B, 5424
+curl -X POST http://localhost:8080/api/v1/devices \
+  -H "Content-Type: application/json" \
+  -d '{
+    "start_ip": "10.0.2.1",
+    "device_count": 30,
+    "syslog": {"collector": "192.168.1.20:514", "format": "5424"}
+  }'
+```
+
+`GET /api/v1/syslog/status` then reports three collector records keyed
+by `(collector, format)`. See
+[Syslog export status](#syslog-export-status).
+
+**Validation failures return `400` with the underlying error** (e.g.
+`unknown protocol`, `invalid collector address`, unresolvable host,
+explicitly invalid syslog format — non-`5424` / non-`3164`); no device
+from the batch is created (atomic batch failure). Unknown / typo'd JSON
+fields at any level are also rejected via `DisallowUnknownFields` —
+e.g. `"interval_ms": 10000` lands as a 400, not a silent drop.
+
 ## List devices
 
 ```bash
@@ -139,19 +270,33 @@ When flow export is enabled:
   "success": true,
   "message": "Success",
   "data": {
-    "enabled": true,
-    "protocol": "ipfix",
-    "collector": "192.168.1.10:4739",
-    "total_flows_exported": 1824300,
-    "total_packets_sent": 91215,
-    "total_bytes_sent": 136823040,
-    "devices_exporting": 100,
-    "last_template_send": "2026-04-16T10:35:00Z"
+    "subsystem_active": true,
+    "collectors": [
+      {"collector": "192.168.1.10:4739", "protocol": "ipfix",    "devices": 50, "sent_packets": 8123, "sent_bytes": 12123456, "sent_records": 243690},
+      {"collector": "192.168.1.20:6343", "protocol": "sflow",    "devices": 20, "sent_packets": 3100, "sent_bytes":  5560000, "sent_records":  62000}
+    ],
+    "devices_exporting": 70,
+    "last_template_send": "2026-04-23T10:35:00Z"
   }
 }
 ```
 
-When flow export is disabled the response is `{"enabled": false}`.
+Response fields:
+
+| Field | Meaning |
+|-------|---------|
+| `subsystem_active` | `true` after `main()` boots the flow ticker goroutine — always-on. Not reachable as `false` via the HTTP endpoint during normal operation: the subsystem initialises with the rest of the process and only stops at process exit, alongside the HTTP server itself. |
+| `collectors[]` | One record per `(collector, protocol)` tuple that ever had a device. Deleted-device counters persist in the aggregate until process exit. |
+| `collectors[].devices` | Count of LIVE exporters for this tuple. `0` means no live device but the aggregate remembers prior fires. |
+| `collectors[].sent_packets` / `sent_bytes` / `sent_records` | Cumulative across live + historical exporters for this tuple (monotonic within subsystem lifecycle). |
+| `devices_exporting` | Total LIVE exporters across all tuples. |
+| `last_template_send` | ISO-8601 timestamp of the most recent template emission (NetFlow v9 / IPFIX only). |
+
+Clients detect "no flow export configured" via `len(collectors) == 0`.
+The retired scalar fields (`enabled`, `protocol`, `collector`,
+`total_flows_exported`, `total_packets_sent`, `total_bytes_sent`) were
+removed in phase 3; callers that depended on them must migrate to the
+array-of-collectors shape.
 
 See [Flow export (operator guide)](../ops/flow-export.md) and
 [Flow export reference](flow-export.md) for protocol-specific details.
@@ -164,22 +309,31 @@ curl http://localhost:8080/api/v1/traps/status
 
 Unlike the flow-status endpoint, this response is **not** wrapped in the
 `{success, message, data}` envelope — the handler serialises `TrapStatus`
-directly. When trap export is enabled in INFORM mode (the most complete
-response shape):
+directly.
 
 ```json
 {
-  "enabled": true,
-  "mode": "inform",
-  "collector": "192.168.1.10:162",
-  "community": "public",
-  "sent": 182430,
-  "informs_pending": 17,
-  "informs_acked": 182380,
-  "informs_failed": 33,
-  "informs_dropped": 0,
-  "rate_limiter_tokens_available": 94,
+  "subsystem_active": true,
+  "collectors": [
+    {
+      "collector": "192.168.1.10:162",
+      "mode":      "inform",
+      "devices":   80,
+      "sent":      182430,
+      "informs_pending": 17,
+      "informs_acked":   182380,
+      "informs_failed":  33,
+      "informs_dropped": 0
+    },
+    {
+      "collector": "192.168.1.20:162",
+      "mode":      "trap",
+      "devices":   20,
+      "sent":      6000
+    }
+  ],
   "devices_exporting": 100,
+  "rate_limiter_tokens_available": 94,
   "catalogs_by_type": {
     "_universal":    {"entries": 5,  "source": "embedded"},
     "cisco_ios":     {"entries": 12, "source": "file:resources/cisco_ios/traps.json"},
@@ -188,20 +342,37 @@ response shape):
 }
 ```
 
+The four `informs_*` fields **only appear on records whose `mode == inform`**.
+TRAP-mode records omit them.
+
+`subsystem_active` is the authoritative feature-on signal — `true`
+after `StartTrapSubsystem` runs. In normal operation, the HTTP
+endpoint always returns `true`: the subsystem initialises from `main()`
+and the only path that sets `subsystem_active=false` is `StopTrapExport`,
+which is invoked at process shutdown alongside the HTTP server. A
+`false` value is therefore only observable programmatically (e.g.
+from a test harness calling `GetTrapStatus` without starting the
+subsystem). Clients that previously branched on the retired `enabled`
+scalar should use `subsystem_active`. `len(collectors) == 0` with
+`subsystem_active=true` means the subsystem is running but no device
+has opted in.
+
 `catalogs_by_type` keys are device-type slugs (plus the reserved
 `_universal` entry for the fallback catalog). `source` is
 `"embedded"`, `"file:<path>"`, or `"override:<path>"` when
-`-trap-catalog` was supplied. In TRAP mode the four `informs_*`
-fields are omitted. When trap export is disabled the response is:
+`-trap-catalog` was supplied. When disabled:
 
 ```json
-{"enabled": false, "sent": 0, "devices_exporting": 0}
+{"subsystem_active": false, "collectors": [], "devices_exporting": 0}
 ```
 
 `rate_limiter_tokens_available` is only present when `-trap-global-cap` is
 set. The `sent` counter increments on **every wire emission including
 INFORM retransmissions**, so it can exceed `informs_acked + informs_failed
 + informs_dropped + informs_pending` under retry churn.
+
+Counters are **monotonic within a subsystem lifecycle**: deleting a
+device does not zero its collector's `sent`; the aggregate survives.
 
 See [SNMP trap / INFORM export (operator guide)](../ops/snmp-traps.md) and
 [SNMP trap reference](snmp-traps.md) for the full feature details.
@@ -229,7 +400,7 @@ Response:
 | `400 Bad Request` | `{"error": "...", "catalog": "<slug>", "availableEntries": [...]}` | Unknown catalog entry for this device. The enriched body reports which catalog the device resolved to (`cisco_ios`, `_universal`, etc.) and lists its entries alphabetically so a scripted caller can fix its call without a separate discovery endpoint. For malformed JSON or missing `name`, the legacy envelope form `{"success": false, "message": "..."}` applies. |
 | `404 Not Found` | error JSON | Unknown device IP. |
 | `500 Internal Server Error` | error JSON | Template resolve error, catalog resolution returned nil despite feature active (pathological manager state), or write failure. |
-| `503 Service Unavailable` | error JSON | Trap export is disabled. |
+| `503 Service Unavailable` | error JSON | The trap subsystem has not started **or** the target device has no trap config. |
 
 The endpoint does not block waiting for an INFORM ack — use
 `/api/v1/traps/status` to observe INFORM lifecycle counters.
@@ -244,19 +415,33 @@ When syslog export is enabled:
 
 ```json
 {
-  "enabled": true,
-  "format": "5424",
-  "collector": "192.168.1.10:514",
-  "sent": 18240,
-  "send_failures": 12,
+  "subsystem_active": true,
+  "collectors": [
+    {"collector": "192.168.1.10:514", "format": "5424", "devices": 50, "sent": 18240, "send_failures": 3},
+    {"collector": "192.168.1.10:514", "format": "3164", "devices": 20, "sent":  6130, "send_failures": 0}
+  ],
+  "devices_exporting": 70,
   "rate_limiter_tokens_available": 380,
-  "devices_exporting": 100,
   "catalogs_by_type": {
     "_universal":    {"entries": 6,  "source": "embedded"},
     "cisco_ios":     {"entries": 14, "source": "file:resources/cisco_ios/syslog.json"},
     "juniper_mx240": {"entries": 13, "source": "file:resources/juniper_mx240/syslog.json"}
   }
 }
+```
+
+Tuples are keyed by `(collector, format)`: a single collector receiving
+5424 from some devices and 3164 from others surfaces as two separate
+records. Per-device bind failures are non-fatal — the exporter falls
+back to the shared-pool socket with a warning and the `sent` counter
+still increments.
+
+`subsystem_active` has the same semantics as on the trap status
+endpoint; `len(collectors) == 0` is **not** sufficient on its own to
+imply "feature off." When disabled:
+
+```json
+{"subsystem_active": false, "collectors": [], "devices_exporting": 0}
 ```
 
 `format` is `"5424"` or `"3164"`. `catalogs_by_type` follows the same
@@ -290,7 +475,7 @@ Response:
 | `400 Bad Request` | `{"error": "...", "catalog": "<slug>", "availableEntries": [...]}` | Unknown catalog entry for this device. Same enriched-error shape as the trap endpoint. |
 | `404 Not Found` | error JSON | Unknown device IP. |
 | `500 Internal Server Error` | error JSON | Pathological catalog-resolution-nil state. |
-| `503 Service Unavailable` | error JSON | Syslog export is disabled. |
+| `503 Service Unavailable` | error JSON | The syslog subsystem has not started **or** the target device has no syslog config. |
 
 ## Device interaction
 

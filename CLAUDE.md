@@ -24,32 +24,35 @@ sudo ./simulator [flags]
 -no-namespace           # Disable network namespace isolation
 
 # Flow export flags (NetFlow v5 / v9 / IPFIX / sFlow v5)
--flow-collector <host:port>       # Enable flow export to this UDP collector
--flow-protocol <proto>            # netflow9 (default) | ipfix | netflow5 | sflow (alias: sflow5)
--flow-tick-interval <duration>    # How often to emit flows (default: 5s)
--flow-active-timeout <duration>   # Active flow expiry timeout (default: 30s)
--flow-inactive-timeout <duration> # Inactive flow expiry timeout (default: 15s)
--flow-template-interval <dur>     # Re-send template every N ticks (default: 10m; ignored under netflow5/sflow)
--flow-source-per-device           # Bind per-device UDP socket so src IP = device IP (default: true)
+# Flags marked [seed] apply ONLY to auto-start devices (-auto-start-ip batch).
+# REST-created devices (POST /api/v1/devices) opt in via a per-device `flow` block.
+# Flags marked [global] retain simulator-wide effect.
+-flow-collector <host:port>       # [seed]   Seed collector for auto-start batch
+-flow-protocol <proto>            # [seed]   netflow9 (default) | ipfix | netflow5 | sflow (alias: sflow5)
+-flow-tick-interval <duration>    # [seed]   How often to emit flows (default: 5s)
+-flow-active-timeout <duration>   # [seed]   Active flow expiry timeout (default: 30s)
+-flow-inactive-timeout <duration> # [seed]   Inactive flow expiry timeout (default: 15s)
+-flow-template-interval <dur>     # [global] Re-send template every N seconds (default: 60s; ignored under netflow5/sflow)
+-flow-source-per-device           # [global] Bind per-device UDP socket so src IP = device IP (default: true)
 
 # SNMP trap / INFORM export flags (SNMPv2c only)
--trap-collector <host:port>       # Enable trap export to this UDP collector (default port 162)
--trap-mode <proto>                # trap (default, fire-and-forget) | inform (acknowledged)
--trap-interval <duration>         # Per-device mean firing interval, Poisson-distributed (default: 30s)
--trap-global-cap <tps>            # Simulator-wide tps ceiling (0 = unlimited)
--trap-catalog <path>              # Override embedded universal 5-trap catalog
--trap-community <string>          # SNMPv2c community (default: public)
--trap-source-per-device           # Source IP = device IP (default: true; REQUIRED in inform mode)
--trap-inform-timeout <duration>   # Per-retry timeout in inform mode (default: 5s)
--trap-inform-retries <int>        # Max retransmissions per inform (default: 2)
+-trap-collector <host:port>       # [seed]   Seed trap collector for auto-start batch (default port 162)
+-trap-mode <proto>                # [seed]   trap (default, fire-and-forget) | inform (acknowledged)
+-trap-interval <duration>         # [seed]   Per-device mean firing interval, Poisson-distributed (default: 30s)
+-trap-global-cap <tps>            # [global] Simulator-wide tps ceiling (0 = unlimited)
+-trap-catalog <path>              # [global] Override embedded universal catalog (5 entries) + per-type overlays — when set, the single file becomes the catalog for every device
+-trap-community <string>          # [seed]   SNMPv2c community (default: public)
+-trap-source-per-device           # [global] Source IP = device IP (default: true; REQUIRED in inform mode)
+-trap-inform-timeout <duration>   # [seed]   Per-retry timeout in inform mode (default: 5s)
+-trap-inform-retries <int>        # [seed]   Max retransmissions per inform (default: 2)
 
 # UDP syslog export flags (RFC 5424 / RFC 3164)
--syslog-collector <host:port>     # Enable UDP syslog export to this collector (default port 514)
--syslog-format <fmt>              # 5424 (default, structured) | 3164 (legacy BSD)
--syslog-interval <duration>       # Per-device mean firing interval, Poisson-distributed (default: 10s)
--syslog-global-cap <rate>         # Simulator-wide rate ceiling (0 = unlimited)
--syslog-catalog <path>            # Override embedded universal 6-entry catalog
--syslog-source-per-device         # Source IP = device IP (default: true; bind failure is non-fatal, falls back to shared socket)
+-syslog-collector <host:port>     # [seed]   Seed collector for auto-start batch (default port 514)
+-syslog-format <fmt>              # [seed]   5424 (default, structured) | 3164 (legacy BSD)
+-syslog-interval <duration>       # [seed]   Per-device mean firing interval, Poisson-distributed (default: 10s)
+-syslog-global-cap <rate>         # [global] Simulator-wide rate ceiling (0 = unlimited)
+-syslog-catalog <path>            # [global] Override embedded universal 6-entry catalog
+-syslog-source-per-device         # [global] Source IP = device IP (default: true; bind failure is non-fatal, falls back to shared socket)
 
 # Tests
 cd go
@@ -82,7 +85,7 @@ go test ./simulator/ -run TestSomething
 
 **Web API:** `web.go` (route setup) + `api.go` (handlers) + `web_routes*.go` (Linux route script generation). Serves device CRUD, CSV export, system stats, flow export status (`GET /api/v1/flows/status`), trap export status (`GET /api/v1/traps/status`), and on-demand trap firing (`POST /api/v1/devices/{ip}/trap`).
 
-**Flow export:** `flow_exporter.go` (FlowExporter, FlowEncoder interface, SimulatorManager integration) + `netflow9.go` (NetFlow9Encoder, RFC 3954) + `ipfix.go` (IPFIXEncoder, RFC 7011) + `netflow5.go` (NetFlow5Encoder, Cisco v5: 24B header, 48B/record, IPv4-only, 30-record datagram cap, no templates) + `sflow.go` (SFlowEncoder, sFlow v5 per sflow_version_5.txt: 28B XDR datagram header, variable-length flow_sample records carrying sampled_header=IPv4+UDP/TCP synthesized from the FlowRecord 5-tuple, no template mechanism). One shared UDP socket and ticker goroutine; per-device FlowExporter owns a FlowCache. Protocols:
+**Flow export (per-device config, phase 3):** `flow_exporter.go` (FlowExporter, FlowEncoder interface, SimulatorManager integration) + `netflow9.go` (NetFlow9Encoder, RFC 3954) + `ipfix.go` (IPFIXEncoder, RFC 7011) + `netflow5.go` (NetFlow5Encoder, Cisco v5: 24B header, 48B/record, IPv4-only, 30-record datagram cap, no templates) + `sflow.go` (SFlowEncoder, sFlow v5 per sflow_version_5.txt: 28B XDR datagram header, variable-length flow_sample records carrying sampled_header=IPv4+UDP/TCP synthesized from the FlowRecord 5-tuple, no template mechanism). Each device owns its collector/protocol/timeouts on `DeviceFlowConfig`; the manager owns a shared-socket pool keyed by `(collector, protocol)` and one ticker goroutine. `FlowStatus` is an array-of-collectors aggregated by `(collector, protocol)`. Protocols:
 
 | Protocol   | Header | Record size    | Template? | Timestamps         | IPv6 records | Notes |
 |------------|--------|----------------|-----------|--------------------|--------------|-------|
@@ -93,7 +96,7 @@ go test ./simulator/ -run TestSomething
 
 The `FlowEncoder` interface has a `MaxRecordSize() int` extension point: fixed-size encoders return 0 (NetFlow5/9, IPFIX), variable-length encoders (sFlow) return a worst-case per-record byte bound that `FlowExporter.Tick` uses for MTU-safe pagination.
 
-**SNMP trap export:** `trap_manager.go` (SimulatorManager integration, TrapConfig, `StartTrapExport` / `StopTrapExport`, HTTP handlers' helpers, `TrapStatus`) + `trap_catalog.go` (JSON catalog loader with embedded universal set + weighted-random pick + `text/template`-based varbind resolution) + `trap_v2c.go` (SNMPv2c TRAP [0xA7] and InformRequest [0xA6] PDU encoder, GetResponse [0xA2] ack parser — reuses `snmp_encoding.go` ASN.1 primitives) + `trap_scheduler.go` (single central min-heap scheduler goroutine with Poisson inter-arrival + `golang.org/x/time/rate` global cap) + `trap_exporter.go` (per-device `TrapExporter` with atomic per-device UDP socket, bounded pending-inform map with oldest-drop, reader/retry goroutines in INFORM mode).
+**SNMP trap export (per-device config, phase 4):** `trap_manager.go` (SimulatorManager integration, `TrapSubsystemConfig`, `StartTrapSubsystem` / `StopTrapExport`, HTTP handlers' helpers, `TrapStatus`) + `trap_catalog.go` (JSON catalog loader with embedded universal set + weighted-random pick + `text/template`-based varbind resolution) + `trap_v2c.go` (SNMPv2c TRAP [0xA7] and InformRequest [0xA6] PDU encoder, GetResponse [0xA2] ack parser — reuses `snmp_encoding.go` ASN.1 primitives) + `trap_scheduler.go` (single central min-heap scheduler goroutine with Poisson inter-arrival + `golang.org/x/time/rate` global cap) + `trap_exporter.go` (per-device `TrapExporter` with atomic per-device UDP socket, bounded pending-inform map with oldest-drop, reader/retry goroutines in INFORM mode). Each device owns its collector/mode/community/interval/inform-* settings on `DeviceTrapConfig`; the manager owns a shared-socket pool keyed by collector and a per-(collector, mode) monotonic counter aggregate that survives device deletion. `TrapStatus` is an array-of-collectors aggregated by `(collector, mode)`, with a top-level `subsystem_active` bool for observability.
 
 **Trap catalog:**
 - Default catalog is compiled into the binary from `resources/_common/traps.json` via `embed.FS` — no filesystem dependency for the out-of-box experience.
@@ -119,11 +122,10 @@ The `FlowEncoder` interface has a `MaxRecordSize() int` extension point: fixed-s
 - **`StopTrapExport` is shutdown-only** (phase-5 review D1). It is not safe to race concurrent device creation: `startDeviceTrapExporter` captures scheduler / pool / encoder pointers under a short RLock and uses them outside that lock, so a concurrent Stop can leave orphan exporters or closed sockets. Today it is only called from the process-exit signal handler. Do not introduce a runtime "restart trap subsystem" control path without first tightening the attach-path lock discipline.
 
 **Trap HTTP endpoints:**
-- `GET /api/v1/traps/status` — JSON with `enabled`, `mode`, `sent`, INFORM counters (`informs_pending`, `informs_acked`, `informs_failed`, `informs_dropped` when mode=inform), `rate_limiter_tokens_available` (when `-trap-global-cap` is set), `devices_exporting`.
-- `POST /api/v1/devices/{ip}/trap` — body `{"name":"linkDown","varbindOverrides":{"IfIndex":"3"}}` → `202 Accepted` + `{"requestId": N}`. `400` for unknown catalog entry (response body includes `catalog` — the device's resolved catalog label — and `availableEntries` list so operators can self-service), `404` for unknown device, `503` when trap export is disabled. Fire-and-forget: returns without waiting on INFORM ack.
-- `GET /api/v1/traps/status` additionally reports `catalogs_by_type` when enabled: `{ "cisco_ios": {entries: 11, source: "file:resources/cisco_ios/traps.json"}, "_universal": {entries: 5, source: "embedded"} }`.
+- `GET /api/v1/traps/status` — JSON array-of-collectors: `{subsystem_active, collectors: [{collector, mode, devices, sent, informs_pending?, informs_acked?, informs_failed?, informs_dropped?}], devices_exporting, rate_limiter_tokens_available?, catalogs_by_type?}`. `subsystem_active=false` means `StartTrapSubsystem` has not run; `subsystem_active=true` with `collectors=[]` means running but no device has opted in. INFORM counters are only present on records with `mode=inform`. `catalogs_by_type` reports per-type overlay counts and source (`embedded` / `file:resources/<slug>/traps.json` / `override:<path>`).
+- `POST /api/v1/devices/{ip}/trap` — body `{"name":"linkDown","varbindOverrides":{"IfIndex":"3"}}` → `202 Accepted` + `{"requestId": N}`. `400` for unknown catalog entry (response body includes `catalog` — the device's resolved catalog label — and `availableEntries` list so operators can self-service), `404` for unknown device, `503` when the subsystem is not running or the device has no trap config. Fire-and-forget: returns without waiting on INFORM ack.
 
-**UDP syslog export:** `syslog_manager.go` (SimulatorManager integration, SyslogConfig, `StartSyslogExport` / `StopSyslogExport`, `SyslogStatus`) + `syslog_catalog.go` (JSON catalog with embedded universal 6-entry set; weighted-random pick; `text/template`-based body / structured-data resolution with all templates pre-compiled at load) + `syslog_wire.go` (`SyslogEncoder` interface with `RFC5424Encoder` and `RFC3164Encoder` — PRI calc, ISO 8601 / `Mmm DD HH:MM:SS` timestamps, SD-PARAM escape per §6.3.3, HOSTNAME / APP-NAME / MSGID / TAG sanitisation, MaxMessageSize enforcement) + `syslog_scheduler.go` (single central min-heap scheduler with Poisson inter-arrival + `golang.org/x/time/rate` global cap; derived context so `Stop()` is bounded-time under cap) + `syslog_exporter.go` (per-device `SyslogExporter` with atomic per-device UDP socket and shared-socket fallback).
+**UDP syslog export (per-device config, phase 5):** `syslog_manager.go` (SimulatorManager integration, `SyslogSubsystemConfig`, `StartSyslogSubsystem` / `StopSyslogExport`, `SyslogStatus`) + `syslog_catalog.go` (JSON catalog with embedded universal 6-entry set; weighted-random pick; `text/template`-based body / structured-data resolution with all templates pre-compiled at load) + `syslog_wire.go` (`SyslogEncoder` interface with `RFC5424Encoder` and `RFC3164Encoder` — PRI calc, ISO 8601 / `Mmm DD HH:MM:SS` timestamps, SD-PARAM escape per §6.3.3, HOSTNAME / APP-NAME / MSGID / TAG sanitisation, MaxMessageSize enforcement) + `syslog_scheduler.go` (single central min-heap scheduler with Poisson inter-arrival + `golang.org/x/time/rate` global cap; derived context so `Stop()` is bounded-time under cap) + `syslog_exporter.go` (per-device `SyslogExporter` with atomic per-device UDP socket and shared-socket fallback). Each device owns its collector/format/interval on `DeviceSyslogConfig`; the manager owns a shared-socket pool keyed by `(collector, format)`, a per-format encoder cache, and a per-(collector, format) monotonic counter aggregate. `SyslogStatus` is an array-of-collectors aggregated by `(collector, format)`, with a top-level `subsystem_active` bool.
 
 **Syslog catalog:**
 - Default catalog is compiled into the binary from `resources/_common/syslog.json` via `embed.FS` — feature works out of the box.
@@ -203,8 +205,8 @@ In every branch the result is run through `sanitiseHostname`: spaces become hyph
 - **`StopSyslogExport` is shutdown-only** (phase-5 review D1). Same constraint as trap: `startDeviceSyslogExporter` uses captured pointers outside the short RLock. Only called from the process-exit path today. Tightening is a pre-requisite for any runtime "restart" control plane.
 
 **Syslog HTTP endpoints:**
-- `GET /api/v1/syslog/status` — JSON with `enabled`, `format` (`5424` or `3164`), `collector`, `sent`, `send_failures`, `rate_limiter_tokens_available` (when `-syslog-global-cap` is set), `devices_exporting`.
-- `POST /api/v1/devices/{ip}/syslog` — body `{"name":"interface-down","templateOverrides":{"IfIndex":"3","IfName":"Gi0/3"}}` → `202 Accepted` + `{}`. `400` for unknown catalog entry or malformed JSON, `404` for unknown device, `503` when syslog export is disabled.
+- `GET /api/v1/syslog/status` — JSON array-of-collectors: `{subsystem_active, collectors: [{collector, format, devices, sent, send_failures}], devices_exporting, rate_limiter_tokens_available?, catalogs_by_type?}`. Same `subsystem_active` semantics as trap. The `(collector, format)` tuple lets devices emit different wire formats to the same collector without interleaving on one socket.
+- `POST /api/v1/devices/{ip}/syslog` — body `{"name":"interface-down","templateOverrides":{"IfIndex":"3","IfName":"Gi0/3"}}` → `202 Accepted` + `{}`. `400` for unknown catalog entry or malformed JSON, `404` for unknown device, `503` when the subsystem is not running or the device has no syslog config. Typo'd fields rejected via `DisallowUnknownFields`.
 
 **Resource loading:** `resources.go` loads and caches the 379 JSON files at startup. Each device type directory has split JSON files for SNMP, SSH, and REST responses that are merged at load time.
 

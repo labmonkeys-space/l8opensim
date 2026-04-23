@@ -278,6 +278,76 @@ content depends on Class 2 random fields deferred to a follow-up.
 Family-catalog concept (one catalog shared by all `cisco_*` slugs,
 one by all `juniper_*`) is also a follow-up refactor.
 
+## Starting syslog export
+
+Syslog export is opt-in per device. There are two ways to configure it:
+
+### 1. CLI seed (auto-start batch)
+
+The `-syslog-*` flags seed auto-created devices. Every device in the
+auto-start batch gets the same collector, format, and interval.
+
+```bash
+# RFC 5424 → 192.168.1.10:514, 100 auto-created devices
+sudo ./simulator \
+  -auto-start-ip 10.0.0.1 -auto-count 100 \
+  -syslog-collector 192.168.1.10:514
+
+# RFC 3164 legacy BSD format for downstream parsers that don't groket 5424
+sudo ./simulator \
+  -auto-start-ip 10.0.0.1 -auto-count 50 \
+  -syslog-collector 192.168.1.10:514 \
+  -syslog-format 3164
+```
+
+### 2. REST body (per-device)
+
+`POST /api/v1/devices` accepts an optional `syslog` block per request.
+Different batches can target different collectors or mix formats
+(5424 and 3164 streams never interleave on the same socket — the
+shared-socket pool is keyed by `(collector, format)`).
+
+```bash
+# A: 50 devices emitting 5424 to collector A
+curl -X POST http://localhost:8080/api/v1/devices \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "start_ip": "10.0.0.1",
+    "device_count": 50,
+    "syslog": {
+      "collector": "192.168.1.10:514",
+      "format": "5424",
+      "interval": "15s"
+    }
+  }'
+
+# B: 20 devices emitting 3164 to the SAME collector (different socket,
+# separate status record)
+curl -X POST http://localhost:8080/api/v1/devices \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "start_ip": "10.0.1.1",
+    "device_count": 20,
+    "syslog": {
+      "collector": "192.168.1.10:514",
+      "format": "3164"
+    }
+  }'
+```
+
+`/api/v1/syslog/status` reports both batches as separate records keyed
+by `(collector, format)`.
+
+The `syslog` block is **optional** on every request — omit it and the
+device doesn't emit syslog. See
+[Web API → POST /api/v1/devices](web-api.md#create-devices) for the full
+per-device schema.
+
+**Duration fields** (`interval`) require **Go duration strings**
+(`"10s"`, `"5m"`, `"1m30s"`). Integer seconds (`"interval": 10`) are
+rejected with 400 — a deliberate mismatch with the `-syslog-interval`
+CLI flag, which takes integer seconds.
+
 ## HTTP endpoints
 
 ### Fire a syslog message on demand
@@ -308,7 +378,7 @@ Responses:
 | `202 Accepted` | `{}` | Success; the message was emitted. |
 | `400 Bad Request` | `{"error": "...", "catalog": "<slug>", "availableEntries": [...]}` | Unknown catalog entry for the device. The enriched body tells the caller which catalog the device resolved to and lists its entries so a scripted caller can self-service. |
 | `404 Not Found` | error JSON | Unknown device IP. |
-| `503 Service Unavailable` | error JSON | Syslog export is disabled (`-syslog-collector` not set). |
+| `503 Service Unavailable` | error JSON | The syslog subsystem has not started **or** the target device has no syslog config (i.e. it was created without a `syslog` block and didn't inherit the CLI seed). |
 | `500 Internal Server Error` | error JSON | Pathological: catalog resolution returned nil while the feature reports active. Indicates a broken manager invariant, not a transient issue. |
 
 On-demand fires **do not** consume global rate-cap tokens.
@@ -317,17 +387,29 @@ On-demand fires **do not** consume global rate-cap tokens.
 
 `GET /api/v1/syslog/status` — current snapshot of the syslog subsystem.
 
-When enabled:
+**Response shape** (array-of-collectors aggregated by `(collector, format)`):
 
 ```json
 {
-  "enabled": true,
-  "format": "5424",
-  "collector": "192.168.1.10:514",
-  "sent": 18240,
-  "send_failures": 12,
+  "subsystem_active": true,
+  "collectors": [
+    {
+      "collector":     "192.168.1.10:514",
+      "format":        "5424",
+      "devices":       50,
+      "sent":          18240,
+      "send_failures": 3
+    },
+    {
+      "collector":     "192.168.1.10:514",
+      "format":        "3164",
+      "devices":       20,
+      "sent":          6130,
+      "send_failures": 0
+    }
+  ],
+  "devices_exporting": 70,
   "rate_limiter_tokens_available": 380,
-  "devices_exporting": 100,
   "catalogs_by_type": {
     "_universal":    {"entries": 6,  "source": "embedded"},
     "cisco_ios":     {"entries": 14, "source": "file:resources/cisco_ios/syslog.json"},
@@ -340,20 +422,26 @@ Fields:
 
 | Field | Meaning |
 |-------|---------|
-| `enabled` | Feature is active (`-syslog-collector` set and scheduler running). |
-| `format` | `"5424"` or `"3164"`. Absent when disabled. |
-| `collector` | Target `host:port`. |
-| `sent` | Total wire emissions. |
-| `send_failures` | UDP write errors (collector unreachable, socket-level failure). |
+| `subsystem_active` | `true` after `StartSyslogSubsystem` runs. During normal operation of the HTTP server this value is always `true`: the subsystem initialises in `main()` and the only path that flips it to `false` is `StopSyslogExport`, which runs at process exit alongside the HTTP server. A `false` value is therefore only observable programmatically (e.g. a test harness calling `GetSyslogStatus` without starting the subsystem). |
+| `collectors[]` | One record per `(collector, format)` tuple that ever had a device. |
+| `collectors[].collector` | Target `host:port` (canonicalised). |
+| `collectors[].format` | `"5424"` or `"3164"`. |
+| `collectors[].devices` | Count of LIVE devices emitting to this tuple. `0` means no live device but the aggregate remembers prior fires (monotonic within subsystem lifecycle). |
+| `collectors[].sent` | Cumulative wire emissions across all devices (live + deleted) for this tuple. |
+| `collectors[].send_failures` | UDP write errors (collector unreachable, socket-level failure). |
+| `devices_exporting` | Total count of LIVE devices with a `SyslogExporter` across all tuples. |
 | `rate_limiter_tokens_available` | Present only when `-syslog-global-cap` is set; instantaneous snapshot, not synchronised with concurrent waits. |
-| `devices_exporting` | Device count with an active `SyslogExporter`. |
-| `catalogs_by_type` | Map of `<slug>` → `{entries, source}` showing the merged-catalog state. `_universal` key is always present when the feature is enabled. `source` is `"embedded"`, `"file:<path>"`, or `"override:<path>"` when `-syslog-catalog` was supplied. |
+| `catalogs_by_type` | Map of `<slug>` → `{entries, source}` showing the merged-catalog state. `_universal` key is always present when the subsystem is running. `source` is `"embedded"`, `"file:<path>"`, or `"override:<path>"` when `-syslog-catalog` was supplied. |
 
-When disabled:
+When the subsystem is stopped (or never started):
 
 ```json
-{"enabled": false}
+{"subsystem_active": false, "collectors": [], "devices_exporting": 0}
 ```
+
+Clients that previously branched on the retired `enabled` scalar
+should branch on `subsystem_active` (primary) or `len(collectors) > 0`
+(secondary — true only when at least one device has opted in).
 
 ## CLI flags
 

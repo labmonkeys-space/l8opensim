@@ -68,6 +68,30 @@ snmpget -v2c -c public 192.168.100.1 1.3.6.1.2.1.1.1.0
 ssh simadmin@192.168.100.1                            # password: simadmin
 ```
 
+Per-device exports (flow + trap + syslog in a single create call):
+
+```bash
+# Boot without any export CLI flags — the subsystems are always-on.
+sudo ./simulator
+
+# Create 10 devices that all emit IPFIX flows, SNMPv2c traps, and
+# RFC 5424 syslog to one collector. Any of the three blocks is optional.
+curl -X POST http://localhost:8080/api/v1/devices \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "start_ip": "10.0.0.1",
+    "device_count": 10,
+    "flow":   {"collector": "192.168.1.10:4739", "protocol": "ipfix"},
+    "traps":  {"collector": "192.168.1.10:162",  "mode":     "trap"},
+    "syslog": {"collector": "192.168.1.10:514",  "format":   "5424"}
+  }'
+
+# Inspect what each subsystem has attached.
+curl http://localhost:8080/api/v1/flows/status   | jq '.data.collectors'
+curl http://localhost:8080/api/v1/traps/status   | jq '.collectors'
+curl http://localhost:8080/api/v1/syslog/status  | jq '.collectors'
+```
+
 Full walkthrough: [Getting started → Quick start](https://labmonkeys-space.github.io/l8opensim/getting-started/quick-start/).
 Container and Kubernetes deployment: [Getting started → Docker](https://labmonkeys-space.github.io/l8opensim/getting-started/docker/).
 

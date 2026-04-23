@@ -67,11 +67,92 @@ See [Flow export (operator guide)](../ops/flow-export.md#prerequisites-for-per-d
 for the prerequisites (iptables `FORWARD` rule, route to the collector from
 the namespace, collector-side `rp_filter` tuning).
 
+## Starting flow export
+
+Flow export is opt-in per device. There are two ways to configure it:
+
+### 1. CLI seed (auto-start batch)
+
+The `-flow-*` flags seed auto-created devices. Each device in the batch
+gets the same collector, protocol, and timeouts.
+
+```bash
+# NetFlow v9 → 192.168.1.10:2055, 100 auto-created devices
+sudo ./simulator \
+  -auto-start-ip 10.0.0.1 -auto-count 100 \
+  -flow-collector 192.168.1.10:2055 \
+  -flow-protocol netflow9
+
+# Mixed fleet isn't achievable via CLI — use the REST body.
+```
+
+### 2. REST body (per-device)
+
+`POST /api/v1/devices` accepts an optional `flow` block on each request.
+Devices in different requests can point at different collectors or emit
+different protocols.
+
+```bash
+# One batch of 50 emitting IPFIX to collector A
+curl -X POST http://localhost:8080/api/v1/devices \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "start_ip": "10.0.0.1",
+    "device_count": 50,
+    "flow": {
+      "collector": "192.168.1.10:4739",
+      "protocol": "ipfix",
+      "active_timeout": "30s"
+    }
+  }'
+
+# Second batch of 20 emitting sFlow to collector B — same process,
+# /api/v1/flows/status reports both as separate collector records.
+curl -X POST http://localhost:8080/api/v1/devices \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "start_ip": "10.0.1.1",
+    "device_count": 20,
+    "flow": {
+      "collector": "192.168.1.20:6343",
+      "protocol": "sflow"
+    }
+  }'
+```
+
+The `flow` block is **optional** on every request — omit it and the
+device doesn't export.
+
+**Duration fields** (`tick_interval`, `active_timeout`,
+`inactive_timeout`) require **Go duration strings** (`"5s"`, `"30s"`,
+`"1m30s"`). Integer seconds (`"tick_interval": 5`) are rejected with
+400 — a deliberate mismatch with the `-flow-tick-interval` / `-flow-*-timeout`
+CLI flags, which take integer seconds.
+
+See [Web API → POST /api/v1/devices](web-api.md#create-devices) for the
+full per-device schema.
+
 ## Status API
 
 ```bash
 curl http://localhost:8080/api/v1/flows/status
 ```
 
-See [Web API → Flow export status](web-api.md#flow-export-status) for an
-example response.
+Returns an array-of-collectors aggregated by `(collector, protocol)`:
+
+```json
+{
+  "subsystem_active": true,
+  "collectors": [
+    {"collector": "192.168.1.10:4739", "protocol": "ipfix",    "devices": 50, "sent_packets": 8123, "sent_bytes": 12123456, "sent_records": 243690},
+    {"collector": "192.168.1.20:6343", "protocol": "sflow",    "devices": 20, "sent_packets": 3100, "sent_bytes":  5560000, "sent_records":  62000}
+  ],
+  "devices_exporting": 70,
+  "last_template_send": "2026-04-23T10:35:00Z"
+}
+```
+
+`subsystem_active=false` with `collectors: []` means flow export never
+ran (the subsystem starts on-demand when the first device with a `flow`
+block attaches). See [Web API → Flow export status](web-api.md#flow-export-status)
+for the full field reference.
