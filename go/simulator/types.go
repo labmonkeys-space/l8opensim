@@ -238,10 +238,10 @@ type SimulatorManager struct {
 	trapScheduler       *TrapScheduler
 	trapEncoder         TrapEncoder
 	trapLimiter         *rate.Limiter // shared global cap (nil = unlimited)
-	trapConns           sync.Map    // key: string collector, value: *net.UDPConn (shared-socket fallback pool, TRAP mode only)
-	trapAggregates      sync.Map    // key: trapAggKey, value: *trapCollectorAggregate — monotonic counters surviving device delete
-	trapFirstAttachLog  atomic.Bool // CAS-gated so the "trap export active" line fires once per lifecycle; race-free reset on Stop
-	trapIntervalWarned  atomic.Bool // CAS-gated divergence warning — one line per lifecycle, not per device (phase-5 review P13)
+	trapConns           sync.Map      // key: string collector, value: *net.UDPConn (shared-socket fallback pool, TRAP mode only)
+	trapAggregates      sync.Map      // key: trapAggKey, value: *trapCollectorAggregate — monotonic counters surviving device delete
+	trapFirstAttachLog  atomic.Bool   // CAS-gated so the "trap export active" line fires once per lifecycle; race-free reset on Stop
+	trapIntervalWarned  atomic.Bool   // CAS-gated divergence warning — one line per lifecycle, not per device (phase-5 review P13)
 	trapGlobalCap       int
 	trapSourcePerDevice bool
 	trapCatalogPath     string // "" when using embedded catalog

@@ -132,7 +132,7 @@ type TrapExporter struct {
 	// Model, Serial, ChassisID) are captured once at exporter construction
 	// because they're stable for the device's lifetime; IfName varies with
 	// IfIndex so it uses a callback (PR 3 swaps synthesis for live lookup).
-	ifIndexFn func() int // returns a random ifIndex from the device's set
+	ifIndexFn func() int               // returns a random ifIndex from the device's set
 	ifNameFn  func(ifIndex int) string // returns ifName for a drawn ifIndex
 	sysName   string
 	model     string
