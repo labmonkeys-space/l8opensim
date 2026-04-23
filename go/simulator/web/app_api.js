@@ -151,7 +151,7 @@ function updateDeviceTypeDropdown(category) {
     });
 }
 
-async function createDevices(startIp, deviceCount, netmask, resourceFile) {
+async function createDevices(startIp, deviceCount, netmask, resourceFile, exportSnapshot) {
     try {
         setLoading('createLoading', true);
         const requestData = {
@@ -172,6 +172,17 @@ async function createDevices(startIp, deviceCount, netmask, resourceFile) {
             requestData.resource_file = resourceFile;
         }
 
+        // Per-device export blocks — captured by the caller in the same
+        // snapshot validateExportBlocksSnapshot saw, so a user typing
+        // into a field between validate and submit can't slip
+        // unvalidated data past us. See docs/reference/web-api.md
+        // "Per-device export blocks" for the schema.
+        if (exportSnapshot) {
+            if (exportSnapshot.flow) requestData.flow = exportSnapshot.flow;
+            if (exportSnapshot.traps) requestData.traps = exportSnapshot.traps;
+            if (exportSnapshot.syslog) requestData.syslog = exportSnapshot.syslog;
+        }
+
         const response = await apiCall('/devices', {
             method: 'POST',
             body: JSON.stringify(requestData)
@@ -187,6 +198,265 @@ async function createDevices(startIp, deviceCount, netmask, resourceFile) {
     } finally {
         setLoading('createLoading', false);
     }
+}
+
+// --- Per-device export block readers -------------------------------------
+//
+// Each reader returns null when the operator left the collector field
+// empty (the feature is opt-in per batch) and returns a populated
+// object otherwise. Field validation is enforced at form-submit time
+// in app_ui.js via validateExportBlocks(); these readers assume input
+// has passed validation.
+
+// Go duration format — a sequence of decimal-number + unit pairs,
+// units from ns|us|µs|ms|s|m|h. Matches what DeviceXConfig.Validate
+// accepts on the server. Bare "0" is also accepted as Go does (zero
+// has no required unit). Empty string and plain non-zero integers
+// (e.g. "30") fail.
+const DURATION_RE = /^(0|(\d+(?:\.\d+)?(ns|us|µs|ms|s|m|h))+)$/;
+
+// host:port — anything-non-empty:port with port 1-65535. Intentionally
+// loose on host shape (can be IP, hostname, [v6]), strict on port.
+const HOSTPORT_RE = /^.+:\d{1,5}$/;
+function validHostPort(s) {
+    if (!HOSTPORT_RE.test(s)) return false;
+    const port = parseInt(s.slice(s.lastIndexOf(':') + 1), 10);
+    return port >= 1 && port <= 65535;
+}
+
+function readFlowBlock() {
+    const collector = document.getElementById('flowCollector').value.trim();
+    if (!collector) return null;
+    const block = { collector };
+    const protocol = document.getElementById('flowProtocol').value;
+    if (protocol) block.protocol = protocol;
+    const active = document.getElementById('flowActiveTimeout').value.trim();
+    if (active) block.active_timeout = active;
+    const inactive = document.getElementById('flowInactiveTimeout').value.trim();
+    if (inactive) block.inactive_timeout = inactive;
+    return block;
+}
+
+function readTrapBlock() {
+    const collector = document.getElementById('trapCollector').value.trim();
+    if (!collector) return null;
+    const block = { collector };
+    const mode = document.getElementById('trapMode').value;
+    if (mode) block.mode = mode;
+    const community = document.getElementById('trapCommunity').value.trim();
+    if (community) block.community = community;
+    const interval = document.getElementById('trapInterval').value.trim();
+    if (interval) block.interval = interval;
+    const informTimeout = document.getElementById('trapInformTimeout').value.trim();
+    if (informTimeout) block.inform_timeout = informTimeout;
+    const informRetries = document.getElementById('trapInformRetries').value.trim();
+    // `!== ''` instead of truthy because `"0"` is a legitimate value (0
+    // retries means "fire once, no retransmit"). The other duration
+    // fields use `if (foo)` because empty-string suppression is correct
+    // there — don't normalise this to match without reading the test
+    // for the zero-retries case in DeviceTrapConfig.Validate.
+    if (informRetries !== '') block.inform_retries = parseInt(informRetries, 10);
+    return block;
+}
+
+function readSyslogBlock() {
+    const collector = document.getElementById('syslogCollector').value.trim();
+    if (!collector) return null;
+    const block = { collector };
+    const format = document.getElementById('syslogFormat').value;
+    if (format) block.format = format;
+    const interval = document.getElementById('syslogInterval').value.trim();
+    if (interval) block.interval = interval;
+    return block;
+}
+
+// readAllExportBlocks captures the three blocks once so validate and
+// submit operate on the same snapshot — avoids a TOCTOU window where
+// an operator typing into a field between validate and POST sends data
+// the validator never saw.
+function readAllExportBlocks() {
+    return {
+        flow: readFlowBlock(),
+        traps: readTrapBlock(),
+        syslog: readSyslogBlock()
+    };
+}
+
+// validateExportBlocksSnapshot returns an error message string when any
+// enabled block has an invalid field, or null when everything is OK.
+// Enforces the same rules the server's DeviceXConfig.Validate applies:
+// host:port shape (with strict 1..65535 port range) and Go-duration
+// strings for duration fields. Field names in alerts use the on-screen
+// labels so operators can find the offending input without mapping
+// snake_case JSON keys back to UI labels.
+function validateExportBlocksSnapshot(snapshot) {
+    const flow = snapshot.flow;
+    if (flow) {
+        if (!validHostPort(flow.collector)) return 'Flow → Collector must be host:port with port 1..65535 (e.g. 192.168.1.10:2055).';
+        if (flow.active_timeout && !DURATION_RE.test(flow.active_timeout)) {
+            return 'Flow → Active timeout must be a Go duration string (e.g. "30s", "1m30s").';
+        }
+        if (flow.inactive_timeout && !DURATION_RE.test(flow.inactive_timeout)) {
+            return 'Flow → Inactive timeout must be a Go duration string (e.g. "15s", "1m").';
+        }
+    }
+    const trap = snapshot.traps;
+    if (trap) {
+        if (!validHostPort(trap.collector)) return 'SNMP Traps → Collector must be host:port with port 1..65535 (e.g. 192.168.1.10:162).';
+        if (trap.interval && !DURATION_RE.test(trap.interval)) {
+            return 'SNMP Traps → Interval must be a Go duration string (e.g. "30s").';
+        }
+        if (trap.inform_timeout && !DURATION_RE.test(trap.inform_timeout)) {
+            return 'SNMP Traps → INFORM retry timeout must be a Go duration string (e.g. "5s").';
+        }
+        if ('inform_retries' in trap) {
+            const r = trap.inform_retries;
+            // Reject NaN explicitly: typeof NaN === 'number' so the
+            // typeof guard alone passes a NaN through to the server.
+            if (typeof r !== 'number' || Number.isNaN(r) || r < 0 || !Number.isInteger(r)) {
+                return 'SNMP Traps → INFORM max retries must be a non-negative integer.';
+            }
+        }
+    }
+    const syslog = snapshot.syslog;
+    if (syslog) {
+        if (!validHostPort(syslog.collector)) return 'Syslog → Collector must be host:port with port 1..65535 (e.g. 192.168.1.10:514).';
+        if (syslog.interval && !DURATION_RE.test(syslog.interval)) {
+            return 'Syslog → Interval must be a Go duration string (e.g. "10s", "1m").';
+        }
+    }
+    return null;
+}
+
+// --- Export-status pollers -----------------------------------------------
+//
+// Poll the three status endpoints on a slow cadence and render a compact
+// per-collector aggregate into the overview panel. Per-poller in-flight
+// flags prevent stacking when the server stalls — a fresh tick is
+// skipped while the previous fetch is still outstanding. The pollers
+// fail visibly: errors update the summary line to "fetch failed" rather
+// than just logging to console (silent-fail is the wrong default for
+// observability surface).
+
+const _exportStatusInFlight = { flow: false, trap: false, syslog: false };
+
+async function loadExportStatuses() {
+    await Promise.allSettled([
+        loadFlowStatus(),
+        loadTrapStatus(),
+        loadSyslogStatus()
+    ]);
+}
+
+async function loadFlowStatus() {
+    if (_exportStatusInFlight.flow) return;
+    _exportStatusInFlight.flow = true;
+    try {
+        const response = await apiCall('/flows/status');
+        // /flows/status IS enveloped via sendDataResponse; trap and
+        // syslog status endpoints are NOT (verified against
+        // docs/reference/web-api.md). Don't normalise these without
+        // updating both sides.
+        const data = (response && response.data) ? response.data : (response || {});
+        renderExportStatus('flow', data, {
+            tupleKey: c => c.collector + ' / ' + (c.protocol || '?'),
+            metricLine: c => 'pkts=' + (c.sent_packets || 0) + ' · bytes=' + (c.sent_bytes || 0)
+        });
+    } catch (error) {
+        console.error('Failed to load flow status:', error);
+        renderExportStatusError('flow');
+    } finally {
+        _exportStatusInFlight.flow = false;
+    }
+}
+
+async function loadTrapStatus() {
+    if (_exportStatusInFlight.trap) return;
+    _exportStatusInFlight.trap = true;
+    try {
+        const data = await apiCall('/traps/status'); // status endpoint is not enveloped
+        renderExportStatus('trap', data || {}, {
+            tupleKey: c => c.collector + ' / ' + (c.mode || '?'),
+            metricLine: c => {
+                const parts = ['sent=' + (c.sent || 0)];
+                if (c.mode === 'inform') {
+                    parts.push('acked=' + (c.informs_acked || 0));
+                    parts.push('failed=' + (c.informs_failed || 0));
+                }
+                return parts.join(' · ');
+            }
+        });
+    } catch (error) {
+        console.error('Failed to load trap status:', error);
+        renderExportStatusError('trap');
+    } finally {
+        _exportStatusInFlight.trap = false;
+    }
+}
+
+async function loadSyslogStatus() {
+    if (_exportStatusInFlight.syslog) return;
+    _exportStatusInFlight.syslog = true;
+    try {
+        const data = await apiCall('/syslog/status'); // not enveloped
+        renderExportStatus('syslog', data || {}, {
+            tupleKey: c => c.collector + ' / ' + (c.format || '?'),
+            metricLine: c => 'sent=' + (c.sent || 0) + ' · failures=' + (c.send_failures || 0)
+        });
+    } catch (error) {
+        console.error('Failed to load syslog status:', error);
+        renderExportStatusError('syslog');
+    } finally {
+        _exportStatusInFlight.syslog = false;
+    }
+}
+
+function renderExportStatus(kind, data, opts) {
+    const summary = document.getElementById(kind + 'StatusSummary');
+    const list = document.getElementById(kind + 'StatusList');
+    if (!summary || !list) return;
+
+    const collectors = Array.isArray(data.collectors) ? data.collectors : [];
+    const devices = data.devices_exporting || 0;
+    // Truthy check rather than `=== true` so a server schema that adds
+    // / renames the field doesn't render populated data as "not
+    // running"; if collectors is non-empty, we trust that signal too.
+    const active = !!data.subsystem_active || collectors.length > 0;
+
+    if (!active) {
+        summary.textContent = 'not running';
+        list.innerHTML = '';
+        return;
+    }
+    if (collectors.length === 0) {
+        summary.textContent = 'running · 0 collectors';
+        list.innerHTML = '';
+        return;
+    }
+    summary.textContent = collectors.length + (collectors.length === 1 ? ' collector' : ' collectors') + ' · ' + devices + ' devices';
+    list.innerHTML = collectors.map(c =>
+        '<li><strong>' + escapeHtml(opts.tupleKey(c)) + '</strong> — ' +
+        escapeHtml((c.devices || 0) + ' dev · ' + opts.metricLine(c)) + '</li>'
+    ).join('');
+}
+
+function renderExportStatusError(kind) {
+    const summary = document.getElementById(kind + 'StatusSummary');
+    const list = document.getElementById(kind + 'StatusList');
+    if (summary) summary.textContent = 'fetch failed';
+    if (list) list.innerHTML = '';
+}
+
+// escapeHtml is the single sanitiser for both element text and
+// double-quoted attribute values. Covers `&`, `<`, `>`, `"`, `'` so
+// callers don't need to know which context they're embedding into.
+function escapeHtml(s) {
+    return String(s)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
 }
 
 async function deleteDevice(deviceId) {

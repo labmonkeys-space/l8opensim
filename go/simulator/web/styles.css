@@ -561,3 +561,128 @@ select:focus {
         min-width: 860px;
     }
 }
+
+/* Per-device export config (phase 6) ---------------------------------- */
+
+.export-section {
+    grid-column: span 12;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+    background: rgba(255, 255, 255, 0.5);
+    padding: 16px 20px;
+}
+
+.export-section[open] {
+    background: rgba(255, 255, 255, 0.75);
+}
+
+.export-section summary {
+    cursor: pointer;
+    font-weight: 600;
+    color: var(--surface-ink);
+    font-size: 1rem;
+    outline: none;
+    user-select: none;
+}
+
+.export-section summary:hover {
+    color: var(--accent);
+}
+
+.export-summary {
+    margin: 10px 0 16px;
+    color: var(--muted);
+    font-size: 0.9rem;
+}
+
+.export-grid {
+    display: grid;
+    grid-template-columns: repeat(12, minmax(0, 1fr));
+    gap: 16px;
+    align-items: end;
+}
+
+.export-grid .form-group {
+    grid-column: span 4;
+}
+
+@media (max-width: 900px) {
+    .export-grid .form-group {
+        grid-column: span 12;
+    }
+}
+
+/* Export-status panel (phase 6) --------------------------------------- */
+
+.export-status-grid {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 16px;
+}
+
+.export-status-card {
+    padding: 16px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+    background: rgba(255, 255, 255, 0.5);
+}
+
+.export-status-card h3 {
+    margin-top: 10px;
+    font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+    font-size: 1.1rem;
+    font-weight: 600;
+    color: var(--accent);
+}
+
+.export-status-list {
+    list-style: none;
+    padding: 0;
+    margin: 10px 0 0;
+    font-size: 0.85rem;
+    color: var(--muted);
+}
+
+.export-status-list li {
+    padding: 4px 0;
+    border-top: 1px dashed var(--border);
+    font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+}
+
+.export-status-list li:first-child {
+    border-top: none;
+}
+
+@media (max-width: 900px) {
+    .export-status-grid {
+        grid-template-columns: 1fr;
+    }
+}
+
+/* Device-list per-device export badges (phase 6) ---------------------- */
+
+.device-exports {
+    display: inline-flex;
+    gap: 4px;
+}
+
+.device-export-badge {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 20px;
+    height: 20px;
+    padding: 0 6px;
+    border-radius: 10px;
+    background: var(--accent);
+    color: white;
+    font-size: 0.7rem;
+    font-weight: 600;
+    font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+}
+
+.device-export-badge-muted {
+    background: var(--border);
+    color: var(--muted);
+}
+
