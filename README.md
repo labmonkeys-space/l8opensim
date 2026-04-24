@@ -31,8 +31,15 @@ network namespaces.
   [SNMP reference](https://labmonkeys-space.github.io/l8opensim/reference/snmp/)
   and [Web API](https://labmonkeys-space.github.io/l8opensim/reference/web-api/).
 - **Realistic dynamic metrics:** CPU / memory / temperature on 100-point
-  sine waves, analytic HC interface counters, per-GPU DCGM metrics — see
-  [GPU simulation](https://labmonkeys-space.github.io/l8opensim/reference/gpu/).
+  sine waves; full IF-MIB counter cycling (octets plus per-direction
+  unicast / multicast / broadcast packet counts, errors, discards) with
+  per-device error-scenario tuning (`clean` / `typical` / `degraded` /
+  `failing`); per-GPU DCGM metrics — see
+  [SNMP reference → Dynamic IF-MIB counters](https://labmonkeys-space.github.io/l8opensim/reference/snmp/#dynamic-if-mib-counters)
+  and [GPU simulation](https://labmonkeys-space.github.io/l8opensim/reference/gpu/).
+- **Self-reporting version:** `./simulator -version`, `GET /api/v1/version`,
+  and a hero-kicker `(vX.Y.Z)` in the web UI all report the running build
+  — no source checkout needed to identify a deployed simulator.
 - **Per-device flow export** (NetFlow v5 / v9, IPFIX, sFlow v5) with
   per-device source IPs — see
   [Flow export](https://labmonkeys-space.github.io/l8opensim/ops/flow-export/).

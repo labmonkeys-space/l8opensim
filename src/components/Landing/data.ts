@@ -16,7 +16,7 @@ export const FEATURES: Feature[] = [
   { icon: 'devices', title: '28 device types', body: 'Routers, switches, firewalls, servers, GPU servers (DGX/HGX), storage systems, Linux servers — across 8 categories.' },
   { icon: 'gpu', title: 'GPU simulation', body: 'NVIDIA DGX-A100 / H100 / HGX-H200 with per-GPU DCGM OIDs — utilization, VRAM, temp, power, fan, SM/memory clocks.' },
   { icon: 'isol', title: 'Namespace isolation', body: 'Each device runs in the dedicated opensim network namespace with its own TUN interface and IP.' },
-  { icon: 'metric', title: 'Dynamic metrics', body: '100-point pre-generated sine-wave cycling for CPU, memory, temperature — correlated across related metrics.' },
+  { icon: 'metric', title: 'Dynamic metrics', body: '100-point sine-wave cycling for CPU, memory, temperature; full IF-MIB counter set (octets, ucast / mcast / bcast packets, errors, discards) with per-device error scenarios; per-GPU DCGM OIDs.' },
 ];
 
 export const CATEGORIES: Category[] = [
