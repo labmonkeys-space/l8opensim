@@ -413,22 +413,146 @@ func (ic *IfCounterCycler) LastDynamicOID() string {
 // (e.g. ifHCInMulticastPkts on many device types) would skip the whole
 // column because findNextOID only enumerates OIDs that already exist in
 // oidIndex / sortedOIDs.
+//
+// Implementation is O(log N) in the number of interfaces: parse
+// currentOID once into (table, col, ifIndex), locate the column position
+// in ifCyclerColumns by linear scan over its 18 entries, and use
+// sort.SearchInts on sortedIfIndexes to find the successor ifIndex.
+// The previous O(cols × ifIndexes) implementation built and compared an
+// OID string for every (col, ifIndex) pair on each GETNEXT step, which
+// made walking a 1000-interface device ~18000 string allocations per
+// step.
 func (ic *IfCounterCycler) NextDynamicOID(currentOID string) (string, string) {
 	if ic == nil || len(ic.sortedIfIndexes) == 0 {
 		return "", ""
 	}
 	t := time.Since(ic.startTime).Seconds()
-	for _, tc := range ifCyclerColumns {
-		for _, idx := range ic.sortedIfIndexes {
-			oid := tc.prefix + strconv.Itoa(tc.col) + "." + strconv.Itoa(idx)
-			if compareOIDs(oid, currentOID) > 0 {
-				if val := ic.GetDynamicAt(oid, t); val != "" {
-					return oid, val
-				}
+
+	// Parse currentOID into (isIfX, col, ifIndex). The two outcomes that
+	// matter for routing are:
+	//   - matched=true, haveCol=true:  search inside the cycler range
+	//   - everything else:             jump to first owned OID if currentOID
+	//                                  sorts before it, else end of walk
+	var (
+		suffix  string
+		isIfX   bool
+		matched bool
+	)
+	switch {
+	case strings.HasPrefix(currentOID, ifXTablePrefix):
+		suffix = currentOID[len(ifXTablePrefix):]
+		isIfX = true
+		matched = true
+	case strings.HasPrefix(currentOID, ifTablePrefix):
+		suffix = currentOID[len(ifTablePrefix):]
+		matched = true
+	}
+
+	// emitFromColumn returns the (oid, value) for column at index colIdx in
+	// ifCyclerColumns, at the supplied ifIndex.
+	emitFromColumn := func(colIdx, ifIndex int) (string, string) {
+		c := ifCyclerColumns[colIdx]
+		oid := c.prefix + strconv.Itoa(c.col) + "." + strconv.Itoa(ifIndex)
+		val := ic.GetDynamicAt(oid, t)
+		if val == "" {
+			// Defensive: every (owned col, owned ifIndex) pair must
+			// resolve. Falling through to "" here means a config /
+			// init mismatch — surface as end-of-walk rather than
+			// looping.
+			return "", ""
+		}
+		return oid, val
+	}
+
+	if !matched {
+		// currentOID is outside the cycler's prefix range. If it sorts
+		// before our first OID, start at the first owned row; if it
+		// sorts at or past our last OID, the walk is done.
+		if compareOIDs(currentOID, ic.firstDynOID) < 0 {
+			return emitFromColumn(0, ic.sortedIfIndexes[0])
+		}
+		return "", ""
+	}
+
+	// Parse the suffix into (col, ifIndex). Tolerate forms that lack an
+	// ifIndex ("<col>" or "<col>.") by treating the missing ifIndex as 0
+	// — successor lookup will then return the first owned ifIndex.
+	var (
+		col, ifIndex int
+		haveCol      bool
+	)
+	if dot := strings.IndexByte(suffix, '.'); dot > 0 {
+		if c, err := strconv.Atoi(suffix[:dot]); err == nil {
+			col, haveCol = c, true
+			if idx, err := strconv.Atoi(suffix[dot+1:]); err == nil {
+				ifIndex = idx
 			}
 		}
+	} else if dot < 0 && suffix != "" {
+		if c, err := strconv.Atoi(suffix); err == nil {
+			col, haveCol = c, true
+		}
 	}
-	return "", ""
+
+	if !haveCol {
+		// Suffix was empty or unparseable — currentOID sits at the
+		// table prefix itself (e.g. ".1.3.6.1.2.1.2.2.1."). Land on
+		// the first owned column of the matching table.
+		for i, tc := range ifCyclerColumns {
+			entryIsIfX := tc.prefix == ifXTablePrefix
+			if entryIsIfX == isIfX {
+				return emitFromColumn(i, ic.sortedIfIndexes[0])
+			}
+		}
+		return "", ""
+	}
+
+	// Locate the first ifCyclerColumns entry whose (table, col) is at or
+	// after the parsed (isIfX, col). 18-entry list — linear scan is
+	// faster than sort.Search on a slice this small.
+	colIdx := -1
+	for i, tc := range ifCyclerColumns {
+		entryIsIfX := tc.prefix == ifXTablePrefix
+		switch {
+		case isIfX && !entryIsIfX:
+			// currentOID is in ifXTable; skip ifTable entries.
+			continue
+		case !isIfX && entryIsIfX:
+			// currentOID is in ifTable but col is past every owned
+			// ifTable column — first ifXTable entry is the target.
+			colIdx = i
+		default:
+			// Same table. Take the first owned col >= parsed col.
+			if tc.col >= col {
+				colIdx = i
+			}
+		}
+		if colIdx >= 0 {
+			break
+		}
+	}
+	if colIdx < 0 {
+		// Past every owned column — end of walk.
+		return "", ""
+	}
+
+	chosen := ifCyclerColumns[colIdx]
+	chosenIsIfX := chosen.prefix == ifXTablePrefix
+	if chosenIsIfX == isIfX && chosen.col == col {
+		// Same column as currentOID — find the successor ifIndex.
+		pos := sort.SearchInts(ic.sortedIfIndexes, ifIndex+1)
+		if pos < len(ic.sortedIfIndexes) {
+			return emitFromColumn(colIdx, ic.sortedIfIndexes[pos])
+		}
+		// All ifIndexes in this column already walked — advance to the
+		// next owned column at its first ifIndex.
+		if colIdx+1 >= len(ifCyclerColumns) {
+			return "", ""
+		}
+		return emitFromColumn(colIdx+1, ic.sortedIfIndexes[0])
+	}
+	// Advanced past currentOID's column — emit at first ifIndex.
+	return emitFromColumn(colIdx, ic.sortedIfIndexes[0])
 }
 
 // safePktSize shields every pktSize-divided derivation from a zero or
