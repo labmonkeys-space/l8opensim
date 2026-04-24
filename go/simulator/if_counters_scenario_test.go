@@ -140,8 +140,15 @@ func TestGetDynamic_Counter32ShadowEqualsLow32(t *testing.T) {
 		hcVal := parseU(t, c.ifCounters.GetDynamic(p.hc))
 		shVal := parseU(t, c.ifCounters.GetDynamic(p.shadow))
 		want := hcVal & 0xFFFFFFFF
-		if shVal != want {
-			t.Errorf("%s=%d, want low-32 of %s (%d)=%d", p.shadow, shVal, p.hc, hcVal, want)
+		// GetDynamic is called twice at slightly different instants;
+		// the integral has advanced by a few packets in between. Use
+		// modular subtraction so wrap at 2³² is handled naturally, and
+		// allow a small drift that rules out real bugs (wrong column,
+		// wrong truncation) while tolerating CI scheduling jitter.
+		drift := (shVal - want) & 0xFFFFFFFF
+		const tolerance uint64 = 10_000 // way under 2³²; far above any measurable inter-call gap
+		if drift > tolerance {
+			t.Errorf("%s=%d, want low-32 of %s (%d)=%d (drift %d > %d)", p.shadow, shVal, p.hc, hcVal, want, drift, tolerance)
 		}
 	}
 }
