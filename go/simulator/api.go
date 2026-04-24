@@ -90,6 +90,9 @@ func (s *APIServer) Start() error {
 
 	// Use shared TLS certificate from SimulatorManager (avoids per-device key generation)
 	if s.sharedTLSCert == nil {
+		// Close the listener so the socket (and its namespace veth bind, if
+		// source-per-device is enabled) isn't orphaned on this error path.
+		_ = listener.Close()
 		return fmt.Errorf("no shared TLS certificate available for %s", addr)
 	}
 	tlsConfig := &tls.Config{
