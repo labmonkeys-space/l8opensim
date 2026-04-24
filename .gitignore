@@ -50,4 +50,16 @@ openspec/
 
 # BMad framework scratch output (explorations, review artifacts).
 _bmad-output/
+_bmad/
+
+# Per-CLI harness working directories (hooks, settings, transcripts,
+# locally-configured skills). Each AI CLI keeps session-private state
+# here; never shared, never committed. AGENTS.md / GEMINI.md are NOT
+# listed because those are committed symlinks to CLAUDE.md (single
+# source of truth for project context).
+.agent/
+.agents/
+.claude/
+.codex/
+.gemini/
 
