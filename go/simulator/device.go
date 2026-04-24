@@ -717,18 +717,21 @@ func (d *DeviceSimulator) Stop() error {
 		if err := d.snmpServer.Stop(); err != nil {
 			errors = append(errors, fmt.Sprintf("SNMP: %v", err))
 		}
+		d.snmpServer = nil
 	}
 
 	if d.sshServer != nil {
 		if err := d.sshServer.Stop(); err != nil {
 			errors = append(errors, fmt.Sprintf("SSH: %v", err))
 		}
+		d.sshServer = nil
 	}
 
 	if d.apiServer != nil {
 		if err := d.apiServer.Stop(); err != nil {
 			errors = append(errors, fmt.Sprintf("API: %v", err))
 		}
+		d.apiServer = nil
 	}
 
 	if d.flowExporter != nil {
