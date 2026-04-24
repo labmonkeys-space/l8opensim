@@ -57,7 +57,16 @@ func createDevicesHandler(w http.ResponseWriter, r *http.Request) {
 	// failures return 400 with the underlying error so the operator
 	// can see what went wrong. After phases 4 and 5 each block now
 	// drives a real per-device exporter via the always-on subsystem.
-	seed := &ExportSeed{Flow: req.Flow, Traps: req.Traps, Syslog: req.Syslog}
+	// Validate optional if_error_scenario before constructing the seed
+	// so we reject unknown values atomically and don't partially mutate
+	// manager state.
+	ifErrScenario, err := ParseIfErrorScenario(req.IfErrorScenario)
+	if err != nil {
+		sendErrorResponse(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	seed := &ExportSeed{Flow: req.Flow, Traps: req.Traps, Syslog: req.Syslog, IfErrorScenario: ifErrScenario}
 	if seed.Flow != nil {
 		seed.Flow.ApplyDefaults()
 		if err := seed.Flow.Validate(); err != nil {
@@ -91,7 +100,10 @@ func createDevicesHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	// Collapse the seed to nil when no block was supplied so CreateDevices
 	// receives the exact "no export" signal rather than an empty shell.
-	if seed.Flow == nil && seed.Traps == nil && seed.Syslog == nil {
+	// IfErrorScenario set to anything other than the clean default is
+	// also a signal to keep the seed — the scenario field needs to
+	// reach applyExportSeed for the per-device cycler to pick it up.
+	if seed.Flow == nil && seed.Traps == nil && seed.Syslog == nil && seed.IfErrorScenario == IfErrorClean {
 		seed = nil
 	}
 

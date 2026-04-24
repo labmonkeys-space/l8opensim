@@ -42,9 +42,12 @@ func (s *SNMPServer) findResponse(oid string) string {
 		if val := s.getMetricValue(oid); val != "" {
 			return val
 		}
-		// Handle HC counter OIDs (ifHCInOctets, ifHCOutOctets) - time-based monotonic counters
+		// Handle all dynamic IF-MIB counter OIDs (ifTable + ifXTable):
+		// octets, HC packets, Counter32 shadows, error / discard. The
+		// cycler returns "" for OIDs it doesn't own — fall through to
+		// the static oidIndex lookup in that case.
 		if s.device.metricsCycler.ifCounters != nil {
-			if val := s.device.metricsCycler.ifCounters.GetHCOctets(oid); val != "" {
+			if val := s.device.metricsCycler.ifCounters.GetDynamic(oid); val != "" {
 				return val
 			}
 		}
@@ -549,12 +552,14 @@ func (s *SNMPServer) overrideIfHC(oid, staticResp string) string {
 	if s.device.metricsCycler == nil || s.device.metricsCycler.ifCounters == nil {
 		return staticResp
 	}
-	// Fast pre-check: HC OIDs live under .1.3.6.1.2.1.31; skip the full
-	// prefix match for the vast majority of OIDs that are not in ifXTable.
-	if !strings.HasPrefix(oid, ".1.3.6.1.2.1.31.") {
+	// Fast pre-check: dynamic IF-MIB OIDs live under ifTable
+	// (.1.3.6.1.2.1.2.2.1.) or ifXTable (.1.3.6.1.2.1.31.1.1.1.). Skip
+	// the cycler dispatch for OIDs outside both trees (the vast
+	// majority of the MIB).
+	if !strings.HasPrefix(oid, ".1.3.6.1.2.1.2.2.1.") && !strings.HasPrefix(oid, ".1.3.6.1.2.1.31.1.1.1.") {
 		return staticResp
 	}
-	if dynVal := s.device.metricsCycler.ifCounters.GetHCOctets(oid); dynVal != "" {
+	if dynVal := s.device.metricsCycler.ifCounters.GetDynamic(oid); dynVal != "" {
 		return dynVal
 	}
 	return staticResp

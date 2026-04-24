@@ -78,9 +78,10 @@ of what the resource files contain:
 
 - **CPU, memory, temperature** — cycle through a 100-point sine-wave pattern
   per device. See [SNMP reference → Dynamic metrics](snmp.md#dynamic-cpu--memory--temperature-metrics).
-- **HC interface counters** (`ifHCInOctets` / `ifHCOutOctets`) — computed
-  analytically as monotonically increasing `Counter64` values, phase-offset
-  per interface. See [SNMP reference → HC counters](snmp.md#dynamic-hc-interface-traffic-counters).
+- **Dynamic IF-MIB counters** — every per-interface counter in `ifTable`
+  and `ifXTable` (octets, HC packets, Counter32 shadows, errors, discards)
+  is computed analytically from the octet sine wave, phase-offset per
+  interface. See [SNMP reference → Dynamic IF-MIB counters](snmp.md#dynamic-if-mib-counters).
 - **Interface state** — `ifAdminStatus` / `ifOperStatus` depend on
   [`-if-scenario`](cli-flags.md#interface-state-scenarios).
 - **GPU metrics** — per-GPU utilization, VRAM, temp, power, fan, clocks.

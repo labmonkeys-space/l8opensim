@@ -264,13 +264,15 @@ func (sm *SimulatorManager) CreateDevicesWithOptions(startIP string, count int, 
 			profile := GetDeviceProfile(deviceResourceFile)
 			device.metricsCycler = NewMetricsCycler(int64(i), profile)
 			device.metricsCycler.InitGPUMetrics(int64(i), profile.GPU)
-			device.metricsCycler.InitIfCounters(deviceResources, int64(i)^0x4843_0000)
 
-			// Apply the batch-level export seed to this device (phase 3).
-			// A nil seed or nil block means "no export of this type for this
-			// device"; a non-nil block is copied so subsequent mutations
-			// don't leak across devices.
+			// Apply the batch-level export seed BEFORE InitIfCounters so
+			// device.IfErrorScenario is populated in time for the cycler
+			// to draw scenario-banded ppms.
 			applyExportSeed(device, seed)
+
+			scenario, _ := ParseIfErrorScenario(device.IfErrorScenario)
+			device.IfErrorScenario = string(scenario) // canonicalise for GET /api/v1/devices
+			device.metricsCycler.InitIfCountersWithScenario(deviceResources, int64(i)^0x4843_0000, scenario)
 
 			// Initialize flow exporter if this device has flow config.
 			if device.flowConfig != nil {
@@ -547,12 +549,14 @@ func (sm *SimulatorManager) createSingleDevice(deviceIndex int, deviceIP net.IP,
 	profile := GetDeviceProfile(resourceFile)
 	device.metricsCycler = NewMetricsCycler(int64(deviceIndex), profile)
 	device.metricsCycler.InitGPUMetrics(int64(deviceIndex), profile.GPU)
-	device.metricsCycler.InitIfCounters(resources, int64(deviceIndex)^0x4843_0000)
 
-	// Apply the batch-level export seed (phase 3). Parallel workers see
-	// the same seed pointer; each device gets its own copy via
-	// applyExportSeed so downstream mutations don't race.
+	// Apply the batch-level export seed BEFORE InitIfCounters so the
+	// scenario is known when the cycler draws its ppm bands.
 	applyExportSeed(device, seed)
+
+	scenario, _ := ParseIfErrorScenario(device.IfErrorScenario)
+	device.IfErrorScenario = string(scenario)
+	device.metricsCycler.InitIfCountersWithScenario(resources, int64(deviceIndex)^0x4843_0000, scenario)
 
 	// Initialize flow exporter if this device has flow config.
 	if device.flowConfig != nil {

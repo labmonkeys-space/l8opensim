@@ -117,9 +117,10 @@ are merged at load time. See [Resource files](resource-files.md).
 - **Buffer pool** — reduces GC pressure on SNMP request handling.
 - **Shared SSH / TLS keys** across all devices — avoids per-device key
   generation overhead.
-- **Analytic HC counters** — `ifHCInOctets` / `ifHCOutOctets` computed on
-  demand instead of maintained by a polling loop; see
-  [SNMP reference](snmp.md#dynamic-hc-interface-traffic-counters).
+- **Analytic IF-MIB counters** — every per-interface counter in `ifTable`
+  and `ifXTable` computed on demand from a single per-direction octet
+  sine wave, instead of maintained by a polling loop; see
+  [SNMP reference](snmp.md#dynamic-if-mib-counters).
 - **Network namespace isolation** — the `opensim` namespace prevents
   systemd-networkd interference on many Linux distros.
 - **Per-device flow egress** — a `FORWARD -i veth-sim-host -j ACCEPT`

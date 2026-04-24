@@ -102,6 +102,7 @@ func main() {
 		showVersion     = flag.Bool("version", false, "Print the simulator version string and exit")
 		ifScenario      = flag.Int("if-scenario", 2, "Interface state scenario: 1=all-shutdown, 2=all-normal (default), 3=all-failure, 4=pct-failure")
 		ifFailurePct    = flag.Int("if-failure-pct", 10, "Percentage of interfaces with oper-down (used with -if-scenario 4, 0–100)")
+		ifErrorScenario = flag.String("if-error-scenario", "clean", "Per-device IF-MIB error/discard counter scenario for the auto-start batch: clean | typical | degraded | failing. REST-created devices default to clean regardless; they opt in via if_error_scenario in the POST body.")
 
 		// Flow export flags
 		flowCollector            = flag.String("flow-collector", "", "NetFlow/IPFIX collector address (host:port, e.g. 192.168.1.100:2055); disables flow export when empty")
@@ -306,6 +307,14 @@ func main() {
 		}
 	}
 
+	// Validate -if-error-scenario for the auto-start batch. Invalid
+	// scenarios fail fast so operators don't accidentally run with an
+	// unintended default.
+	autoStartScenario, err := ParseIfErrorScenario(*ifErrorScenario)
+	if err != nil {
+		log.Fatalf("if_error_scenario: %v", err)
+	}
+
 	// Validate auto-creation parameters
 	if *autoStartIP != "" && *autoCount <= 0 {
 		log.Println("WARNING: -auto-start-ip provided but -auto-count is 0 or negative. No devices will be auto-created.")
@@ -359,7 +368,7 @@ func main() {
 					*snmpv3EngineID, *snmpv3AuthProto, *snmpv3PrivProto)
 			}
 
-			err := manager.CreateDevices(*autoStartIP, *autoCount, *autoNetmask, "", v3Config, false, "", *snmpPort, &ExportSeed{Flow: flowSeed, Traps: trapSeed, Syslog: syslogSeed})
+			err := manager.CreateDevices(*autoStartIP, *autoCount, *autoNetmask, "", v3Config, false, "", *snmpPort, &ExportSeed{Flow: flowSeed, Traps: trapSeed, Syslog: syslogSeed, IfErrorScenario: autoStartScenario})
 			if err != nil {
 				log.Printf("Failed to auto-create devices: %v", err)
 			} else {

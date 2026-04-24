@@ -231,6 +231,12 @@ func (sm *SimulatorManager) ListDevices() []DeviceInfo {
 		info.Flow = device.flowConfig
 		info.Traps = device.trapConfig
 		info.Syslog = device.syslogConfig
+		// Emit scenario on GET only when non-default, so clean-mode
+		// devices (the common case) don't clutter the response. Matches
+		// the omitempty pattern used by the export blocks.
+		if device.IfErrorScenario != "" && device.IfErrorScenario != string(IfErrorClean) {
+			info.IfErrorScenario = device.IfErrorScenario
+		}
 		devices = append(devices, info)
 	}
 

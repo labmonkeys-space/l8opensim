@@ -39,24 +39,103 @@ SNMP-heavy workloads.
 OIDs in resource files may be written with or without a leading dot — the
 loader normalises them to the net-snmp convention (`.1.3.6.1…`) at startup.
 
-## Dynamic HC interface traffic counters
+## Dynamic IF-MIB counters
 
-`ifHCInOctets` (`.1.3.6.1.2.1.31.1.1.1.6`) and `ifHCOutOctets`
-(`.1.3.6.1.2.1.31.1.1.1.10`) are generated dynamically:
+Every per-interface counter listed below is generated dynamically by
+`go/simulator/if_counters.go:IfCounterCycler`:
 
-- Byte-rate oscillates between 60 % and 100 % of the interface's reported
-  `ifHighSpeed` / `ifSpeed` on a 1-hour sine period.
-- Each interface gets a random phase offset so interfaces within a device
-  do not peak simultaneously.
-- Counters are pre-seeded with ~24 h of traffic so they look realistic on
-  the very first poll.
-- Values are computed analytically on demand — no polling loop or
-  per-interface goroutine — as monotonically increasing `Counter64`.
-- Visible on both `GET` and `GETNEXT` / `GETBULK`.
+**ifXTable Counter64 HC columns** (`.1.3.6.1.2.1.31.1.1.1.X`):
+
+| Column | OID column | Derivation |
+|--------|-----------|------------|
+| `ifHCInOctets` | `.6` | master dial (sine wave, 60 – 100 % of `ifHighSpeed` / `ifSpeed`, 1 h period) |
+| `ifHCInUcastPkts` | `.7` | `baseInUcast + (inDeltaOctets / pktSizeIn) × ucastRatioIn` |
+| `ifHCInMulticastPkts` | `.8` | same shape, `mcastRatioIn` |
+| `ifHCInBroadcastPkts` | `.9` | same shape, `bcastRatioIn` |
+| `ifHCOutOctets` | `.10` | outbound master dial |
+| `ifHCOutUcastPkts` | `.11` | `baseOutUcast + (outDeltaOctets / pktSizeOut) × ucastRatioOut` |
+| `ifHCOutMulticastPkts` | `.12` | same shape, `mcastRatioOut` |
+| `ifHCOutBroadcastPkts` | `.13` | same shape, `bcastRatioOut` |
+
+**ifXTable Counter32 shadow columns** — always equal to `uint32(HC_value & 0xFFFFFFFF)`:
+
+| Column | OID column | Shadow of |
+|--------|-----------|-----------|
+| `ifInMulticastPkts` | `.2` | `ifHCInMulticastPkts` (`.8`) |
+| `ifInBroadcastPkts` | `.3` | `ifHCInBroadcastPkts` (`.9`) |
+| `ifOutMulticastPkts` | `.4` | `ifHCOutMulticastPkts` (`.12`) |
+| `ifOutBroadcastPkts` | `.5` | `ifHCOutBroadcastPkts` (`.13`) |
+
+**ifTable Counter32 columns** (`.1.3.6.1.2.1.2.2.1.X`):
+
+| Column | OID column | Derivation |
+|--------|-----------|------------|
+| `ifInUcastPkts` | `.11` | shadow of `ifHCInUcastPkts` (`.7`) |
+| `ifInDiscards` | `.13` | `baseInDisc + inDeltaPkts × discPpmIn / 1e6` |
+| `ifInErrors` | `.14` | `baseInErr + inDeltaPkts × errPpmIn / 1e6` |
+| `ifOutUcastPkts` | `.17` | shadow of `ifHCOutUcastPkts` (`.11`) |
+| `ifOutDiscards` | `.19` | `baseOutDisc + outDeltaPkts × discPpmOut / 1e6` |
+| `ifOutErrors` | `.20` | `baseOutErr + outDeltaPkts × errPpmOut / 1e6` |
+
+Properties common to every dynamic counter:
+
+- **Monotonic.** The underlying octet integral never decreases (rate
+  floor is 60 % of `ifSpeed`), and every derivation is
+  base-plus-growth, so Counter64 columns are strictly increasing.
+  Counter32 shadow columns wrap naturally at 2³²; `ifCounterDiscontinuityTime`
+  stays at 0 — wrap is inherent, not a discontinuity.
+- **Pre-seeded.** Each counter starts at a base derived from ~24 h
+  of traffic, ratios, and the active error scenario (see below) so a
+  fresh device doesn't look unrealistically pristine.
+- **Per-interface variance.** Packet-size divisor jitters ±20 % around
+  500 B; mix ratios jitter ±3 % around 85 / 10 / 5 (in) and 90 / 8 / 2
+  (out); error / discard ppm values are drawn once from the scenario
+  band — all deterministic from the device seed.
+- **Sine-driven correlation.** All derived counters share the master
+  octet sine wave, so when a link is "quiet" (60 % of `ifSpeed`) the
+  full counter family slows together — matching how real hardware
+  behaves under reduced traffic.
+- **SNMP ↔ sFlow agreement.** Both read paths resolve the same
+  `IfCounterCycler` dispatcher, so concurrent SNMP GETs and sFlow
+  `counter_sample` bodies carry matching values at the same instant.
+- **Zero-goroutine cost.** Every counter is computed on-demand from
+  the current time against analytic formulas — no per-interface
+  goroutine, no polling loop.
+- Values are visible on both `GET` and `GETNEXT` / `GETBULK`.
+
+**Counter32 wrap guidance.** At 10 Gbps / 80 % util / 500 B avg
+packet size, `ifInUcastPkts` wraps every ~26 minutes. At 100 Gbps
+the same column wraps every ~2.6 minutes. Collectors handle the wrap
+via the existing delta-modulo convention; but when your link is
+≥1 Gbps you should prefer the Counter64 HC columns
+(`ifHCInUcastPkts` etc.) to avoid missing a wrap on a slow poll cycle.
+
+### Per-device error scenario
+
+The `ifInErrors` / `ifOutErrors` / `ifInDiscards` / `ifOutDiscards`
+rates are driven by a per-device scenario carried in `DeviceSimulator.IfErrorScenario`:
+
+| Scenario | `errPpm` | `discPpm` | Typical dashboard appearance |
+|----------|----------|-----------|------------------------------|
+| `clean` *(default)* | `0` | `0` | Flat line at the baseline |
+| `typical` | `10 – 100` | `20 – 200` | Faint steady slope (good production gear) |
+| `degraded` | `1 000 – 10 000` | `2 000 – 20 000` | Visible error-rate alert candidates (0.1 – 1 %) |
+| `failing` | `10 000 – 100 000` | `20 000 – 200 000` | Link-flap / bad-cable alarms (1 – 10 %) |
+
+Set for the auto-start batch via the CLI flag `-if-error-scenario <name>`,
+or per-device via `if_error_scenario` in the `POST /api/v1/devices` body.
+See [CLI flags reference](cli-flags.md#interface-state-scenarios) and
+[Web API reference](web-api.md#create-devices).
+
+### Example walks
 
 ```bash
-# Walk ifXTable to see all HC counters (updates every poll)
+# Walk ifXTable — covers all HC counters, Counter32 shadows, and ifHighSpeed
 snmpwalk -v2c -c public 192.168.100.1 1.3.6.1.2.1.31.1.1
+
+# Walk ifTable — covers ifInUcastPkts, ifInDiscards, ifInErrors,
+# ifOutUcastPkts, ifOutDiscards, ifOutErrors
+snmpwalk -v2c -c public 192.168.100.1 1.3.6.1.2.1.2.2.1
 
 # Fetch HC in/out for interface 1 directly
 snmpget -v2c -c public 192.168.100.1 \
@@ -66,6 +145,10 @@ snmpget -v2c -c public 192.168.100.1 \
 # Continuous rate monitoring (poll every 10 s)
 watch -n 10 "snmpget -v2c -c public 192.168.100.1 \
   1.3.6.1.2.1.31.1.1.1.6.1 1.3.6.1.2.1.31.1.1.1.10.1"
+
+# Watch error / discard growth on a device deployed with -if-error-scenario failing
+watch -n 5 "snmpget -v2c -c public 192.168.100.1 \
+  1.3.6.1.2.1.2.2.1.14.1 1.3.6.1.2.1.2.2.1.13.1"
 ```
 
 ## Dynamic CPU / memory / temperature metrics
