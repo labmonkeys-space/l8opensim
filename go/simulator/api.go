@@ -24,7 +24,29 @@ import (
 	"net"
 	"net/http"
 	"strings"
+	"time"
 )
+
+type apiHTTPServer interface {
+	Serve(net.Listener) error
+	Close() error
+}
+
+var apiListenTCP = func(device *DeviceSimulator, addr string) (net.Listener, error) {
+	if device.netNamespace != nil {
+		return device.netNamespace.ListenTCPInNamespace("tcp", addr)
+	}
+	lc := net.ListenConfig{Control: setSocketBufferSize}
+	return lc.Listen(context.Background(), "tcp", addr)
+}
+
+var apiNewHTTPServer = func(handler http.Handler) apiHTTPServer {
+	return &http.Server{
+		Handler:           handler,
+		IdleTimeout:       30 * time.Second,
+		ReadHeaderTimeout: 5 * time.Second,
+	}
+}
 
 // APIServer implementation for storage device REST APIs
 func (s *APIServer) Start() error {
@@ -61,14 +83,7 @@ func (s *APIServer) Start() error {
 	}
 
 	// Create listener
-	var listener net.Listener
-	var err error
-	if s.device.netNamespace != nil {
-		listener, err = s.device.netNamespace.ListenTCPInNamespace("tcp", addr)
-	} else {
-		lc := net.ListenConfig{Control: setSocketBufferSize}
-		listener, err = lc.Listen(context.Background(), "tcp", addr)
-	}
+	listener, err := apiListenTCP(s.device, addr)
 	if err != nil {
 		return fmt.Errorf("failed to start API server on %s: %v", addr, err)
 	}
@@ -82,15 +97,13 @@ func (s *APIServer) Start() error {
 	}
 	listener = tls.NewListener(listener, tlsConfig)
 
+	server := apiNewHTTPServer(mux)
 	s.listener = listener
+	s.server = server
 	s.running = true
 
 	// Start HTTPS server in background
 	go func() {
-		server := &http.Server{
-			Handler: mux,
-		}
-
 		if err := server.Serve(listener); err != nil && err != http.ErrServerClosed {
 			log.Printf("API server error on %s: %v", addr, err)
 		}
@@ -105,14 +118,22 @@ func (s *APIServer) Stop() error {
 		return nil
 	}
 
-	if s.listener != nil {
-		if err := s.listener.Close(); err != nil {
-			return err
-		}
+	// Reset state unconditionally so a Close() error does not leave the
+	// APIServer wedged in running=true with stale pointers. A retried
+	// Stop() would otherwise double-close the server; a subsequent Start()
+	// would short-circuit on running=true and silently "succeed" without
+	// restarting. Close/listener errors are still surfaced to the caller.
+	var closeErr error
+	if s.server != nil {
+		closeErr = s.server.Close()
+	} else if s.listener != nil {
+		closeErr = s.listener.Close()
 	}
 
+	s.server = nil
+	s.listener = nil
 	s.running = false
-	return nil
+	return closeErr
 }
 
 // handleAPIRequestMultiMethod processes incoming API requests that may have multiple method handlers
