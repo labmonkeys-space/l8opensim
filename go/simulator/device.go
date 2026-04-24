@@ -699,7 +699,15 @@ func (d *DeviceSimulator) Stop() error {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 
-	if !d.running {
+	wasRunning := d.running
+	if !wasRunning &&
+		d.snmpServer == nil &&
+		d.sshServer == nil &&
+		d.apiServer == nil &&
+		d.flowExporter == nil &&
+		d.trapExporter == nil &&
+		d.syslogExporter == nil &&
+		d.tunIface == nil {
 		return nil
 	}
 
@@ -709,37 +717,43 @@ func (d *DeviceSimulator) Stop() error {
 		if err := d.snmpServer.Stop(); err != nil {
 			errors = append(errors, fmt.Sprintf("SNMP: %v", err))
 		}
+		d.snmpServer = nil
 	}
 
 	if d.sshServer != nil {
 		if err := d.sshServer.Stop(); err != nil {
 			errors = append(errors, fmt.Sprintf("SSH: %v", err))
 		}
+		d.sshServer = nil
 	}
 
 	if d.apiServer != nil {
 		if err := d.apiServer.Stop(); err != nil {
 			errors = append(errors, fmt.Sprintf("API: %v", err))
 		}
+		d.apiServer = nil
 	}
 
 	if d.flowExporter != nil {
 		// Persist cumulative counters into the simulator-wide
 		// per-collector aggregate (review decision D1.b) BEFORE closing
 		// the exporter so /flows/status reports monotonic totals. The
-		// outer `if !d.running` guard above makes this single-shot.
-		if manager != nil {
+		// outer `if !d.running` guard above makes this single-shot for
+		// running devices; partially-started devices skip persistence.
+		if wasRunning && manager != nil {
 			manager.persistFlowCounters(d.flowExporter)
 		}
 		d.flowExporter.Close() //nolint:errcheck
+		d.flowExporter = nil
 	}
 
 	if d.trapExporter != nil {
 		// Persist cumulative counters into the simulator-wide
 		// per-(collector, mode) aggregate (review decision D1.b) BEFORE
 		// closing the exporter so /traps/status reports monotonic totals.
-		// The `if !d.running` guard above makes this single-shot.
-		if manager != nil {
+		// The running-state gate above makes this single-shot for started
+		// devices; partially-started devices skip persistence.
+		if wasRunning && manager != nil {
 			manager.persistTrapCounters(d.trapExporter)
 		}
 		_ = d.trapExporter.Close()
@@ -756,8 +770,9 @@ func (d *DeviceSimulator) Stop() error {
 		// Persist counters into the simulator-wide per-(collector,
 		// format) aggregate so /syslog/status reports monotonic totals
 		// across device churn. sync.Once-gated so it's single-shot even
-		// if StopSyslogExport also persists the same exporter.
-		if manager != nil {
+		// if StopSyslogExport also persists the same exporter. Partially
+		// started devices skip persistence because they never exported.
+		if wasRunning && manager != nil {
 			manager.persistSyslogCounters(d.syslogExporter)
 		}
 		_ = d.syslogExporter.Close()
@@ -772,6 +787,7 @@ func (d *DeviceSimulator) Stop() error {
 	// Bulk deletion handles the actual interface removal
 	if d.tunIface != nil && !d.tunIface.PreAllocated {
 		d.tunIface.destroy() // Only closes the file descriptor
+		d.tunIface = nil
 	}
 	// Pre-allocated interfaces remain available for reuse
 
