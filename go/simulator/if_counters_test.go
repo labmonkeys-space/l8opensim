@@ -342,3 +342,81 @@ func TestIfCounterCycler_BaseIsPositive(t *testing.T) {
 		t.Errorf("initial counter value %d is unexpectedly small (< %d); base seeding may have failed", v, minExpected)
 	}
 }
+
+// TestIfCounterCycler_NextDynamicOID_WalksColumnWithoutStatic exercises the
+// bug that `snmpwalk .1.3.6.1.2.1.31.1.1.1.8` reported "OID not supported"
+// on devices whose JSON omits ifHCInMulticastPkts instances. The cycler
+// must enumerate the column analytically so the walk machinery has
+// instance rows to return.
+func TestIfCounterCycler_NextDynamicOID_WalksColumnWithoutStatic(t *testing.T) {
+	res := buildSparseTestResources(t, []int{1, 3, 5}, 1_000_000_000)
+	c := &MetricsCycler{}
+	c.InitIfCounters(res, 42)
+	ic := c.ifCounters
+	if ic == nil {
+		t.Fatal("InitIfCounters did not create ifCounters")
+	}
+
+	// Starting from the bare ifHCInMulticastPkts column, the walk must
+	// land on the smallest owned ifIndex (1), then step through 3 and 5,
+	// then cross into column 9 (ifHCInBroadcastPkts) at ifIndex 1.
+	want := []string{
+		".1.3.6.1.2.1.31.1.1.1.8.1",
+		".1.3.6.1.2.1.31.1.1.1.8.3",
+		".1.3.6.1.2.1.31.1.1.1.8.5",
+		".1.3.6.1.2.1.31.1.1.1.9.1",
+	}
+	cur := ".1.3.6.1.2.1.31.1.1.1.8"
+	for i, exp := range want {
+		next, val := ic.NextDynamicOID(cur)
+		if next != exp {
+			t.Fatalf("step %d: got next=%q, want %q", i, next, exp)
+		}
+		if val == "" {
+			t.Fatalf("step %d: empty value for %s", i, next)
+		}
+		if _, err := strconv.ParseUint(val, 10, 64); err != nil {
+			t.Fatalf("step %d: non-numeric value %q for %s: %v", i, val, next, err)
+		}
+		cur = next
+	}
+}
+
+// TestIfCounterCycler_NextDynamicOID_OrderAndBounds pins the enumeration
+// order: ifTable columns come before ifXTable, within each table columns
+// are ascending, within each column ifIndexes are ascending, and walking
+// past the last owned OID returns ("", "").
+func TestIfCounterCycler_NextDynamicOID_OrderAndBounds(t *testing.T) {
+	res := buildTestResources(t, []uint64{1_000_000_000, 1_000_000_000})
+	c := &MetricsCycler{}
+	c.InitIfCounters(res, 7)
+	ic := c.ifCounters
+	if ic == nil {
+		t.Fatal("InitIfCounters did not create ifCounters")
+	}
+
+	// Before the first dynamic row, walk must land on it.
+	if got, _ := ic.NextDynamicOID(".1.3.6.1.2.1.2"); got != ic.FirstDynamicOID() {
+		t.Errorf("pre-first: got %q, want FirstDynamicOID=%q", got, ic.FirstDynamicOID())
+	}
+
+	// First dynamic row must be ifTable column 11 ifIndex 1 (ifInUcastPkts.1).
+	if got := ic.FirstDynamicOID(); got != ".1.3.6.1.2.1.2.2.1.11.1" {
+		t.Errorf("FirstDynamicOID: got %q, want .1.3.6.1.2.1.2.2.1.11.1", got)
+	}
+	// Last dynamic row must be ifXTable column 13 at the largest ifIndex (2).
+	if got := ic.LastDynamicOID(); got != ".1.3.6.1.2.1.31.1.1.1.13.2" {
+		t.Errorf("LastDynamicOID: got %q, want .1.3.6.1.2.1.31.1.1.1.13.2", got)
+	}
+
+	// ifTable → ifXTable boundary: stepping past the last ifTable column
+	// (.20.2) must cross into the first ifXTable column (.2.1).
+	if got, _ := ic.NextDynamicOID(".1.3.6.1.2.1.2.2.1.20.2"); got != ".1.3.6.1.2.1.31.1.1.1.2.1" {
+		t.Errorf("ifTable→ifXTable boundary: got %q, want .1.3.6.1.2.1.31.1.1.1.2.1", got)
+	}
+
+	// Past the last dynamic row → end of walk.
+	if got, val := ic.NextDynamicOID(ic.LastDynamicOID()); got != "" || val != "" {
+		t.Errorf("past-last: got (%q, %q), want empty", got, val)
+	}
+}

@@ -122,24 +122,28 @@ func (s *SNMPServer) findNextOID(currentOID string) (string, string) {
 		}
 	}
 
-	// Fast path: if this device has no dynamic metric OIDs and we have a
-	// pre-computed next OID, return it immediately (O(1)).
+	// Resolve dynamic sources up front so both fast-path and slow-path
+	// candidate assembly can see them.
 	sortedMetricOIDs := GetSortedMetricOIDs(s.device.resourceFile)
-	if len(sortedMetricOIDs) == 0 && precomputedNextOID != "" {
-		return precomputedNextOID, s.overrideIfHC(precomputedNextOID, precomputedNextResp)
+	var ifCycler *IfCounterCycler
+	if s.device.metricsCycler != nil {
+		ifCycler = s.device.metricsCycler.ifCounters
 	}
+	ifCyclerHasRows := ifCycler != nil && len(ifCycler.sortedIfIndexes) > 0
 
-	// If we have a pre-computed next OID and it's lexicographically before
-	// the first dynamic metric OID, no metric OID can fall between current
-	// and next — safe to return immediately.
-	if precomputedNextOID != "" && len(sortedMetricOIDs) > 0 {
-		firstMetricOID := sortedMetricOIDs[0]
-		if compareOIDs(precomputedNextOID, firstMetricOID) <= 0 {
-			return precomputedNextOID, s.overrideIfHC(precomputedNextOID, precomputedNextResp)
-		}
-		// Also safe if currentOID is already past all metric OIDs
-		lastMetricOID := sortedMetricOIDs[len(sortedMetricOIDs)-1]
-		if compareOIDs(currentOID, lastMetricOID) >= 0 {
+	// Fast path: precomputedNextOID is safe to return immediately iff no
+	// dynamic source can emit a candidate in (currentOID, precomputedNextOID].
+	// For each source that condition is: source is empty, OR its first
+	// owned OID is at/after precomputedNextOID, OR currentOID is at/after
+	// its last owned OID.
+	if precomputedNextOID != "" {
+		metricsClear := len(sortedMetricOIDs) == 0 ||
+			compareOIDs(precomputedNextOID, sortedMetricOIDs[0]) <= 0 ||
+			compareOIDs(currentOID, sortedMetricOIDs[len(sortedMetricOIDs)-1]) >= 0
+		ifCyclerClear := !ifCyclerHasRows ||
+			compareOIDs(precomputedNextOID, ifCycler.firstDynOID) <= 0 ||
+			compareOIDs(currentOID, ifCycler.lastDynOID) >= 0
+		if metricsClear && ifCyclerClear {
 			return precomputedNextOID, s.overrideIfHC(precomputedNextOID, precomputedNextResp)
 		}
 	}
@@ -239,6 +243,20 @@ func (s *SNMPServer) findNextOID(currentOID string) (string, string) {
 					break // Only need the first (smallest) metric OID greater than current
 				}
 			}
+		}
+	}
+
+	// Add the next dynamic ifTable/ifXTable counter row as a candidate.
+	// Columns served analytically by IfCounterCycler (e.g.
+	// ifHCInMulticastPkts) frequently have no static-JSON instance rows,
+	// so without this a walk would skip the whole column even though GET
+	// on a specific instance works.
+	if ifCyclerHasRows {
+		if nextOID, val := ifCycler.NextDynamicOID(currentOID); nextOID != "" {
+			candidates = append(candidates, struct{ oid, resp string }{
+				oid:  nextOID,
+				resp: val,
+			})
 		}
 	}
 
@@ -545,9 +563,13 @@ func (s *SNMPServer) parseGetBulkParams(data []byte) (int, int) {
 	return nonRepeaters, maxRepetitions
 }
 
-// overrideIfHC replaces staticResp with the dynamic HC counter value when oid
-// is an ifHCInOctets or ifHCOutOctets OID. Returns staticResp unchanged for
-// all other OIDs. Used by findNextOID to return live counter values during walks.
+// overrideIfHC replaces staticResp with the live cycler value for any ifTable
+// or ifXTable OID the IfCounterCycler owns (octets, HC packets, Counter32
+// shadows, errors, discards — see if_counters.go for the full column list).
+// Returns staticResp unchanged for OIDs outside those trees, or for in-tree
+// OIDs the cycler does not own (e.g. ifDescr). Used by findNextOID to return
+// live counter values during walks where the candidate OID originated from
+// the static oidIndex.
 func (s *SNMPServer) overrideIfHC(oid, staticResp string) string {
 	if s.device.metricsCycler == nil || s.device.metricsCycler.ifCounters == nil {
 		return staticResp
