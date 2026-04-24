@@ -46,8 +46,8 @@ func (s *SNMPServer) findResponse(oid string) string {
 		// octets, HC packets, Counter32 shadows, error / discard. The
 		// cycler returns "" for OIDs it doesn't own — fall through to
 		// the static oidIndex lookup in that case.
-		if s.device.metricsCycler.ifCounters != nil {
-			if val := s.device.metricsCycler.ifCounters.GetDynamic(oid); val != "" {
+		if ic := s.device.metricsCycler.ifCounters.Load(); ic != nil {
+			if val := ic.GetDynamic(oid); val != "" {
 				return val
 			}
 		}
@@ -127,7 +127,7 @@ func (s *SNMPServer) findNextOID(currentOID string) (string, string) {
 	sortedMetricOIDs := GetSortedMetricOIDs(s.device.resourceFile)
 	var ifCycler *IfCounterCycler
 	if s.device.metricsCycler != nil {
-		ifCycler = s.device.metricsCycler.ifCounters
+		ifCycler = s.device.metricsCycler.ifCounters.Load()
 	}
 	ifCyclerHasRows := ifCycler != nil && len(ifCycler.sortedIfIndexes) > 0
 
@@ -144,7 +144,7 @@ func (s *SNMPServer) findNextOID(currentOID string) (string, string) {
 			compareOIDs(precomputedNextOID, ifCycler.firstDynOID) <= 0 ||
 			compareOIDs(currentOID, ifCycler.lastDynOID) >= 0
 		if metricsClear && ifCyclerClear {
-			return precomputedNextOID, s.overrideIfHC(precomputedNextOID, precomputedNextResp)
+			return precomputedNextOID, s.overrideIfHC(ifCycler, precomputedNextOID, precomputedNextResp)
 		}
 	}
 
@@ -274,7 +274,7 @@ func (s *SNMPServer) findNextOID(currentOID string) (string, string) {
 		}
 	}
 
-	return nextOID, s.overrideIfHC(nextOID, response)
+	return nextOID, s.overrideIfHC(ifCycler, nextOID, response)
 }
 
 // handleGetBulk processes SNMP GetBulk requests
@@ -570,8 +570,14 @@ func (s *SNMPServer) parseGetBulkParams(data []byte) (int, int) {
 // OIDs the cycler does not own (e.g. ifDescr). Used by findNextOID to return
 // live counter values during walks where the candidate OID originated from
 // the static oidIndex.
-func (s *SNMPServer) overrideIfHC(oid, staticResp string) string {
-	if s.device.metricsCycler == nil || s.device.metricsCycler.ifCounters == nil {
+//
+// The caller passes the *IfCounterCycler it already Load()ed at the top of
+// its function so the whole GETNEXT step reads a single consistent cycler
+// snapshot. A concurrent Store between the caller's Load and this call
+// would otherwise make the candidate-selection decision and the value
+// override disagree.
+func (s *SNMPServer) overrideIfHC(ic *IfCounterCycler, oid, staticResp string) string {
+	if ic == nil {
 		return staticResp
 	}
 	// Fast pre-check: dynamic IF-MIB OIDs live under ifTable
@@ -581,7 +587,7 @@ func (s *SNMPServer) overrideIfHC(oid, staticResp string) string {
 	if !strings.HasPrefix(oid, ".1.3.6.1.2.1.2.2.1.") && !strings.HasPrefix(oid, ".1.3.6.1.2.1.31.1.1.1.") {
 		return staticResp
 	}
-	if dynVal := s.device.metricsCycler.ifCounters.GetDynamic(oid); dynVal != "" {
+	if dynVal := ic.GetDynamic(oid); dynVal != "" {
 		return dynVal
 	}
 	return staticResp

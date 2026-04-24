@@ -184,9 +184,14 @@ func scenarioBand(s IfErrorScenario) (errLo, errHi, discLo, discHi uint32) {
 // strictly monotonic.
 //
 // Thread safety: all fields are written once by InitIfCounters before
-// the device's SNMP server goroutine is started. Concurrent reads in
-// GetDynamic are safe because goroutine creation provides the required
-// happens-before relationship.
+// the cycler is published via MetricsCycler.ifCounters.Store(ic), and
+// the pointed-to IfCounterCycler is immutable after Store —
+// re-initialisation means building a fresh instance and calling Store
+// again with the new pointer. All readers must call
+// MetricsCycler.ifCounters.Load() at the top of the function and
+// operate on the captured local; the atomic Load/Store pair plus the
+// immutable-after-Store contract means concurrent reads in GetDynamic
+// are safe even across a future reset / rescenario control plane.
 type IfCounterCycler struct {
 	startTime      time.Time
 	maxIfIndex     int              // upper bound for array indexing
@@ -834,7 +839,11 @@ func (c *MetricsCycler) InitIfCountersWithScenario(resources *DeviceResources, s
 		ic.baseOutDisc[slot] = totalOutPkts24h * uint64(ic.discPpmOut[slot]) / 1_000_000
 	}
 
-	c.ifCounters = ic
+	// ic is fully constructed before the Store, so concurrent readers
+	// either see the complete new cycler or the previous pointer — never
+	// a partially-initialised intermediate. This is the contract the
+	// atomic.Pointer field on MetricsCycler depends on.
+	c.ifCounters.Store(ic)
 }
 
 // jitterAndNormalize applies ±jitter (as a fraction) to each ratio

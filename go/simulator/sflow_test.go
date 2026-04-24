@@ -790,11 +790,12 @@ func TestSFlowInterfaceCounterSource_OneSamplePerIfIndex(t *testing.T) {
 
 	c := &MetricsCycler{}
 	c.InitIfCounters(res, 9999)
-	if c.ifCounters == nil {
+	ic := c.ifCounters.Load()
+	if ic == nil {
 		t.Fatal("InitIfCounters did not create ifCounters")
 	}
 
-	adapter := NewInterfaceCounterSource(c.ifCounters)
+	adapter := NewInterfaceCounterSource(ic)
 	recs := adapter.Snapshot(time.Now())
 	if len(recs) != 3 {
 		t.Fatalf("Snapshot returned %d records, want 3", len(recs))

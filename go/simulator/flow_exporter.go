@@ -374,9 +374,11 @@ func (sm *SimulatorManager) registerSFlowCounterSources(device *DeviceSimulator)
 		return
 	}
 	var sources []CounterSource
-	if device.metricsCycler != nil && device.metricsCycler.ifCounters != nil {
-		if s := NewInterfaceCounterSource(device.metricsCycler.ifCounters); s != nil {
-			sources = append(sources, s)
+	if device.metricsCycler != nil {
+		if ic := device.metricsCycler.ifCounters.Load(); ic != nil {
+			if s := NewInterfaceCounterSource(ic); s != nil {
+				sources = append(sources, s)
+			}
 		}
 	}
 	// CPUCounterSource's processor_information record already carries

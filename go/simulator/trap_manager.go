@@ -498,10 +498,14 @@ func (sm *SimulatorManager) startDeviceTrapExporter(device *DeviceSimulator) err
 // ifTable resources).
 func deviceIfIndexFn(device *DeviceSimulator) func() int {
 	return func() int {
-		if device == nil || device.metricsCycler == nil || device.metricsCycler.ifCounters == nil {
+		if device == nil || device.metricsCycler == nil {
 			return 1
 		}
-		indices := device.metricsCycler.ifCounters.IfIndices()
+		ic := device.metricsCycler.ifCounters.Load()
+		if ic == nil {
+			return 1
+		}
+		indices := ic.IfIndices()
 		if len(indices) == 0 {
 			return 1
 		}
