@@ -22,6 +22,7 @@ sudo ./simulator [flags]
 -snmpv3-auth <proto>    # none | md5 | sha1
 -snmpv3-priv <proto>    # none | des | aes128
 -no-namespace           # Disable network namespace isolation
+-version                # Print version string and exit (no startup side effects)
 
 # Flow export flags (NetFlow v5 / v9 / IPFIX / sFlow v5)
 # Flags marked [seed] apply ONLY to auto-start devices (-auto-start-ip batch).
@@ -83,7 +84,7 @@ go test ./simulator/ -run TestSomething
 
 **Network infrastructure:** `tun.go` creates TUN interfaces, `netns.go` manages the `opensim` network namespace, `prealloc.go` does parallel pre-allocation of TUN interfaces (configurable worker count 100–200) for fast scaling.
 
-**Web API:** `web.go` (route setup) + `api.go` (handlers) + `web_routes*.go` (Linux route script generation). Serves device CRUD, CSV export, system stats, flow export status (`GET /api/v1/flows/status`), trap export status (`GET /api/v1/traps/status`), and on-demand trap firing (`POST /api/v1/devices/{ip}/trap`).
+**Web API:** `web.go` (route setup) + `api.go` (handlers) + `web_routes*.go` (Linux route script generation). Serves device CRUD, CSV export, system stats, simulator version (`GET /api/v1/version` → `{"version":"vX.Y.Z"}`, immutable per process, `Cache-Control: max-age=3600`), flow export status (`GET /api/v1/flows/status`), trap export status (`GET /api/v1/traps/status`), and on-demand trap firing (`POST /api/v1/devices/{ip}/trap`).
 
 **Flow export (per-device config, phase 3):** `flow_exporter.go` (FlowExporter, FlowEncoder interface, SimulatorManager integration) + `netflow9.go` (NetFlow9Encoder, RFC 3954) + `ipfix.go` (IPFIXEncoder, RFC 7011) + `netflow5.go` (NetFlow5Encoder, Cisco v5: 24B header, 48B/record, IPv4-only, 30-record datagram cap, no templates) + `sflow.go` (SFlowEncoder, sFlow v5 per sflow_version_5.txt: 28B XDR datagram header, variable-length flow_sample records carrying sampled_header=IPv4+UDP/TCP synthesized from the FlowRecord 5-tuple, no template mechanism). Each device owns its collector/protocol/timeouts on `DeviceFlowConfig`; the manager owns a shared-socket pool keyed by `(collector, protocol)` and one ticker goroutine. `FlowStatus` is an array-of-collectors aggregated by `(collector, protocol)`. Protocols:
 

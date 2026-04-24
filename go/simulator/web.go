@@ -132,6 +132,19 @@ func systemStatsHandler(w http.ResponseWriter, r *http.Request) {
 	sendDataResponse(w, stats)
 }
 
+// versionHandler implements GET /api/v1/version. The version is immutable
+// per process, so the response is marked cacheable (private, max-age=3600)
+// to cut chatter on page reloads. `private` keeps shared proxies from
+// caching one simulator's version across other operators or across a
+// binary swap-and-restart inside the TTL. Shape:
+//
+//	{"version": "v0.5.0"}
+func versionHandler(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Cache-Control", "private, max-age=3600")
+	_ = json.NewEncoder(w).Encode(map[string]string{"version": Version})
+}
+
 func flowStatusHandler(w http.ResponseWriter, r *http.Request) {
 	status := manager.GetFlowStatus()
 	sendDataResponse(w, status)
@@ -439,6 +452,7 @@ func setupRoutes() *mux.Router {
 	api.HandleFunc("/resources", listResourcesHandler).Methods("GET")
 	api.HandleFunc("/status", statusHandler).Methods("GET")
 	api.HandleFunc("/system-stats", systemStatsHandler).Methods("GET")
+	api.HandleFunc("/version", versionHandler).Methods("GET")
 	api.HandleFunc("/flows/status", flowStatusHandler).Methods("GET")
 	api.HandleFunc("/traps/status", trapStatusHandler).Methods("GET")
 	api.HandleFunc("/devices/{ip}/trap", fireTrapHandler).Methods("POST")

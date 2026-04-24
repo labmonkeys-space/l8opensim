@@ -592,3 +592,22 @@ async function loadSystemStats() {
         console.error('Failed to load system stats:', error);
     }
 }
+
+// loadVersion fetches the simulator's self-reported version and writes
+// `(vX.Y.Z)` into the hero kicker. The version is immutable per process
+// so this runs once on page load — never in a polling interval.
+// textContent (not innerHTML) is load-bearing: keeps any unexpected
+// characters in the version string from creating a DOM-injection surface.
+async function loadVersion() {
+    try {
+        const response = await fetch('/api/v1/version');
+        if (!response.ok) return;
+        const payload = await response.json();
+        const el = document.getElementById('appVersion');
+        if (el && payload && payload.version) {
+            el.textContent = '(' + payload.version + ')';
+        }
+    } catch (error) {
+        console.error('Failed to load version:', error);
+    }
+}

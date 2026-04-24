@@ -3,12 +3,19 @@
 FROM --platform=${BUILDPLATFORM} golang:1.26-alpine AS build
 
 ARG TARGETARCH
+# APP_VERSION is the build-time version string. The Makefile's docker
+# targets pass it through from APP_VERSION resolved via
+# `git describe --tags --abbrev=0` (or the CI tag-event override);
+# unset here means the binary self-reports "dev".
+ARG APP_VERSION=dev
 
 WORKDIR /src
 
 COPY go/ .
 
-RUN CGO_ENABLED=0 GOOS=linux GOARCH=${TARGETARCH} go build -o /simulator ./simulator
+RUN CGO_ENABLED=0 GOOS=linux GOARCH=${TARGETARCH} go build \
+    -ldflags "-X main.Version=${APP_VERSION}" \
+    -o /simulator ./simulator
 
 # ----
 
