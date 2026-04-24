@@ -270,39 +270,62 @@ func (sm *SimulatorManager) DeleteDevice(deviceID string) error {
 		return fmt.Errorf("device %s not found", deviceID)
 	}
 
+	// Capture TUN interface identity BEFORE Stop runs. device.Stop()
+	// nils d.tunIface for non-preallocated interfaces as of the partial-
+	// startup cleanup fix; reading device.tunIface after Stop would then
+	// miss the bulk-delete for those devices and silently leak the
+	// kernel netdev — defeating the purpose of deleting it here.
+	var (
+		hasTun        bool
+		interfaceName string
+		preAllocated  bool
+	)
+	if device.tunIface != nil {
+		hasTun = true
+		interfaceName = device.tunIface.Name
+		preAllocated = device.tunIface.PreAllocated
+	}
+
 	// Stop and cleanup device
 	if err := device.Stop(); err != nil {
 		// log.Printf("Error stopping device %s: %v", deviceID, err)
 	}
 
-	if device.tunIface != nil {
-		interfaceName := device.tunIface.Name
-
-		// Always close TUN FD on deletion, even for pre-allocated interfaces.
-		if device.tunIface.PreAllocated {
+	var tunErr error
+	if hasTun {
+		// Pre-allocated interfaces keep their FD open through Stop;
+		// close it here before asking netlink to remove the link. For
+		// non-preallocated interfaces, Stop already ran destroy() and
+		// nilled d.tunIface — we use the captured name / flag instead.
+		if preAllocated && device.tunIface != nil {
 			device.tunIface.destroy()
 		}
 
-		var err error
 		if sm.useNamespace && sm.netNamespace != nil {
-			err = deleteDeviceTunInterfacesInNamespace(sm, []string{interfaceName})
+			tunErr = deleteDeviceTunInterfacesInNamespace(sm, []string{interfaceName})
 		} else {
-			err = deleteDeviceTunInterfaces(sm, []string{interfaceName})
-		}
-		if err != nil {
-			return fmt.Errorf("delete TUN interface %s: %w", interfaceName, err)
+			tunErr = deleteDeviceTunInterfaces(sm, []string{interfaceName})
 		}
 
-		if device.tunIface.PreAllocated {
+		if preAllocated {
 			sm.tunPoolMutex.Lock()
 			delete(sm.tunInterfacePool, device.IP.String())
 			sm.tunPoolMutex.Unlock()
 		}
 	}
 
+	// Always remove from maps — even if netlink delete failed. The
+	// device is already Stop'd, FDs are closed, and leaving it in the
+	// maps would create a ghost that reports as a device but is dead.
+	// Matches DeleteAllDevices's log-and-continue behaviour. The tun
+	// delete error is still surfaced to the caller below.
 	delete(sm.devices, deviceID)
 	delete(sm.deviceIPs, device.IP.String())
 	delete(sm.deviceTypesByIP, device.IP.String())
+
+	if tunErr != nil {
+		return fmt.Errorf("delete TUN interface %s: %w", interfaceName, tunErr)
+	}
 	return nil
 }
 
