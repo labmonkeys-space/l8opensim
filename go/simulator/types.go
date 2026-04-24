@@ -92,9 +92,17 @@ type DeviceSimulator struct {
 	flowConfig   *DeviceFlowConfig
 	trapConfig   *DeviceTrapConfig
 	syslogConfig *DeviceSyslogConfig
-	netNamespace *NetNamespace // Network namespace (nil if using root namespace)
-	running      bool
-	mu           sync.RWMutex
+	// IfErrorScenario controls the ppm bands the per-device counter
+	// cycler draws errors and discards from. One of "clean" | "typical"
+	// | "degraded" | "failing"; empty defaults to "clean". Set at device
+	// creation from either the auto-start ExportSeed or the
+	// `if_error_scenario` field in POST /api/v1/devices, and frozen for
+	// the lifetime of the device (matches the immutability of other
+	// per-device cycler state).
+	IfErrorScenario string
+	netNamespace    *NetNamespace // Network namespace (nil if using root namespace)
+	running         bool
+	mu              sync.RWMutex
 }
 
 // SNMPv3 USM (User-based Security Model) configuration
@@ -295,6 +303,14 @@ type CreateDevicesRequest struct {
 	Flow   *DeviceFlowConfig   `json:"flow,omitempty"`
 	Traps  *DeviceTrapConfig   `json:"traps,omitempty"`
 	Syslog *DeviceSyslogConfig `json:"syslog,omitempty"`
+
+	// IfErrorScenario selects the per-device error / discard counter
+	// scenario: "clean" | "typical" | "degraded" | "failing". Empty
+	// defaults to "clean" (NOT to the simulator's CLI seed — REST
+	// bodies opt in explicitly, mirroring the per-device-export-config
+	// pattern). Validated at handler time; unknown values reject the
+	// batch with 400.
+	IfErrorScenario string `json:"if_error_scenario,omitempty"`
 }
 
 // RoundRobinDeviceTypes defines all 28 device flavors for round robin creation
@@ -347,6 +363,10 @@ type DeviceInfo struct {
 	Flow   *DeviceFlowConfig   `json:"flow,omitempty"`
 	Traps  *DeviceTrapConfig   `json:"traps,omitempty"`
 	Syslog *DeviceSyslogConfig `json:"syslog,omitempty"`
+	// IfErrorScenario surfaces the per-device counter scenario set at
+	// creation time. Omitted from JSON when "" so clean-default devices
+	// don't clutter GET responses.
+	IfErrorScenario string `json:"if_error_scenario,omitempty"`
 }
 
 type APIResponse struct {
@@ -399,6 +419,13 @@ type ExportSeed struct {
 	Flow   *DeviceFlowConfig
 	Traps  *DeviceTrapConfig
 	Syslog *DeviceSyslogConfig
+	// IfErrorScenario is the per-device counter scenario for every
+	// device created from this seed. Empty string = "clean" default.
+	// Despite its home in ExportSeed, this is not an export concept —
+	// the seed struct is the natural carrier for "per-device defaults
+	// for this batch" and lives alongside the export blocks to keep
+	// one plumbing channel instead of several parallel ones.
+	IfErrorScenario IfErrorScenario
 }
 
 // flowConnKey identifies a shared-socket pool entry. One pooled

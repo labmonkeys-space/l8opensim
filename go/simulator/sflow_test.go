@@ -552,7 +552,13 @@ func TestSFlowCounterDatagramInterfaceCounters(t *testing.T) {
 	enc := SFlowEncoder{}
 	buf := make([]byte, 1500)
 
-	body := encodeIfCountersBody(3, 1_000_000_000, 12345678, 23456789, 100, 200)
+	// (ifIndex, speedBps, inOctets, inUcast, inMcast, inBcast, inDisc, inErr,
+	//  outOctets, outUcast, outMcast, outBcast, outDisc, outErr)
+	body := encodeIfCountersBody(
+		3, 1_000_000_000,
+		12345678, 100, 10, 5, 0, 0,
+		23456789, 200, 20, 10, 0, 0,
+	)
 	recs := []CounterRecord{{Format: sflowCtrFmtGeneric, Body: body}}
 
 	n, err := enc.EncodeCounterDatagram(0xC0A80102, 7, 500, recs, buf)
@@ -685,7 +691,7 @@ func TestSFlowCounterDatagramMTU(t *testing.T) {
 	for i := range recs {
 		recs[i] = CounterRecord{
 			Format: sflowCtrFmtGeneric,
-			Body:   encodeIfCountersBody(uint32(i+1), 1_000_000_000, uint64(i)*1000, uint64(i)*2000, uint32(i), uint32(i)*2),
+			Body:   encodeIfCountersBody(uint32(i+1), 1_000_000_000, uint64(i)*1000, uint32(i), 0, 0, 0, 0, uint64(i)*2000, uint32(i)*2, 0, 0, 0, 0),
 		}
 	}
 
@@ -722,17 +728,17 @@ func TestSFlowCounterDatagramGroupsBySourceID(t *testing.T) {
 		{
 			Format:   sflowCtrFmtGeneric,
 			SourceID: 1,
-			Body:     encodeIfCountersBody(1, 1_000_000_000, 100, 200, 1, 2),
+			Body:     encodeIfCountersBody(1, 1_000_000_000, 100, 1, 0, 0, 0, 0, 200, 2, 0, 0, 0, 0),
 		},
 		{
 			Format:   sflowCtrFmtGeneric,
 			SourceID: 2,
-			Body:     encodeIfCountersBody(2, 1_000_000_000, 300, 400, 3, 4),
+			Body:     encodeIfCountersBody(2, 1_000_000_000, 300, 3, 0, 0, 0, 0, 400, 4, 0, 0, 0, 0),
 		},
 		{
 			Format:   sflowCtrFmtGeneric,
 			SourceID: 3,
-			Body:     encodeIfCountersBody(3, 1_000_000_000, 500, 600, 5, 6),
+			Body:     encodeIfCountersBody(3, 1_000_000_000, 500, 5, 0, 0, 0, 0, 600, 6, 0, 0, 0, 0),
 		},
 		{
 			Format:   sflowCtrFmtProcessor,

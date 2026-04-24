@@ -79,7 +79,26 @@ curl -X POST http://localhost:8080/api/v1/devices \
       "priv_protocol": "aes128"
     }
   }'
+
+# Per-device error-counter scenario
+curl -X POST http://localhost:8080/api/v1/devices \
+  -H "Content-Type: application/json" \
+  -d '{
+    "start_ip": "192.168.100.1",
+    "device_count": 3,
+    "netmask": "24",
+    "if_error_scenario": "degraded"
+  }'
 ```
+
+The `if_error_scenario` field controls the per-device ppm bands used to
+derive `ifInErrors`, `ifOutErrors`, `ifInDiscards`, and `ifOutDiscards`
+from live packet counters. Accepted values: `clean` (default, no error
+growth), `typical`, `degraded`, `failing`. Unknown values reject the
+batch atomically with 400. REST-created devices default to `clean`
+independently of the `-if-error-scenario` CLI flag — you must opt in
+explicitly. See [SNMP reference](snmp.md#per-device-error-scenario) for
+the full scenario bands and counter model.
 
 A specific resource file can be requested directly (useful for storage
 devices):

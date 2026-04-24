@@ -71,15 +71,16 @@ func NewInterfaceCounterSource(c *IfCounterCycler) *InterfaceCounterSource {
 	return &InterfaceCounterSource{cycler: c}
 }
 
-// Snapshot returns one if_counters CounterRecord per known interface, with
-// ifHCInOctets / ifHCOutOctets sourced from the cycler's sine-wave math. Each
-// record is tagged with SourceID = ifIndex so EncodeCounterDatagram emits one
-// counters_sample per interface (collectors such as OpenNMS Telemetryd key
-// if_counters by ds_index).
+// Snapshot returns one if_counters CounterRecord per known interface,
+// with every field sourced from the same IfCounterCycler dispatcher
+// that SNMP reads go through. At the same time t, the values carried in
+// an sFlow counter_sample body match byte-for-byte what a concurrent
+// SNMP GET for the corresponding OIDs would return (the spec's unified
+// sFlow / SNMP counter-source guarantee).
 //
-// The remaining if_counters fields (ifInUcastPkts etc.) are synthesized from
-// the octet counters using a coarse 500-byte average packet size — adequate
-// for collector smoke tests, not for graphing accuracy.
+// Each record is tagged with SourceID = ifIndex so EncodeCounterDatagram
+// emits one counters_sample per interface (collectors such as OpenNMS
+// Telemetryd key if_counters by ds_index).
 func (s *InterfaceCounterSource) Snapshot(_ time.Time) []CounterRecord {
 	if s == nil || s.cycler == nil {
 		return nil
@@ -94,16 +95,32 @@ func (s *InterfaceCounterSource) Snapshot(_ time.Time) []CounterRecord {
 		if slot < 0 || slot >= len(s.cycler.ifSpeedBps) {
 			continue
 		}
-		inStr := s.cycler.GetHCOctets(hcInOIDPrefix + strconv.Itoa(ifIndex))
-		outStr := s.cycler.GetHCOctets(hcOutOIDPrefix + strconv.Itoa(ifIndex))
-		inOctets := parseUintOrZero(inStr)
-		outOctets := parseUintOrZero(outStr)
-		// Synthesize packet counters from octets / 500B — coarse but
-		// monotonic since octets are monotonic.
-		inPkts := uint32(inOctets / 500)
-		outPkts := uint32(outOctets / 500)
+		idxStr := strconv.Itoa(ifIndex)
 
-		body := encodeIfCountersBody(uint32(ifIndex), s.cycler.ifSpeedBps[slot], inOctets, outOctets, inPkts, outPkts)
+		// Fetch every column from the cycler. `if_counters` is
+		// Counter32-only on the wire, so we read the Counter32 shadow
+		// columns where they exist (shadow = low-32 of the matching
+		// Counter64) and parse them as uint32.
+		inOctets := parseUintOrZero(s.cycler.GetDynamic(ifXTablePrefix + "6." + idxStr))
+		outOctets := parseUintOrZero(s.cycler.GetDynamic(ifXTablePrefix + "10." + idxStr))
+
+		inUcast := uint32(parseUintOrZero(s.cycler.GetDynamic(ifTablePrefix + "11." + idxStr)))
+		inMcast := uint32(parseUintOrZero(s.cycler.GetDynamic(ifXTablePrefix + "2." + idxStr)))
+		inBcast := uint32(parseUintOrZero(s.cycler.GetDynamic(ifXTablePrefix + "3." + idxStr)))
+		inDisc := uint32(parseUintOrZero(s.cycler.GetDynamic(ifTablePrefix + "13." + idxStr)))
+		inErr := uint32(parseUintOrZero(s.cycler.GetDynamic(ifTablePrefix + "14." + idxStr)))
+
+		outUcast := uint32(parseUintOrZero(s.cycler.GetDynamic(ifTablePrefix + "17." + idxStr)))
+		outMcast := uint32(parseUintOrZero(s.cycler.GetDynamic(ifXTablePrefix + "4." + idxStr)))
+		outBcast := uint32(parseUintOrZero(s.cycler.GetDynamic(ifXTablePrefix + "5." + idxStr)))
+		outDisc := uint32(parseUintOrZero(s.cycler.GetDynamic(ifTablePrefix + "19." + idxStr)))
+		outErr := uint32(parseUintOrZero(s.cycler.GetDynamic(ifTablePrefix + "20." + idxStr)))
+
+		body := encodeIfCountersBody(
+			uint32(ifIndex), s.cycler.ifSpeedBps[slot],
+			inOctets, inUcast, inMcast, inBcast, inDisc, inErr,
+			outOctets, outUcast, outMcast, outBcast, outDisc, outErr,
+		)
 		out = append(out, CounterRecord{
 			Format:   sflowCtrFmtGeneric,
 			SourceID: uint32(ifIndex),
@@ -136,7 +153,14 @@ func (s *InterfaceCounterSource) Snapshot(_ time.Time) []CounterRecord {
 //	u32 ifOutDiscards
 //	u32 ifOutErrors
 //	u32 ifPromiscuousMode
-func encodeIfCountersBody(ifIndex uint32, speedBps, inOctets, outOctets uint64, inPkts, outPkts uint32) []byte {
+//
+// ifInUnknownProtos and ifPromiscuousMode are emitted as 0 — the
+// simulator does not model them.
+func encodeIfCountersBody(
+	ifIndex uint32, speedBps, inOctets uint64,
+	inUcast, inMcast, inBcast, inDisc, inErr uint32,
+	outOctets uint64, outUcast, outMcast, outBcast, outDisc, outErr uint32,
+) []byte {
 	body := make([]byte, 88)
 	pos := 0
 	binary.BigEndian.PutUint32(body[pos:], ifIndex)
@@ -151,31 +175,31 @@ func encodeIfCountersBody(ifIndex uint32, speedBps, inOctets, outOctets uint64, 
 	pos += 4
 	binary.BigEndian.PutUint64(body[pos:], inOctets)
 	pos += 8
-	binary.BigEndian.PutUint32(body[pos:], inPkts)
+	binary.BigEndian.PutUint32(body[pos:], inUcast)
 	pos += 4
-	binary.BigEndian.PutUint32(body[pos:], 0) // multicast
+	binary.BigEndian.PutUint32(body[pos:], inMcast)
 	pos += 4
-	binary.BigEndian.PutUint32(body[pos:], 0) // broadcast
+	binary.BigEndian.PutUint32(body[pos:], inBcast)
 	pos += 4
-	binary.BigEndian.PutUint32(body[pos:], 0) // in discards
+	binary.BigEndian.PutUint32(body[pos:], inDisc)
 	pos += 4
-	binary.BigEndian.PutUint32(body[pos:], 0) // in errors
+	binary.BigEndian.PutUint32(body[pos:], inErr)
 	pos += 4
-	binary.BigEndian.PutUint32(body[pos:], 0) // in unknown protos
+	binary.BigEndian.PutUint32(body[pos:], 0) // in unknown protos (not modeled)
 	pos += 4
 	binary.BigEndian.PutUint64(body[pos:], outOctets)
 	pos += 8
-	binary.BigEndian.PutUint32(body[pos:], outPkts)
+	binary.BigEndian.PutUint32(body[pos:], outUcast)
 	pos += 4
-	binary.BigEndian.PutUint32(body[pos:], 0) // out multicast
+	binary.BigEndian.PutUint32(body[pos:], outMcast)
 	pos += 4
-	binary.BigEndian.PutUint32(body[pos:], 0) // out broadcast
+	binary.BigEndian.PutUint32(body[pos:], outBcast)
 	pos += 4
-	binary.BigEndian.PutUint32(body[pos:], 0) // out discards
+	binary.BigEndian.PutUint32(body[pos:], outDisc)
 	pos += 4
-	binary.BigEndian.PutUint32(body[pos:], 0) // out errors
+	binary.BigEndian.PutUint32(body[pos:], outErr)
 	pos += 4
-	binary.BigEndian.PutUint32(body[pos:], 0) // promiscuous
+	binary.BigEndian.PutUint32(body[pos:], 0) // promiscuous mode (not modeled)
 	return body
 }
 

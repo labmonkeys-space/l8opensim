@@ -60,6 +60,35 @@ editing resource files.
 Scenario 4 uses a deterministic rule (`ifIndex % 100 < n`) so test runs are
 reproducible across restarts.
 
+### Error / discard scenario
+
+`-if-scenario` governs **which interfaces are up**. A companion flag,
+`-if-error-scenario`, governs **how clean the interfaces that are up
+behave** — the ppm ranges used to derive `ifInErrors`, `ifOutErrors`,
+`ifInDiscards`, and `ifOutDiscards` from the live packet counters.
+
+| Flag | Values | Default | Purpose |
+|------|--------|---------|---------|
+| `-if-error-scenario` | `clean` \| `typical` \| `degraded` \| `failing` | `clean` | Auto-start-batch default for per-device error / discard counter cycling. REST-created devices default to `clean` independently (they opt in via `if_error_scenario` in the POST body). |
+
+| Scenario | `errPpm` range | `discPpm` range | Use case |
+|----------|----------------|-----------------|----------|
+| `clean` *(default)* | 0 | 0 | Pristine lab gear — counters stay at the pre-seeded baseline |
+| `typical` | 10 – 100 | 20 – 200 | Good production gear; faint error/discard growth visible in long-period polls |
+| `degraded` | 1 000 – 10 000 | 2 000 – 20 000 | Congested / faulty optics; 0.1 – 1 % error rate |
+| `failing` | 10 000 – 100 000 | 20 000 – 200 000 | Link-flap / bad cable; 1 – 10 % error rate |
+
+Each interface within a device draws its per-direction ppm deterministically
+from the scenario's band at device creation — so repeated runs with the
+same auto-start layout produce the same per-interface values. `clean`
+(`0/0`) is the backwards-compatible default and leaves all error/discard
+counters at their pre-seeded zero.
+
+Unlike `-if-scenario`, this setting is **per-device**: every device carries
+its own scenario, so one simulator can host 100 `clean` lab devices
+alongside 5 `degraded` ones for alert-threshold testing. See
+[`if-counters` reference](snmp.md#dynamic-if-mib-counters).
+
 ## Export flag scope
 
 Export flags (flow / trap / syslog) fall into two categories:

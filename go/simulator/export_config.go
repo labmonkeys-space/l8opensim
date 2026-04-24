@@ -352,6 +352,12 @@ func applyExportSeed(device *DeviceSimulator, seed *ExportSeed) {
 		s := *seed.Syslog
 		device.syslogConfig = &s
 	}
+	// IfErrorScenario has value semantics; copy directly. Empty string
+	// on the seed maps to "" on the device, which InitIfCounters later
+	// canonicalises via ParseIfErrorScenario ("" → "clean").
+	if seed.IfErrorScenario != "" {
+		device.IfErrorScenario = string(seed.IfErrorScenario)
+	}
 }
 
 // Compile-time safety: ensure jsonDuration satisfies the json

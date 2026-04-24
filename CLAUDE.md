@@ -23,6 +23,7 @@ sudo ./simulator [flags]
 -snmpv3-priv <proto>    # none | des | aes128
 -no-namespace           # Disable network namespace isolation
 -version                # Print version string and exit (no startup side effects)
+-if-error-scenario <s>  # Auto-start-batch per-device error/discard scenario: clean (default) | typical | degraded | failing. REST-created devices default to clean; opt in via if_error_scenario.
 
 # Flow export flags (NetFlow v5 / v9 / IPFIX / sFlow v5)
 # Flags marked [seed] apply ONLY to auto-start devices (-auto-start-ip batch).
@@ -79,6 +80,8 @@ go test ./simulator/ -run TestSomething
 **Device lifecycle:** `simulator.go` (CLI/entry) → `manager.go` (SimulatorManager, shared keys/certs) → `device.go` (per-device startup, protocol server lifecycle)
 
 **SNMP stack:** `snmp_server.go` → `snmp.go` (request handling) → `snmp_handlers.go` (OID lookup via sync.Map) → `snmp_response.go` (response building) → `snmp_encoding.go` (ASN.1 BER/DER). SNMPv3 is handled separately in `snmpv3.go` + `snmpv3_crypto.go` (MD5/SHA1 auth, DES/AES128 privacy).
+
+**Dynamic IF-MIB counters (`if_counters.go`):** `IfCounterCycler.GetDynamic` serves every per-interface counter under `ifTable` (`.1.3.6.1.2.1.2.2.1`) and `ifXTable` (`.1.3.6.1.2.1.31.1.1.1`) analytically — no per-interface goroutine. `ifHCInOctets` / `ifHCOutOctets` are the master dial (sine wave, 60–100 % of `ifSpeed`, 1 h period); HC packet counters (ucast / mcast / bcast) derive from octets ÷ jittered packet size × jittered ratios; Counter32 shadow columns (`ifInUcastPkts`, `ifInMulticastPkts`, etc.) return the low 32 bits of the matching Counter64 HC column; error / discard counters derive from per-device ppm bands set by the `IfErrorScenario` field (`clean` | `typical` | `degraded` | `failing`). The same dispatcher powers the sFlow `counter_sample` body path in `counter_source.go`, so SNMP and sFlow values agree byte-for-byte at the same instant.
 
 **Metrics engine:** `metrics_cycler.go` drives 100-point pre-generated sine-wave patterns per device. `gpu_metrics.go` handles per-GPU metrics (utilization, VRAM, temperature, power, clocks). `device_profiles.go` defines per-category baselines.
 
