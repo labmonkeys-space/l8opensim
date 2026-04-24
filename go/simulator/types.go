@@ -152,6 +152,7 @@ type SSHServer struct {
 type APIServer struct {
 	device        *DeviceSimulator
 	listener      net.Listener
+	server        apiHTTPServer
 	running       bool
 	sharedTLSCert *tls.Certificate // Shared TLS cert from SimulatorManager
 }
