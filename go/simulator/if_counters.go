@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"math"
 	"math/rand"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -40,18 +41,18 @@ const (
 // ifXTable and ifTable column numbers handled dynamically.
 const (
 	// ifXTable (.1.3.6.1.2.1.31.1.1.1.X)
-	colIfInMulticastPkts     = 2
-	colIfInBroadcastPkts     = 3
-	colIfOutMulticastPkts    = 4
-	colIfOutBroadcastPkts    = 5
-	colIfHCInOctets          = 6
-	colIfHCInUcastPkts       = 7
-	colIfHCInMulticastPkts   = 8
-	colIfHCInBroadcastPkts   = 9
-	colIfHCOutOctets         = 10
-	colIfHCOutUcastPkts      = 11
-	colIfHCOutMulticastPkts  = 12
-	colIfHCOutBroadcastPkts  = 13
+	colIfInMulticastPkts    = 2
+	colIfInBroadcastPkts    = 3
+	colIfOutMulticastPkts   = 4
+	colIfOutBroadcastPkts   = 5
+	colIfHCInOctets         = 6
+	colIfHCInUcastPkts      = 7
+	colIfHCInMulticastPkts  = 8
+	colIfHCInBroadcastPkts  = 9
+	colIfHCOutOctets        = 10
+	colIfHCOutUcastPkts     = 11
+	colIfHCOutMulticastPkts = 12
+	colIfHCOutBroadcastPkts = 13
 
 	// ifTable (.1.3.6.1.2.1.2.2.1.X)
 	colIfInUcastPkts  = 11
@@ -61,6 +62,35 @@ const (
 	colIfOutDiscards  = 19
 	colIfOutErrors    = 20
 )
+
+// ifCyclerColumns lists every (table, column) pair the cycler owns, in
+// strict MIB lex order. Walk enumeration (NextDynamicOID) iterates this
+// list, and ordering must match compareOIDs — the 7th sub-identifier
+// puts ifTable (2.2.1) strictly before ifXTable (31.1.1.1) numerically,
+// and within each table the column numbers are ascending.
+var ifCyclerColumns = []struct {
+	prefix string
+	col    int
+}{
+	{ifTablePrefix, colIfInUcastPkts},         // .11
+	{ifTablePrefix, colIfInDiscards},          // .13
+	{ifTablePrefix, colIfInErrors},            // .14
+	{ifTablePrefix, colIfOutUcastPkts},        // .17
+	{ifTablePrefix, colIfOutDiscards},         // .19
+	{ifTablePrefix, colIfOutErrors},           // .20
+	{ifXTablePrefix, colIfInMulticastPkts},    // .2
+	{ifXTablePrefix, colIfInBroadcastPkts},    // .3
+	{ifXTablePrefix, colIfOutMulticastPkts},   // .4
+	{ifXTablePrefix, colIfOutBroadcastPkts},   // .5
+	{ifXTablePrefix, colIfHCInOctets},         // .6
+	{ifXTablePrefix, colIfHCInUcastPkts},      // .7
+	{ifXTablePrefix, colIfHCInMulticastPkts},  // .8
+	{ifXTablePrefix, colIfHCInBroadcastPkts},  // .9
+	{ifXTablePrefix, colIfHCOutOctets},        // .10
+	{ifXTablePrefix, colIfHCOutUcastPkts},     // .11
+	{ifXTablePrefix, colIfHCOutMulticastPkts}, // .12
+	{ifXTablePrefix, colIfHCOutBroadcastPkts}, // .13
+}
 
 // IfErrorScenario controls per-device error / discard counter behavior.
 // Scenarios scale the errors-per-million (errPpm) and discards-per-million
@@ -165,7 +195,15 @@ type IfCounterCycler struct {
 	// allocation-free on the hot path (trap varbind template resolution
 	// calls it per fire). Populated once in InitIfCounters; read-only after.
 	ifIndexList []int
-	ifSpeedBps  []uint64  // per-interface link speed in bps (slot = ifIndex-1)
+	// sortedIfIndexes is ifIndexList sorted ascending — required so
+	// NextDynamicOID emits rows in MIB lex order during SNMP walks.
+	sortedIfIndexes []int
+	// firstDynOID / lastDynOID bracket the entire set of OIDs this
+	// cycler owns. findNextOID uses them to decide whether the static
+	// "next OID" fast path is safe without scanning every cycler row.
+	firstDynOID string
+	lastDynOID  string
+	ifSpeedBps  []uint64 // per-interface link speed in bps (slot = ifIndex-1)
 
 	// Octet-cycler dials (existing).
 	baseInOctets  []uint64  // per-interface starting octet counter (in)
@@ -348,6 +386,51 @@ func (ic *IfCounterCycler) GetDynamicAt(oid string, t float64) string {
 	return ""
 }
 
+// FirstDynamicOID returns the smallest OID this cycler owns. Empty
+// string when the cycler has no rows.
+func (ic *IfCounterCycler) FirstDynamicOID() string {
+	if ic == nil {
+		return ""
+	}
+	return ic.firstDynOID
+}
+
+// LastDynamicOID returns the largest OID this cycler owns. Empty string
+// when the cycler has no rows.
+func (ic *IfCounterCycler) LastDynamicOID() string {
+	if ic == nil {
+		return ""
+	}
+	return ic.lastDynOID
+}
+
+// NextDynamicOID returns the next (oid, value) pair the cycler owns that
+// is strictly greater than currentOID in MIB lex order. Returns ("", "")
+// when currentOID is at or past the last dynamic row.
+//
+// This is the walk counterpart to GetDynamic — without it, snmpwalk on a
+// column whose instances are not declared in the device's static JSON
+// (e.g. ifHCInMulticastPkts on many device types) would skip the whole
+// column because findNextOID only enumerates OIDs that already exist in
+// oidIndex / sortedOIDs.
+func (ic *IfCounterCycler) NextDynamicOID(currentOID string) (string, string) {
+	if ic == nil || len(ic.sortedIfIndexes) == 0 {
+		return "", ""
+	}
+	t := time.Since(ic.startTime).Seconds()
+	for _, tc := range ifCyclerColumns {
+		for _, idx := range ic.sortedIfIndexes {
+			oid := tc.prefix + strconv.Itoa(tc.col) + "." + strconv.Itoa(idx)
+			if compareOIDs(oid, currentOID) > 0 {
+				if val := ic.GetDynamicAt(oid, t); val != "" {
+					return oid, val
+				}
+			}
+		}
+	}
+	return "", ""
+}
+
 // safePktSize shields every pktSize-divided derivation from a zero or
 // negative divisor. Init draws pktSize from [400, 600] so this is
 // unreachable today, but widening the jitter or allowing an operator
@@ -504,38 +587,54 @@ func (c *MetricsCycler) InitIfCountersWithScenario(resources *DeviceResources, s
 		indexList = append(indexList, idx)
 	}
 
+	// Sorted copy used by walk enumeration — must be ascending so that
+	// NextDynamicOID emits (col, ifIndex) rows in MIB lex order.
+	sortedIndexList := make([]int, len(indexList))
+	copy(sortedIndexList, indexList)
+	sort.Ints(sortedIndexList)
+
+	// Precompute the first/last OID the cycler owns so findNextOID can
+	// cheaply decide whether a static-only fast path is safe.
+	firstCol := ifCyclerColumns[0]
+	lastCol := ifCyclerColumns[len(ifCyclerColumns)-1]
+	firstDynOID := firstCol.prefix + strconv.Itoa(firstCol.col) + "." + strconv.Itoa(sortedIndexList[0])
+	lastDynOID := lastCol.prefix + strconv.Itoa(lastCol.col) + "." + strconv.Itoa(sortedIndexList[len(sortedIndexList)-1])
+
 	ic := &IfCounterCycler{
-		startTime:      time.Now(),
-		maxIfIndex:     maxIdx,
-		knownIfIndexes: knownIdxs,
-		ifIndexList:    indexList,
-		ifSpeedBps:     make([]uint64, maxIdx),
-		baseInOctets:   make([]uint64, maxIdx),
-		baseOutOctets:  make([]uint64, maxIdx),
-		phaseIn:        make([]float64, maxIdx),
-		phaseOut:       make([]float64, maxIdx),
-		pktSizeIn:      make([]float64, maxIdx),
-		pktSizeOut:     make([]float64, maxIdx),
-		ucastRatioIn:   make([]float64, maxIdx),
-		mcastRatioIn:   make([]float64, maxIdx),
-		bcastRatioIn:   make([]float64, maxIdx),
-		ucastRatioOut:  make([]float64, maxIdx),
-		mcastRatioOut:  make([]float64, maxIdx),
-		bcastRatioOut:  make([]float64, maxIdx),
-		baseInUcast:    make([]uint64, maxIdx),
-		baseInMcast:    make([]uint64, maxIdx),
-		baseInBcast:    make([]uint64, maxIdx),
-		baseOutUcast:   make([]uint64, maxIdx),
-		baseOutMcast:   make([]uint64, maxIdx),
-		baseOutBcast:   make([]uint64, maxIdx),
-		errPpmIn:       make([]uint32, maxIdx),
-		errPpmOut:      make([]uint32, maxIdx),
-		discPpmIn:      make([]uint32, maxIdx),
-		discPpmOut:     make([]uint32, maxIdx),
-		baseInErr:      make([]uint64, maxIdx),
-		baseOutErr:     make([]uint64, maxIdx),
-		baseInDisc:     make([]uint64, maxIdx),
-		baseOutDisc:    make([]uint64, maxIdx),
+		startTime:       time.Now(),
+		maxIfIndex:      maxIdx,
+		knownIfIndexes:  knownIdxs,
+		ifIndexList:     indexList,
+		sortedIfIndexes: sortedIndexList,
+		firstDynOID:     firstDynOID,
+		lastDynOID:      lastDynOID,
+		ifSpeedBps:      make([]uint64, maxIdx),
+		baseInOctets:    make([]uint64, maxIdx),
+		baseOutOctets:   make([]uint64, maxIdx),
+		phaseIn:         make([]float64, maxIdx),
+		phaseOut:        make([]float64, maxIdx),
+		pktSizeIn:       make([]float64, maxIdx),
+		pktSizeOut:      make([]float64, maxIdx),
+		ucastRatioIn:    make([]float64, maxIdx),
+		mcastRatioIn:    make([]float64, maxIdx),
+		bcastRatioIn:    make([]float64, maxIdx),
+		ucastRatioOut:   make([]float64, maxIdx),
+		mcastRatioOut:   make([]float64, maxIdx),
+		bcastRatioOut:   make([]float64, maxIdx),
+		baseInUcast:     make([]uint64, maxIdx),
+		baseInMcast:     make([]uint64, maxIdx),
+		baseInBcast:     make([]uint64, maxIdx),
+		baseOutUcast:    make([]uint64, maxIdx),
+		baseOutMcast:    make([]uint64, maxIdx),
+		baseOutBcast:    make([]uint64, maxIdx),
+		errPpmIn:        make([]uint32, maxIdx),
+		errPpmOut:       make([]uint32, maxIdx),
+		discPpmIn:       make([]uint32, maxIdx),
+		discPpmOut:      make([]uint32, maxIdx),
+		baseInErr:       make([]uint64, maxIdx),
+		baseOutErr:      make([]uint64, maxIdx),
+		baseInDisc:      make([]uint64, maxIdx),
+		baseOutDisc:     make([]uint64, maxIdx),
 	}
 
 	rng := rand.New(rand.NewSource(seed))
