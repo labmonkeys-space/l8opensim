@@ -399,4 +399,5 @@ document.addEventListener('DOMContentLoaded', () => {
     loadSystemStats(); // Initial system stats load
     loadExportStatuses(); // Initial export-status load (phase 6)
     checkStatus(); // Initial status check
+    loadVersion(); // One-shot: version is immutable per process
 });

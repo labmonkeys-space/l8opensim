@@ -18,6 +18,7 @@ management web UI at `/`.
 | `/api/v1/resources` | GET | List available device resource types. |
 | `/api/v1/status` | GET | Manager status. |
 | `/api/v1/system-stats` | GET | System stats (file descriptors, memory). |
+| `/api/v1/version` | GET | Running simulator version string. Immutable per process; response carries `Cache-Control: max-age=3600`. |
 | `/api/v1/flows/status` | GET | Flow export status and cumulative counters. |
 | `/api/v1/traps/status` | GET | SNMP trap export status, INFORM counters, and per-type catalog map. |
 | `/api/v1/devices/{ip}/trap` | POST | Fire a named catalog trap on a specific device. |
@@ -255,6 +256,38 @@ curl -X DELETE http://localhost:8080/api/v1/devices/{device-id}
 
 # All devices
 curl -X DELETE http://localhost:8080/api/v1/devices
+```
+
+## Version
+
+Report the running simulator's version. The value is baked into the binary
+at build time via the Makefile's `APP_VERSION` variable (resolution order:
+`APP_VERSION` env > `git describe --tags` > `dev`) and passed to `go build`
+as `-ldflags "-X main.Version=…"`. It never changes for the lifetime of the
+process, so the endpoint sets `Cache-Control: max-age=3600` — reloads of
+the web UI within a browser session will reuse the cached value.
+
+Release binaries report the clean tag (e.g., `v0.5.0`). A `make build`
+from a HEAD that is ahead of the last tag reports the commit-distance
+form (e.g., `v0.4.1-11-g0356c42`), so a post-release dev binary never
+masquerades as the tagged release.
+
+```bash
+curl http://localhost:8080/api/v1/version
+```
+
+```json
+{"version": "v0.5.0"}
+```
+
+For an untagged development build (or any build produced by `go build`
+directly, bypassing the Makefile), the reported version is the literal
+string `dev`. Operators troubleshooting a version mismatch can call the
+same string from the CLI without starting the server:
+
+```bash
+./simulator -version
+# → v0.5.0
 ```
 
 ## Flow export status

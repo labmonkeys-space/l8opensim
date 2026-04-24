@@ -25,6 +25,7 @@ for a minimal invocation.
 | `-snmp-port` | int | `161` | UDP port for the SNMP listener on each device. Use `1161` to avoid requiring `CAP_NET_BIND_SERVICE`. |
 | `-no-namespace` | bool | `false` | Disable network namespace isolation (run in the root namespace). |
 | `-help` | — | — | Show the help message and exit. |
+| `-version` | — | — | Print the simulator version string to stdout and exit 0. Runs before any startup side effects (no TUN, no netns, no port binds) so it works from unprivileged shells and inside minimal containers. |
 
 ## SNMPv3 flags
 

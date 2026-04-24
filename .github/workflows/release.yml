@@ -13,6 +13,12 @@ jobs:
   ci:
     name: Build & Test
     runs-on: ubuntu-latest
+    env:
+      # Tag-event workflow: bake the pushed tag into the binary as the
+      # ground-truth version. Overrides the Makefile's `git describe`
+      # fallback, which is unreliable inside actions/checkout's shallow
+      # clone.
+      APP_VERSION: ${{ github.ref_name }}
 
     steps:
       - name: Checkout
@@ -30,6 +36,19 @@ jobs:
       - name: Build
         run: make build
 
+      - name: Assert baked version matches tag
+        run: |
+          baked=$(./go/simulator/simulator -version)
+          if [ -z "$baked" ] || [ -z "${GITHUB_REF_NAME}" ]; then
+            echo "version assertion failed: empty value — baked='$baked', tag='${GITHUB_REF_NAME}'"
+            exit 1
+          fi
+          if [ "$baked" != "${GITHUB_REF_NAME}" ]; then
+            echo "version drift: binary reports '$baked', tag is '${GITHUB_REF_NAME}'"
+            exit 1
+          fi
+          echo "version OK: $baked"
+
       - name: Test
         run: make test
 
@@ -37,6 +56,8 @@ jobs:
     name: Build & Release
     runs-on: ubuntu-latest
     needs: ci
+    env:
+      APP_VERSION: ${{ github.ref_name }}
 
     steps:
       - name: Checkout
@@ -70,6 +91,8 @@ jobs:
     name: Publish Docker image
     runs-on: ubuntu-latest
     needs: ci
+    env:
+      APP_VERSION: ${{ github.ref_name }}
 
     steps:
       - name: Checkout

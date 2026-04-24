@@ -10,13 +10,38 @@ DOCKER_TAGS  ?= $(SIM_IMAGE)
 GOOS   ?= linux
 GOARCH ?= amd64
 
+# Version resolution: APP_VERSION env > `git describe --tags` > "dev".
+# Both variables use `?=` so CI (which exports APP_VERSION on tag
+# events) wins cleanly. A shallow clone with no tags falls through to
+# "dev"; a binary built by `go build` directly (bypassing this
+# Makefile) also reports "dev" — an obvious signal that ldflags did
+# not run.
+#
+# We deliberately omit `--abbrev=0` so HEAD that is ahead of the last
+# tag bakes the commit-distance form (e.g. `v0.4.1-11-g0356c42`). This
+# is a conscious deviation from docusaurus.config.ts:resolveAppVersion
+# which uses the cleaner `--abbrev=0` form — on the binary we prefer
+# dev-build honesty (a post-tag commit never masquerades as the tag
+# itself). See openspec/changes/expose-simulator-version/design.md D6.
+VERSION     ?= $(shell git describe --tags 2>/dev/null || echo dev)
+APP_VERSION ?= $(VERSION)
+
+# Guard against shell-metachar / whitespace injection through APP_VERSION
+# into the -ldflags string. Allowed grammar tracks the characters that
+# appear in real git tags (semver + pre-release + build-metadata).
+ifneq ($(shell printf '%s' '$(APP_VERSION)' | grep -Eq '^[A-Za-z0-9._+-]+$$' && echo ok),ok)
+$(error APP_VERSION "$(APP_VERSION)" contains unsafe characters; allowed grammar: [A-Za-z0-9._+-]+)
+endif
+
+LDFLAGS     := -X main.Version=$(APP_VERSION)
+
 # Docs toolchain (Docusaurus). Contributors install Node dependencies into
 # ./node_modules via `npm ci`; Node version is pinned in .nvmrc.
 NPM ?= npm
 
 UNAME_S := $(shell uname -s)
 
-.PHONY: all build run test tidy check-tidy dist clean docker-build docker-push docker-up docker-down help \
+.PHONY: all build run test tidy check-tidy dist clean docker-build docker-push docker-up docker-down help version \
         check-go check-docker check-buildx check-linux check-node \
         docs-install docs-serve docs-build docs-clean
 
@@ -24,7 +49,11 @@ all: build
 
 ## build: Cross-compile the simulator binary for Linux (GOOS=linux GOARCH=amd64)
 build: check-go
-	cd $(BUILD_DIR) && CGO_ENABLED=0 GOOS=$(GOOS) GOARCH=$(GOARCH) go build -o $(BINARY) .
+	cd $(BUILD_DIR) && CGO_ENABLED=0 GOOS=$(GOOS) GOARCH=$(GOARCH) go build -ldflags "$(LDFLAGS)" -o $(BINARY) .
+
+## version: Print the resolved version string (useful for CI diagnostics)
+version:
+	@echo $(APP_VERSION)
 
 ## tidy: Sync go.mod and go.sum
 tidy: check-go
@@ -41,8 +70,8 @@ check-tidy: check-go
 ## dist: Build release binaries for linux/amd64 and linux/arm64 into dist/
 dist: check-go
 	mkdir -p dist
-	cd $(GO_DIR) && CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o ../dist/$(BINARY)-linux-amd64 ./simulator
-	cd $(GO_DIR) && CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -o ../dist/$(BINARY)-linux-arm64 ./simulator
+	cd $(GO_DIR) && CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags "$(LDFLAGS)" -o ../dist/$(BINARY)-linux-amd64 ./simulator
+	cd $(GO_DIR) && CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -ldflags "$(LDFLAGS)" -o ../dist/$(BINARY)-linux-arm64 ./simulator
 
 ## test: Run tests (simulator package requires Linux)
 test: check-go
@@ -60,12 +89,13 @@ run: check-linux build
 
 ## docker-build: Build the simulator Docker image for the host platform
 docker-build: check-docker
-	docker build -t $(SIM_IMAGE) .
+	docker build --build-arg APP_VERSION=$(APP_VERSION) -t $(SIM_IMAGE) .
 
 ## docker-push: Build and push a multi-platform image (linux/amd64 + linux/arm64)
 docker-push: check-buildx
 	docker buildx build \
 	  --platform linux/amd64,linux/arm64 \
+	  --build-arg APP_VERSION=$(APP_VERSION) \
 	  --push \
 	  $(addprefix -t ,$(DOCKER_TAGS)) \
 	  .

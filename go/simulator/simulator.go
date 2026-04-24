@@ -99,6 +99,7 @@ func main() {
 		snmpPort        = flag.Int("snmp-port", DEFAULT_SNMP_PORT, "UDP port for SNMP listener on each device (default: 161)")
 		noNamespace     = flag.Bool("no-namespace", false, "Disable network namespace isolation (use root namespace)")
 		showHelp        = flag.Bool("help", false, "Show this help message")
+		showVersion     = flag.Bool("version", false, "Print the simulator version string and exit")
 		ifScenario      = flag.Int("if-scenario", 2, "Interface state scenario: 1=all-shutdown, 2=all-normal (default), 3=all-failure, 4=pct-failure")
 		ifFailurePct    = flag.Int("if-failure-pct", 10, "Percentage of interfaces with oper-down (used with -if-scenario 4, 0–100)")
 
@@ -132,6 +133,15 @@ func main() {
 	)
 
 	flag.Parse()
+
+	// `-version` prints the baked-in Version and exits before any
+	// simulator setup runs (no flag dependencies, no TUN, no netns, no
+	// port binds). Lets `./simulator -version` work without root and
+	// without touching system state.
+	if *showVersion {
+		fmt.Println(Version)
+		return
+	}
 
 	// Apply interface state scenario
 	ifStateConfig = &IfStateConfig{
@@ -168,7 +178,7 @@ func main() {
 		return
 	}
 
-	log.Println("Layer 8 Data Center Simulator with TUN/TAP support starting...")
+	log.Printf("simulator %s starting (pid=%d)", Version, os.Getpid())
 
 	// Check if running as root
 	if os.Geteuid() != 0 {
