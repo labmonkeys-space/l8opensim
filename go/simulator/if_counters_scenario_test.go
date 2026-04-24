@@ -136,19 +136,17 @@ func TestGetDynamic_Counter32ShadowEqualsLow32(t *testing.T) {
 		{".1.3.6.1.2.1.31.1.1.1.7.1", ".1.3.6.1.2.1.2.2.1.11.1"}, // ifHCInUcast / ifInUcast
 		{".1.3.6.1.2.1.31.1.1.1.11.1", ".1.3.6.1.2.1.2.2.1.17.1"},
 	}
+	// Freeze a single evaluation instant so the shadow and HC columns
+	// see the same t — the invariant "shadow == uint32(HC & 0xFFFFFFFF)"
+	// is exact by construction of GetDynamicAt, not drift-tolerant.
+	tSec := time.Since(c.ifCounters.startTime).Seconds()
 	for _, p := range pairs {
-		hcVal := parseU(t, c.ifCounters.GetDynamic(p.hc))
-		shVal := parseU(t, c.ifCounters.GetDynamic(p.shadow))
+		hcVal := parseU(t, c.ifCounters.GetDynamicAt(p.hc, tSec))
+		shVal := parseU(t, c.ifCounters.GetDynamicAt(p.shadow, tSec))
 		want := hcVal & 0xFFFFFFFF
-		// GetDynamic is called twice at slightly different instants;
-		// the integral has advanced by a few packets in between. Use
-		// modular subtraction so wrap at 2³² is handled naturally, and
-		// allow a small drift that rules out real bugs (wrong column,
-		// wrong truncation) while tolerating CI scheduling jitter.
-		drift := (shVal - want) & 0xFFFFFFFF
-		const tolerance uint64 = 10_000 // way under 2³²; far above any measurable inter-call gap
-		if drift > tolerance {
-			t.Errorf("%s=%d, want low-32 of %s (%d)=%d (drift %d > %d)", p.shadow, shVal, p.hc, hcVal, want, drift, tolerance)
+		if shVal != want {
+			t.Errorf("%s=%d, want low-32 of %s (%d)=%d (must be exact at same t)",
+				p.shadow, shVal, p.hc, hcVal, want)
 		}
 	}
 }
@@ -266,7 +264,15 @@ func TestSFlowSnapshotMatchesSNMPAtSameInstant(t *testing.T) {
 	c.InitIfCountersWithScenario(res, 555, IfErrorTypical)
 
 	adapter := NewInterfaceCounterSource(c.ifCounters)
-	recs := adapter.Snapshot(time.Now())
+
+	// Freeze a single evaluation instant. Snapshot honors the passed-in
+	// time; the SNMP reads below use the same frozen tSec. This makes
+	// the "sFlow counter_sample matches concurrent SNMP GET" invariant
+	// a byte-for-byte equality (spec Requirement 5), not drift-tolerant.
+	snapshotAt := time.Now()
+	tSec := snapshotAt.Sub(c.ifCounters.startTime).Seconds()
+
+	recs := adapter.Snapshot(snapshotAt)
 	if len(recs) != 1 {
 		t.Fatalf("Snapshot returned %d records, want 1", len(recs))
 	}
@@ -278,14 +284,8 @@ func TestSFlowSnapshotMatchesSNMPAtSameInstant(t *testing.T) {
 		return uint32(body[off])<<24 | uint32(body[off+1])<<16 | uint32(body[off+2])<<8 | uint32(body[off+3])
 	}
 
-	// Read the same values via SNMP GetDynamic. The instants differ by
-	// microseconds — for counters that grow deterministically from the
-	// integral, that microsecond drift is negligible for this assertion.
-	// We compare with a zero-tolerance equality because Snapshot and
-	// GetDynamic both call octetsAt at near-simultaneous instants and
-	// the octet-rate jitter is sub-pps over microseconds.
-	snmpInUcast := uint32(parseU(t, c.ifCounters.GetDynamic(".1.3.6.1.2.1.2.2.1.11.1")))
-	snmpInErr := uint32(parseU(t, c.ifCounters.GetDynamic(".1.3.6.1.2.1.2.2.1.14.1")))
+	snmpInUcast := uint32(parseU(t, c.ifCounters.GetDynamicAt(".1.3.6.1.2.1.2.2.1.11.1", tSec)))
+	snmpInErr := uint32(parseU(t, c.ifCounters.GetDynamicAt(".1.3.6.1.2.1.2.2.1.14.1", tSec)))
 
 	// Body layout (see encodeIfCountersBody):
 	//   0..3   u32 ifIndex
@@ -302,25 +302,11 @@ func TestSFlowSnapshotMatchesSNMPAtSameInstant(t *testing.T) {
 	sflowInUcast := readU32(32)
 	sflowInErr := readU32(48)
 
-	// Allow modest drift because Snapshot and GetDynamic aren't literally
-	// simultaneous — they call deltaOctetsAt with time.Now() at slightly
-	// different instants. At 1 Gbps / 80 %-avg / 500 B pkts ≈ 200 kpps,
-	// so a 100 µs gap between the two helpers is ~20 packets. A 1000-
-	// packet tolerance catches real drift (e.g. wrong body offsets
-	// produced a ~4 billion drift earlier in this test's history) while
-	// accepting the small inherent scheduling jitter.
-	const tolerance uint32 = 1000
-	drift := func(a, b uint32) uint32 {
-		if a > b {
-			return a - b
-		}
-		return b - a
+	if snmpInUcast != sflowInUcast {
+		t.Errorf("ifInUcastPkts SNMP=%d sFlow=%d (must match exactly at same t)", snmpInUcast, sflowInUcast)
 	}
-	if d := drift(snmpInUcast, sflowInUcast); d > tolerance {
-		t.Errorf("ifInUcastPkts SNMP=%d sFlow=%d (drift %d > %d)", snmpInUcast, sflowInUcast, d, tolerance)
-	}
-	if d := drift(snmpInErr, sflowInErr); d > tolerance {
-		t.Errorf("ifInErrors SNMP=%d sFlow=%d (drift %d > %d)", snmpInErr, sflowInErr, d, tolerance)
+	if snmpInErr != sflowInErr {
+		t.Errorf("ifInErrors SNMP=%d sFlow=%d (must match exactly at same t)", snmpInErr, sflowInErr)
 	}
 }
 

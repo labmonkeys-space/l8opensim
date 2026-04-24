@@ -81,10 +81,23 @@ func NewInterfaceCounterSource(c *IfCounterCycler) *InterfaceCounterSource {
 // Each record is tagged with SourceID = ifIndex so EncodeCounterDatagram
 // emits one counters_sample per interface (collectors such as OpenNMS
 // Telemetryd key if_counters by ds_index).
-func (s *InterfaceCounterSource) Snapshot(_ time.Time) []CounterRecord {
+func (s *InterfaceCounterSource) Snapshot(t time.Time) []CounterRecord {
 	if s == nil || s.cycler == nil {
 		return nil
 	}
+	// Freeze a single evaluation instant so every column within one
+	// interface's body — and across all interfaces in one snapshot —
+	// sees a coherent moment. Mixing values sampled microseconds apart
+	// would break the shadow-equals-low-32(HC) invariant and the
+	// sFlow-equals-concurrent-SNMP-GET contract. A zero-value t (e.g.
+	// from a test that didn't supply one) falls back to "now".
+	var tSec float64
+	if t.IsZero() {
+		tSec = time.Since(s.cycler.startTime).Seconds()
+	} else {
+		tSec = t.Sub(s.cycler.startTime).Seconds()
+	}
+
 	idxs := make([]int, 0, len(s.cycler.knownIfIndexes))
 	for i := range s.cycler.knownIfIndexes {
 		idxs = append(idxs, i)
@@ -97,24 +110,24 @@ func (s *InterfaceCounterSource) Snapshot(_ time.Time) []CounterRecord {
 		}
 		idxStr := strconv.Itoa(ifIndex)
 
-		// Fetch every column from the cycler. `if_counters` is
-		// Counter32-only on the wire, so we read the Counter32 shadow
-		// columns where they exist (shadow = low-32 of the matching
-		// Counter64) and parse them as uint32.
-		inOctets := parseUintOrZero(s.cycler.GetDynamic(ifXTablePrefix + "6." + idxStr))
-		outOctets := parseUintOrZero(s.cycler.GetDynamic(ifXTablePrefix + "10." + idxStr))
+		// Fetch every column from the cycler at the frozen tSec.
+		// `if_counters` is Counter32-only on the wire, so we read the
+		// Counter32 shadow columns where they exist (shadow = low-32
+		// of the matching Counter64) and parse them as uint32.
+		inOctets := parseUintOrZero(s.cycler.GetDynamicAt(ifXTablePrefix+"6."+idxStr, tSec))
+		outOctets := parseUintOrZero(s.cycler.GetDynamicAt(ifXTablePrefix+"10."+idxStr, tSec))
 
-		inUcast := uint32(parseUintOrZero(s.cycler.GetDynamic(ifTablePrefix + "11." + idxStr)))
-		inMcast := uint32(parseUintOrZero(s.cycler.GetDynamic(ifXTablePrefix + "2." + idxStr)))
-		inBcast := uint32(parseUintOrZero(s.cycler.GetDynamic(ifXTablePrefix + "3." + idxStr)))
-		inDisc := uint32(parseUintOrZero(s.cycler.GetDynamic(ifTablePrefix + "13." + idxStr)))
-		inErr := uint32(parseUintOrZero(s.cycler.GetDynamic(ifTablePrefix + "14." + idxStr)))
+		inUcast := uint32(parseUintOrZero(s.cycler.GetDynamicAt(ifTablePrefix+"11."+idxStr, tSec)))
+		inMcast := uint32(parseUintOrZero(s.cycler.GetDynamicAt(ifXTablePrefix+"2."+idxStr, tSec)))
+		inBcast := uint32(parseUintOrZero(s.cycler.GetDynamicAt(ifXTablePrefix+"3."+idxStr, tSec)))
+		inDisc := uint32(parseUintOrZero(s.cycler.GetDynamicAt(ifTablePrefix+"13."+idxStr, tSec)))
+		inErr := uint32(parseUintOrZero(s.cycler.GetDynamicAt(ifTablePrefix+"14."+idxStr, tSec)))
 
-		outUcast := uint32(parseUintOrZero(s.cycler.GetDynamic(ifTablePrefix + "17." + idxStr)))
-		outMcast := uint32(parseUintOrZero(s.cycler.GetDynamic(ifXTablePrefix + "4." + idxStr)))
-		outBcast := uint32(parseUintOrZero(s.cycler.GetDynamic(ifXTablePrefix + "5." + idxStr)))
-		outDisc := uint32(parseUintOrZero(s.cycler.GetDynamic(ifTablePrefix + "19." + idxStr)))
-		outErr := uint32(parseUintOrZero(s.cycler.GetDynamic(ifTablePrefix + "20." + idxStr)))
+		outUcast := uint32(parseUintOrZero(s.cycler.GetDynamicAt(ifTablePrefix+"17."+idxStr, tSec)))
+		outMcast := uint32(parseUintOrZero(s.cycler.GetDynamicAt(ifXTablePrefix+"4."+idxStr, tSec)))
+		outBcast := uint32(parseUintOrZero(s.cycler.GetDynamicAt(ifXTablePrefix+"5."+idxStr, tSec)))
+		outDisc := uint32(parseUintOrZero(s.cycler.GetDynamicAt(ifTablePrefix+"19."+idxStr, tSec)))
+		outErr := uint32(parseUintOrZero(s.cycler.GetDynamicAt(ifTablePrefix+"20."+idxStr, tSec)))
 
 		body := encodeIfCountersBody(
 			uint32(ifIndex), s.cycler.ifSpeedBps[slot],

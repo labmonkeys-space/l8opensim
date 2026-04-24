@@ -221,10 +221,29 @@ func (ic *IfCounterCycler) IfIndices() []int {
 // ifTable / ifXTable OID this cycler handles, or "" if the OID is not
 // in the dynamic-counter set for a known interface index.
 //
+// Each call reads the wall-clock for a fresh evaluation instant — safe
+// when the caller only needs one column. For multi-column coherence
+// (e.g. the Counter32 shadow must equal uint32(Counter64HC & 0xFFFFFFFF)
+// at the same moment; sFlow counter_sample must match a concurrent SNMP
+// GET across 11 columns) use GetDynamicAt with a single captured t.
+//
 // Returned values are decimal strings — the SNMP encoder wraps them as
 // the appropriate Counter32 or Counter64 based on oidTypeTable
 // (snmp_encoding.go).
 func (ic *IfCounterCycler) GetDynamic(oid string) string {
+	if ic == nil {
+		return ""
+	}
+	return ic.GetDynamicAt(oid, time.Since(ic.startTime).Seconds())
+}
+
+// GetDynamicAt evaluates the cycler at a caller-supplied t (seconds
+// since the cycler's startTime). Callers that need a coherent snapshot
+// across several columns capture t once with
+// `time.Since(ic.startTime).Seconds()` and pass the same value to every
+// lookup — guarantees shadow == low-32(HC) byte-for-byte, and makes
+// sFlow counter_sample values match a concurrent SNMP GET exactly.
+func (ic *IfCounterCycler) GetDynamicAt(oid string, t float64) string {
 	if ic == nil {
 		return ""
 	}
@@ -263,7 +282,6 @@ func (ic *IfCounterCycler) GetDynamic(oid string) string {
 	}
 	slot := ifIndex - 1
 
-	t := time.Since(ic.startTime).Seconds()
 	// Live delta octets = octetsAt(t) − baseInOctets. We work in
 	// delta-space for packet / error / discard derivations because the
 	// pre-seed bases (baseInUcast, baseInErr, …) are themselves
@@ -315,19 +333,32 @@ func (ic *IfCounterCycler) GetDynamic(oid string) string {
 	case colIfInErrors:
 		// total live packets (ucast + mcast + bcast) = deltaOctets / pktSize.
 		// Ratios sum to 1 per direction, so we can skip re-splitting.
-		totalDeltaPkts := uint64(float64(inDelta) / ic.pktSizeIn[slot])
+		totalDeltaPkts := uint64(float64(inDelta) / safePktSize(ic.pktSizeIn[slot]))
 		return fmtU32(uint32((ic.baseInErr[slot] + totalDeltaPkts*uint64(ic.errPpmIn[slot])/1_000_000) & 0xFFFFFFFF))
 	case colIfInDiscards:
-		totalDeltaPkts := uint64(float64(inDelta) / ic.pktSizeIn[slot])
+		totalDeltaPkts := uint64(float64(inDelta) / safePktSize(ic.pktSizeIn[slot]))
 		return fmtU32(uint32((ic.baseInDisc[slot] + totalDeltaPkts*uint64(ic.discPpmIn[slot])/1_000_000) & 0xFFFFFFFF))
 	case colIfOutErrors:
-		totalDeltaPkts := uint64(float64(outDelta) / ic.pktSizeOut[slot])
+		totalDeltaPkts := uint64(float64(outDelta) / safePktSize(ic.pktSizeOut[slot]))
 		return fmtU32(uint32((ic.baseOutErr[slot] + totalDeltaPkts*uint64(ic.errPpmOut[slot])/1_000_000) & 0xFFFFFFFF))
 	case colIfOutDiscards:
-		totalDeltaPkts := uint64(float64(outDelta) / ic.pktSizeOut[slot])
+		totalDeltaPkts := uint64(float64(outDelta) / safePktSize(ic.pktSizeOut[slot]))
 		return fmtU32(uint32((ic.baseOutDisc[slot] + totalDeltaPkts*uint64(ic.discPpmOut[slot])/1_000_000) & 0xFFFFFFFF))
 	}
 	return ""
+}
+
+// safePktSize shields every pktSize-divided derivation from a zero or
+// negative divisor. Init draws pktSize from [400, 600] so this is
+// unreachable today, but widening the jitter or allowing an operator
+// override would turn an unguarded division into a silent 0 / NaN /
+// implementation-defined cast. Centralising the guard keeps future
+// refactors from drifting behavior across branches.
+func safePktSize(v float64) float64 {
+	if v <= 0 {
+		return 500
+	}
+	return v
 }
 
 // GetHCOctets is a backward-compatible forwarder to GetDynamic for the
@@ -368,7 +399,10 @@ func (ic *IfCounterCycler) deltaOctetsAt(slot int, t float64, inbound bool) uint
 }
 
 // packets returns a Counter64 value for a packet column: base + totalPkts × ratio.
-// Exactly one of (mcast, bcast, ucast) must be true.
+// Exactly one of (mcast, bcast, ucast) must be true. Passing zero flags
+// is a programmer error: the helper panics rather than silently
+// returning 0, which would be indistinguishable from a genuine "no
+// packets yet" answer and mask the miswiring.
 //
 // The `inbound` flag picks the correct pktSize + ratios + base tables.
 // Returning 64-bit values lets callers either emit them as Counter64
@@ -380,6 +414,9 @@ func (ic *IfCounterCycler) packets(slot int, octets uint64, inbound, mcast, bcas
 		ratio   float64
 		base    uint64
 	)
+	if !ucast && !mcast && !bcast {
+		panic("IfCounterCycler.packets: exactly one of (ucast, mcast, bcast) must be true")
+	}
 	if inbound {
 		pktSize = ic.pktSizeIn[slot]
 		switch {
@@ -407,10 +444,7 @@ func (ic *IfCounterCycler) packets(slot int, octets uint64, inbound, mcast, bcas
 			base = ic.baseOutBcast[slot]
 		}
 	}
-	if pktSize <= 0 {
-		pktSize = 500 // defensive; init always sets a positive value
-	}
-	total := float64(octets) / pktSize
+	total := float64(octets) / safePktSize(pktSize)
 	return base + uint64(total*ratio)
 }
 
