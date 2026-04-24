@@ -6,6 +6,7 @@ import (
 	"net"
 	"net/http"
 	"testing"
+	"time"
 )
 
 func TestAPIServerStopClosesHTTPServer(t *testing.T) {
@@ -60,6 +61,43 @@ func TestAPIServerStopClosesHTTPServer(t *testing.T) {
 	}
 }
 
+// TestAPIServerStartClosesListenerWhenTLSCertMissing covers the Start()
+// error path when sharedTLSCert is nil: the listener must be closed so
+// the bound socket (and its namespace veth, if source-per-device is on)
+// is not orphaned on the way out.
+func TestAPIServerStartClosesListenerWhenTLSCertMissing(t *testing.T) {
+	originalListen := apiListenTCP
+	t.Cleanup(func() { apiListenTCP = originalListen })
+
+	listener := &stubListener{}
+	apiListenTCP = func(device *DeviceSimulator, addr string) (net.Listener, error) {
+		return listener, nil
+	}
+
+	device := &DeviceSimulator{
+		IP:      net.IPv4(127, 0, 0, 1),
+		APIPort: 8443,
+		resources: &DeviceResources{
+			API: []APIResource{
+				{
+					Method:   "GET",
+					Path:     "/health",
+					Response: map[string]string{"status": "ok"},
+				},
+			},
+		},
+	}
+	server := &APIServer{device: device}
+
+	if err := server.Start(); err == nil {
+		t.Fatal("Start() error = nil, want missing TLS certificate error")
+	}
+
+	if !listener.closed {
+		t.Fatal("listener.Close() was not called on TLS setup failure")
+	}
+}
+
 type blockingAPIServer struct {
 	serveCalled chan struct{}
 	closeCalled chan struct{}
@@ -86,14 +124,26 @@ func (s *blockingAPIServer) Close() error {
 	return nil
 }
 
-type stubListener struct{}
+// stubListener is a minimal net.Listener used by both tests. `closed` is
+// flipped by Close() so TestAPIServerStartClosesListenerWhenTLSCertMissing
+// can assert the error path actually closed the socket.
+type stubListener struct {
+	closed bool
+}
 
 func (l *stubListener) Accept() (net.Conn, error) {
 	return nil, errors.New("not implemented")
 }
 
-func (l *stubListener) Close() error { return nil }
+func (l *stubListener) Close() error {
+	l.closed = true
+	return nil
+}
 
 func (l *stubListener) Addr() net.Addr {
 	return &net.TCPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 8443}
+}
+
+func (l *stubListener) SetDeadline(time.Time) error {
+	return nil
 }
