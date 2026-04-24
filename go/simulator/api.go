@@ -118,20 +118,22 @@ func (s *APIServer) Stop() error {
 		return nil
 	}
 
+	// Reset state unconditionally so a Close() error does not leave the
+	// APIServer wedged in running=true with stale pointers. A retried
+	// Stop() would otherwise double-close the server; a subsequent Start()
+	// would short-circuit on running=true and silently "succeed" without
+	// restarting. Close/listener errors are still surfaced to the caller.
+	var closeErr error
 	if s.server != nil {
-		if err := s.server.Close(); err != nil {
-			return err
-		}
+		closeErr = s.server.Close()
 	} else if s.listener != nil {
-		if err := s.listener.Close(); err != nil {
-			return err
-		}
+		closeErr = s.listener.Close()
 	}
 
 	s.server = nil
 	s.listener = nil
 	s.running = false
-	return nil
+	return closeErr
 }
 
 // handleAPIRequestMultiMethod processes incoming API requests that may have multiple method handlers
