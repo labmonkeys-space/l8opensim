@@ -33,6 +33,14 @@ import (
 	"golang.org/x/crypto/ssh"
 )
 
+var deleteDeviceTunInterfaces = func(sm *SimulatorManager, interfaceNames []string) error {
+	return sm.bulkDeleteTunInterfaces(interfaceNames)
+}
+
+var deleteDeviceTunInterfacesInNamespace = func(sm *SimulatorManager, interfaceNames []string) error {
+	return sm.bulkDeleteTunInterfacesInNamespace(interfaceNames)
+}
+
 // SimulatorManager implementation
 func NewSimulatorManager() *SimulatorManager {
 	return NewSimulatorManagerWithOptions(true) // Default: use namespace isolation
@@ -267,13 +275,29 @@ func (sm *SimulatorManager) DeleteDevice(deviceID string) error {
 		// log.Printf("Error stopping device %s: %v", deviceID, err)
 	}
 
-	// Always close TUN FD on deletion, even for pre-allocated interfaces
-	if device.tunIface != nil && device.tunIface.PreAllocated {
-		device.tunIface.destroy()
-		// Remove from pre-allocated pool
-		sm.tunPoolMutex.Lock()
-		delete(sm.tunInterfacePool, device.IP.String())
-		sm.tunPoolMutex.Unlock()
+	if device.tunIface != nil {
+		interfaceName := device.tunIface.Name
+
+		// Always close TUN FD on deletion, even for pre-allocated interfaces.
+		if device.tunIface.PreAllocated {
+			device.tunIface.destroy()
+		}
+
+		var err error
+		if sm.useNamespace && sm.netNamespace != nil {
+			err = deleteDeviceTunInterfacesInNamespace(sm, []string{interfaceName})
+		} else {
+			err = deleteDeviceTunInterfaces(sm, []string{interfaceName})
+		}
+		if err != nil {
+			return fmt.Errorf("delete TUN interface %s: %w", interfaceName, err)
+		}
+
+		if device.tunIface.PreAllocated {
+			sm.tunPoolMutex.Lock()
+			delete(sm.tunInterfacePool, device.IP.String())
+			sm.tunPoolMutex.Unlock()
+		}
 	}
 
 	delete(sm.devices, deviceID)
