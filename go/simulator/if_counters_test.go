@@ -65,7 +65,8 @@ func TestIfCounterCycler_Monotonic(t *testing.T) {
 	c := &MetricsCycler{}
 	c.InitIfCounters(res, 42)
 
-	if c.ifCounters == nil {
+	ic := c.ifCounters.Load()
+	if ic == nil {
 		t.Fatal("InitIfCounters did not create ifCounters")
 	}
 
@@ -74,8 +75,8 @@ func TestIfCounterCycler_Monotonic(t *testing.T) {
 	for poll := 0; poll < 5; poll++ {
 		time.Sleep(5 * time.Millisecond)
 
-		v1str := c.ifCounters.GetHCOctets(".1.3.6.1.2.1.31.1.1.1.6.1")
-		v2str := c.ifCounters.GetHCOctets(".1.3.6.1.2.1.31.1.1.1.6.2")
+		v1str := ic.GetHCOctets(".1.3.6.1.2.1.31.1.1.1.6.1")
+		v2str := ic.GetHCOctets(".1.3.6.1.2.1.31.1.1.1.6.2")
 		v1, err1 := strconv.ParseUint(v1str, 10, 64)
 		v2, err2 := strconv.ParseUint(v2str, 10, 64)
 		if err1 != nil || err2 != nil {
@@ -99,7 +100,8 @@ func TestIfCounterCycler_NoWrapAtZero(t *testing.T) {
 	c := &MetricsCycler{}
 	c.InitIfCounters(res, 99)
 
-	vStr := c.ifCounters.GetHCOctets(".1.3.6.1.2.1.31.1.1.1.6.1")
+	ic := c.ifCounters.Load()
+	vStr := ic.GetHCOctets(".1.3.6.1.2.1.31.1.1.1.6.1")
 	v, err := strconv.ParseUint(vStr, 10, 64)
 	if err != nil {
 		t.Fatalf("non-numeric value at t≈0: %q", vStr)
@@ -125,18 +127,19 @@ func TestIfCounterCycler_RateInRange(t *testing.T) {
 	c := &MetricsCycler{}
 	c.InitIfCounters(res, 7)
 
-	if c.ifCounters == nil {
+	ic := c.ifCounters.Load()
+	if ic == nil {
 		t.Fatal("InitIfCounters did not create ifCounters")
 	}
 
 	// Sample over ~100 ms; compute average byte-rate.
 	start := time.Now()
-	v0str := c.ifCounters.GetHCOctets(".1.3.6.1.2.1.31.1.1.1.6.1")
+	v0str := ic.GetHCOctets(".1.3.6.1.2.1.31.1.1.1.6.1")
 	v0, _ := strconv.ParseUint(v0str, 10, 64)
 
 	time.Sleep(100 * time.Millisecond)
 
-	v1str := c.ifCounters.GetHCOctets(".1.3.6.1.2.1.31.1.1.1.6.1")
+	v1str := ic.GetHCOctets(".1.3.6.1.2.1.31.1.1.1.6.1")
 	v1, _ := strconv.ParseUint(v1str, 10, 64)
 	elapsed := time.Since(start).Seconds()
 
@@ -157,12 +160,13 @@ func TestIfCounterCycler_UnknownOID(t *testing.T) {
 	c := &MetricsCycler{}
 	c.InitIfCounters(res, 1)
 
+	ic := c.ifCounters.Load()
 	// Wrong column — should return empty string
-	if v := c.ifCounters.GetHCOctets(".1.3.6.1.2.1.31.1.1.1.7.1"); v != "" {
+	if v := ic.GetHCOctets(".1.3.6.1.2.1.31.1.1.1.7.1"); v != "" {
 		t.Errorf("expected empty for non-HC OID, got %q", v)
 	}
 	// Out-of-range interface index
-	if v := c.ifCounters.GetHCOctets(".1.3.6.1.2.1.31.1.1.1.6.99"); v != "" {
+	if v := ic.GetHCOctets(".1.3.6.1.2.1.31.1.1.1.6.99"); v != "" {
 		t.Errorf("expected empty for out-of-range ifIndex, got %q", v)
 	}
 }
@@ -174,7 +178,8 @@ func TestIfCounterCycler_SparseIfIndex(t *testing.T) {
 	c := &MetricsCycler{}
 	c.InitIfCounters(res, 77)
 
-	if c.ifCounters == nil {
+	ic := c.ifCounters.Load()
+	if ic == nil {
 		t.Fatal("InitIfCounters did not create ifCounters")
 	}
 
@@ -183,7 +188,7 @@ func TestIfCounterCycler_SparseIfIndex(t *testing.T) {
 	// Known indices should return live values.
 	for _, idx := range []int{1, 3, 5} {
 		oid := fmt.Sprintf(".1.3.6.1.2.1.31.1.1.1.6.%d", idx)
-		if v := c.ifCounters.GetHCOctets(oid); v == "" {
+		if v := ic.GetHCOctets(oid); v == "" {
 			t.Errorf("expected non-empty for known ifIndex %d, got empty", idx)
 		}
 	}
@@ -191,7 +196,7 @@ func TestIfCounterCycler_SparseIfIndex(t *testing.T) {
 	// Missing indices must not return a live counter.
 	for _, idx := range []int{2, 4} {
 		oid := fmt.Sprintf(".1.3.6.1.2.1.31.1.1.1.6.%d", idx)
-		if v := c.ifCounters.GetHCOctets(oid); v != "" {
+		if v := ic.GetHCOctets(oid); v != "" {
 			t.Errorf("expected empty for missing ifIndex %d, got %q", idx, v)
 		}
 	}
@@ -205,8 +210,9 @@ func TestIfCounterCycler_InOutDiffer(t *testing.T) {
 	c.InitIfCounters(res, 123456)
 
 	time.Sleep(10 * time.Millisecond)
-	inStr := c.ifCounters.GetHCOctets(".1.3.6.1.2.1.31.1.1.1.6.1")
-	outStr := c.ifCounters.GetHCOctets(".1.3.6.1.2.1.31.1.1.1.10.1")
+	ic := c.ifCounters.Load()
+	inStr := ic.GetHCOctets(".1.3.6.1.2.1.31.1.1.1.6.1")
+	outStr := ic.GetHCOctets(".1.3.6.1.2.1.31.1.1.1.10.1")
 
 	in, _ := strconv.ParseUint(inStr, 10, 64)
 	out, _ := strconv.ParseUint(outStr, 10, 64)
@@ -233,7 +239,7 @@ func TestIfCounterCycler_NoHCOIDs(t *testing.T) {
 	c := &MetricsCycler{}
 	c.InitIfCounters(res, 1)
 
-	if c.ifCounters != nil {
+	if c.ifCounters.Load() != nil {
 		t.Error("expected ifCounters to be nil for device with no HC OIDs")
 	}
 }
@@ -253,11 +259,12 @@ func TestInterfaceCounterSource_MatchesSNMPSurface(t *testing.T) {
 
 	c := &MetricsCycler{}
 	c.InitIfCounters(res, 4242)
-	if c.ifCounters == nil {
+	ic := c.ifCounters.Load()
+	if ic == nil {
 		t.Fatal("InitIfCounters did not create ifCounters")
 	}
 
-	adapter := NewInterfaceCounterSource(c.ifCounters)
+	adapter := NewInterfaceCounterSource(ic)
 	if adapter == nil {
 		t.Fatal("NewInterfaceCounterSource returned nil")
 	}
@@ -286,8 +293,8 @@ func TestInterfaceCounterSource_MatchesSNMPSurface(t *testing.T) {
 			t.Errorf("adapter missing ifIndex %d", ifIdx)
 			continue
 		}
-		inStr := c.ifCounters.GetHCOctets(fmt.Sprintf(".1.3.6.1.2.1.31.1.1.1.6.%d", ifIdx))
-		outStr := c.ifCounters.GetHCOctets(fmt.Sprintf(".1.3.6.1.2.1.31.1.1.1.10.%d", ifIdx))
+		inStr := ic.GetHCOctets(fmt.Sprintf(".1.3.6.1.2.1.31.1.1.1.6.%d", ifIdx))
+		outStr := ic.GetHCOctets(fmt.Sprintf(".1.3.6.1.2.1.31.1.1.1.10.%d", ifIdx))
 		snmpIn, _ := strconv.ParseUint(inStr, 10, 64)
 		snmpOut, _ := strconv.ParseUint(outStr, 10, 64)
 
@@ -333,7 +340,8 @@ func TestIfCounterCycler_BaseIsPositive(t *testing.T) {
 	c.InitIfCounters(res, 99)
 
 	// Read immediately (t ≈ 0)
-	vStr := c.ifCounters.GetHCOctets(".1.3.6.1.2.1.31.1.1.1.6.1")
+	ic := c.ifCounters.Load()
+	vStr := ic.GetHCOctets(".1.3.6.1.2.1.31.1.1.1.6.1")
 	v, _ := strconv.ParseUint(vStr, 10, 64)
 
 	// ~24h of 80% traffic at 1 Gbps ≈ 8.64 TB; require at least 10 GB.
@@ -352,7 +360,7 @@ func TestIfCounterCycler_NextDynamicOID_WalksColumnWithoutStatic(t *testing.T) {
 	res := buildSparseTestResources(t, []int{1, 3, 5}, 1_000_000_000)
 	c := &MetricsCycler{}
 	c.InitIfCounters(res, 42)
-	ic := c.ifCounters
+	ic := c.ifCounters.Load()
 	if ic == nil {
 		t.Fatal("InitIfCounters did not create ifCounters")
 	}
@@ -390,7 +398,7 @@ func TestIfCounterCycler_NextDynamicOID_OrderAndBounds(t *testing.T) {
 	res := buildTestResources(t, []uint64{1_000_000_000, 1_000_000_000})
 	c := &MetricsCycler{}
 	c.InitIfCounters(res, 7)
-	ic := c.ifCounters
+	ic := c.ifCounters.Load()
 	if ic == nil {
 		t.Fatal("InitIfCounters did not create ifCounters")
 	}

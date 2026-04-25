@@ -42,6 +42,7 @@ func TestGetDynamic_MonotonicAllColumns(t *testing.T) {
 	res := buildTestResources(t, []uint64{1_000_000_000})
 	c := &MetricsCycler{}
 	c.InitIfCountersWithScenario(res, 42, IfErrorTypical)
+	ic := c.ifCounters.Load()
 
 	cases := []struct {
 		oid  string
@@ -74,7 +75,7 @@ func TestGetDynamic_MonotonicAllColumns(t *testing.T) {
 	for poll := 0; poll < 5; poll++ {
 		time.Sleep(5 * time.Millisecond)
 		for _, tc := range cases {
-			v := parseU(t, c.ifCounters.GetDynamic(tc.oid))
+			v := parseU(t, ic.GetDynamic(tc.oid))
 			if poll > 0 && v < prev[tc.oid] {
 				t.Errorf("poll %d: %s decreased %d → %d", poll, tc.desc, prev[tc.oid], v)
 			}
@@ -89,20 +90,21 @@ func TestGetDynamic_RatiosSumToTotalPackets(t *testing.T) {
 	res := buildTestResources(t, []uint64{10_000_000_000})
 	c := &MetricsCycler{}
 	c.InitIfCountersWithScenario(res, 2026, IfErrorClean)
+	ic := c.ifCounters.Load()
 
 	// Advance time so the derived packet counts have meaningful magnitude
 	// beyond the t≈0 floor.
 	time.Sleep(15 * time.Millisecond)
 
-	inUcast := parseU(t, c.ifCounters.GetDynamic(".1.3.6.1.2.1.31.1.1.1.7.1"))
-	inMcast := parseU(t, c.ifCounters.GetDynamic(".1.3.6.1.2.1.31.1.1.1.8.1"))
-	inBcast := parseU(t, c.ifCounters.GetDynamic(".1.3.6.1.2.1.31.1.1.1.9.1"))
-	inOctets := parseU(t, c.ifCounters.GetDynamic(".1.3.6.1.2.1.31.1.1.1.6.1"))
+	inUcast := parseU(t, ic.GetDynamic(".1.3.6.1.2.1.31.1.1.1.7.1"))
+	inMcast := parseU(t, ic.GetDynamic(".1.3.6.1.2.1.31.1.1.1.8.1"))
+	inBcast := parseU(t, ic.GetDynamic(".1.3.6.1.2.1.31.1.1.1.9.1"))
+	inOctets := parseU(t, ic.GetDynamic(".1.3.6.1.2.1.31.1.1.1.6.1"))
 
 	// totalInPkts(t) = inOctets / pktSizeIn  — approximate; ratio
 	// rounding to uint64 at each call can drop fractional packets so
 	// we allow 0.2 % tolerance.
-	pktSize := c.ifCounters.pktSizeIn[0]
+	pktSize := ic.pktSizeIn[0]
 	expectedTotal := float64(inOctets) / pktSize
 	gotTotal := float64(inUcast + inMcast + inBcast)
 	if expectedTotal == 0 {
@@ -121,6 +123,7 @@ func TestGetDynamic_Counter32ShadowEqualsLow32(t *testing.T) {
 	res := buildTestResources(t, []uint64{1_000_000_000})
 	c := &MetricsCycler{}
 	c.InitIfCountersWithScenario(res, 99, IfErrorClean)
+	ic := c.ifCounters.Load()
 
 	// Check both directions for all three shadow pairs at t ≈ 0.
 	pairs := []struct {
@@ -139,10 +142,10 @@ func TestGetDynamic_Counter32ShadowEqualsLow32(t *testing.T) {
 	// Freeze a single evaluation instant so the shadow and HC columns
 	// see the same t — the invariant "shadow == uint32(HC & 0xFFFFFFFF)"
 	// is exact by construction of GetDynamicAt, not drift-tolerant.
-	tSec := time.Since(c.ifCounters.startTime).Seconds()
+	tSec := time.Since(ic.startTime).Seconds()
 	for _, p := range pairs {
-		hcVal := parseU(t, c.ifCounters.GetDynamicAt(p.hc, tSec))
-		shVal := parseU(t, c.ifCounters.GetDynamicAt(p.shadow, tSec))
+		hcVal := parseU(t, ic.GetDynamicAt(p.hc, tSec))
+		shVal := parseU(t, ic.GetDynamicAt(p.shadow, tSec))
 		want := hcVal & 0xFFFFFFFF
 		if shVal != want {
 			t.Errorf("%s=%d, want low-32 of %s (%d)=%d (must be exact at same t)",
@@ -157,6 +160,7 @@ func TestScenario_CleanHasZeroErrors(t *testing.T) {
 	res := buildTestResources(t, []uint64{1_000_000_000})
 	c := &MetricsCycler{}
 	c.InitIfCountersWithScenario(res, 1, IfErrorClean)
+	ic := c.ifCounters.Load()
 
 	oids := []string{
 		".1.3.6.1.2.1.2.2.1.13.1", // ifInDiscards
@@ -166,11 +170,11 @@ func TestScenario_CleanHasZeroErrors(t *testing.T) {
 	}
 	start := map[string]uint64{}
 	for _, oid := range oids {
-		start[oid] = parseU(t, c.ifCounters.GetDynamic(oid))
+		start[oid] = parseU(t, ic.GetDynamic(oid))
 	}
 	time.Sleep(20 * time.Millisecond)
 	for _, oid := range oids {
-		got := parseU(t, c.ifCounters.GetDynamic(oid))
+		got := parseU(t, ic.GetDynamic(oid))
 		if got != start[oid] {
 			t.Errorf("%s grew under clean scenario: %d → %d", oid, start[oid], got)
 		}
@@ -183,10 +187,11 @@ func TestScenario_FailingAccumulatesErrors(t *testing.T) {
 	res := buildTestResources(t, []uint64{1_000_000_000})
 	c := &MetricsCycler{}
 	c.InitIfCountersWithScenario(res, 1, IfErrorFailing)
+	ic := c.ifCounters.Load()
 
-	t0 := parseU(t, c.ifCounters.GetDynamic(".1.3.6.1.2.1.2.2.1.14.1"))
+	t0 := parseU(t, ic.GetDynamic(".1.3.6.1.2.1.2.2.1.14.1"))
 	time.Sleep(50 * time.Millisecond)
-	t1 := parseU(t, c.ifCounters.GetDynamic(".1.3.6.1.2.1.2.2.1.14.1"))
+	t1 := parseU(t, ic.GetDynamic(".1.3.6.1.2.1.2.2.1.14.1"))
 	if t1 <= t0 {
 		t.Errorf("failing scenario: ifInErrors did not grow across 50ms poll window (%d → %d)", t0, t1)
 	}
@@ -201,12 +206,14 @@ func TestScenario_PerDeviceIsolation(t *testing.T) {
 
 	clean := &MetricsCycler{}
 	clean.InitIfCountersWithScenario(res, 7, IfErrorClean)
+	cleanIC := clean.ifCounters.Load()
 
 	failing := &MetricsCycler{}
 	failing.InitIfCountersWithScenario(res, 7, IfErrorFailing)
+	failIC := failing.ifCounters.Load()
 
-	cleanStart := parseU(t, clean.ifCounters.GetDynamic(".1.3.6.1.2.1.2.2.1.14.1"))
-	failStart := parseU(t, failing.ifCounters.GetDynamic(".1.3.6.1.2.1.2.2.1.14.1"))
+	cleanStart := parseU(t, cleanIC.GetDynamic(".1.3.6.1.2.1.2.2.1.14.1"))
+	failStart := parseU(t, failIC.GetDynamic(".1.3.6.1.2.1.2.2.1.14.1"))
 	if cleanStart != 0 {
 		t.Errorf("clean device started with non-zero errors: %d", cleanStart)
 	}
@@ -216,8 +223,8 @@ func TestScenario_PerDeviceIsolation(t *testing.T) {
 
 	time.Sleep(30 * time.Millisecond)
 
-	cleanAfter := parseU(t, clean.ifCounters.GetDynamic(".1.3.6.1.2.1.2.2.1.14.1"))
-	failAfter := parseU(t, failing.ifCounters.GetDynamic(".1.3.6.1.2.1.2.2.1.14.1"))
+	cleanAfter := parseU(t, cleanIC.GetDynamic(".1.3.6.1.2.1.2.2.1.14.1"))
+	failAfter := parseU(t, failIC.GetDynamic(".1.3.6.1.2.1.2.2.1.14.1"))
 	if cleanAfter != cleanStart {
 		t.Errorf("clean device grew errors despite sharing resources with failing: %d → %d", cleanStart, cleanAfter)
 	}
@@ -262,15 +269,16 @@ func TestSFlowSnapshotMatchesSNMPAtSameInstant(t *testing.T) {
 	res := buildTestResources(t, []uint64{1_000_000_000})
 	c := &MetricsCycler{}
 	c.InitIfCountersWithScenario(res, 555, IfErrorTypical)
+	ic := c.ifCounters.Load()
 
-	adapter := NewInterfaceCounterSource(c.ifCounters)
+	adapter := NewInterfaceCounterSource(ic)
 
 	// Freeze a single evaluation instant. Snapshot honors the passed-in
 	// time; the SNMP reads below use the same frozen tSec. This makes
 	// the "sFlow counter_sample matches concurrent SNMP GET" invariant
 	// a byte-for-byte equality (spec Requirement 5), not drift-tolerant.
 	snapshotAt := time.Now()
-	tSec := snapshotAt.Sub(c.ifCounters.startTime).Seconds()
+	tSec := snapshotAt.Sub(ic.startTime).Seconds()
 
 	recs := adapter.Snapshot(snapshotAt)
 	if len(recs) != 1 {
@@ -284,8 +292,8 @@ func TestSFlowSnapshotMatchesSNMPAtSameInstant(t *testing.T) {
 		return uint32(body[off])<<24 | uint32(body[off+1])<<16 | uint32(body[off+2])<<8 | uint32(body[off+3])
 	}
 
-	snmpInUcast := uint32(parseU(t, c.ifCounters.GetDynamicAt(".1.3.6.1.2.1.2.2.1.11.1", tSec)))
-	snmpInErr := uint32(parseU(t, c.ifCounters.GetDynamicAt(".1.3.6.1.2.1.2.2.1.14.1", tSec)))
+	snmpInUcast := uint32(parseU(t, ic.GetDynamicAt(".1.3.6.1.2.1.2.2.1.11.1", tSec)))
+	snmpInErr := uint32(parseU(t, ic.GetDynamicAt(".1.3.6.1.2.1.2.2.1.14.1", tSec)))
 
 	// Body layout (see encodeIfCountersBody):
 	//   0..3   u32 ifIndex
@@ -317,10 +325,11 @@ func TestCleanScenario_ZeroPreSeed(t *testing.T) {
 	res := buildTestResources(t, []uint64{1_000_000_000})
 	c := &MetricsCycler{}
 	c.InitIfCountersWithScenario(res, 88, IfErrorClean)
+	ic := c.ifCounters.Load()
 
 	for _, col := range []string{"13", "14", "19", "20"} {
 		oid := fmt.Sprintf(".1.3.6.1.2.1.2.2.1.%s.1", col)
-		if v := parseU(t, c.ifCounters.GetDynamic(oid)); v != 0 {
+		if v := parseU(t, ic.GetDynamic(oid)); v != 0 {
 			t.Errorf("clean scenario %s = %d at t≈0; want 0", oid, v)
 		}
 	}
@@ -333,12 +342,13 @@ func TestTypicalScenario_NonZeroPreSeed(t *testing.T) {
 	res := buildTestResources(t, []uint64{1_000_000_000})
 	c := &MetricsCycler{}
 	c.InitIfCountersWithScenario(res, 88, IfErrorTypical)
+	ic := c.ifCounters.Load()
 
 	// ifInErrors / ifInDiscards should both be > 0 at t=0 — typical
 	// ppm × 24h packet pre-seed is orders of magnitude above 0.
 	for _, col := range []string{"13", "14", "19", "20"} {
 		oid := fmt.Sprintf(".1.3.6.1.2.1.2.2.1.%s.1", col)
-		if v := parseU(t, c.ifCounters.GetDynamic(oid)); v == 0 {
+		if v := parseU(t, ic.GetDynamic(oid)); v == 0 {
 			t.Errorf("typical scenario %s = 0 at t≈0; expected non-zero pre-seed", oid)
 		}
 	}
@@ -351,6 +361,7 @@ func TestGetDynamic_UnknownColumnFallsThrough(t *testing.T) {
 	res := buildTestResources(t, []uint64{1_000_000_000})
 	c := &MetricsCycler{}
 	c.InitIfCountersWithScenario(res, 1, IfErrorClean)
+	ic := c.ifCounters.Load()
 
 	// ifType (.3), ifMtu (.4), ifAdminStatus (.7), ifOperStatus (.8)
 	// — none of these columns are in the dynamic set.
@@ -360,7 +371,7 @@ func TestGetDynamic_UnknownColumnFallsThrough(t *testing.T) {
 		".1.3.6.1.2.1.2.2.1.7.1",
 		".1.3.6.1.2.1.2.2.1.8.1",
 	} {
-		if v := c.ifCounters.GetDynamic(oid); v != "" {
+		if v := ic.GetDynamic(oid); v != "" {
 			t.Errorf("GetDynamic(%q) = %q; want empty (fall through to static JSON)", oid, v)
 		}
 	}
@@ -372,14 +383,15 @@ func TestGetHCOctets_LegacyShim(t *testing.T) {
 	res := buildTestResources(t, []uint64{1_000_000_000})
 	c := &MetricsCycler{}
 	c.InitIfCountersWithScenario(res, 1, IfErrorClean)
+	ic := c.ifCounters.Load()
 
-	in := c.ifCounters.GetHCOctets(".1.3.6.1.2.1.31.1.1.1.6.1")
-	out := c.ifCounters.GetHCOctets(".1.3.6.1.2.1.31.1.1.1.10.1")
+	in := ic.GetHCOctets(".1.3.6.1.2.1.31.1.1.1.6.1")
+	out := ic.GetHCOctets(".1.3.6.1.2.1.31.1.1.1.10.1")
 	if in == "" || out == "" {
 		t.Errorf("legacy GetHCOctets returned empty for HC octet OIDs: in=%q out=%q", in, out)
 	}
 	// Should return empty for non-HC-octet columns.
-	if v := c.ifCounters.GetHCOctets(".1.3.6.1.2.1.31.1.1.1.7.1"); v != "" {
+	if v := ic.GetHCOctets(".1.3.6.1.2.1.31.1.1.1.7.1"); v != "" {
 		t.Errorf("legacy GetHCOctets returned %q for non-HC-octet OID; want empty", v)
 	}
 }

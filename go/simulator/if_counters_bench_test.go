@@ -56,7 +56,7 @@ func BenchmarkNextDynamicOID(b *testing.B) {
 	res := buildBenchResources(b, speeds)
 	c := &MetricsCycler{}
 	c.InitIfCounters(res, 42)
-	ic := c.ifCounters
+	ic := c.ifCounters.Load()
 	if ic == nil {
 		b.Fatal("InitIfCounters did not create ifCounters")
 	}

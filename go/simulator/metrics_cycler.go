@@ -35,7 +35,15 @@ type MetricsCycler struct {
 	memIndex   uint32               // atomic, current position
 	tempIndex  uint32               // atomic, current position
 	gpuMetrics []*GPUMetrics        // Per-GPU cycling metrics (nil for non-GPU devices)
-	ifCounters *IfCounterCycler     // Per-interface HC counter cycling (nil if no HC OIDs)
+	// ifCounters holds the per-interface HC counter cycler (nil if no HC OIDs).
+	//
+	// The pointer is stored atomically. The pointed-to IfCounterCycler is
+	// immutable after Store — re-initialisation means building a fresh
+	// instance and calling Store again with the new pointer. All readers
+	// must call Load() at the top of the function and operate on the
+	// captured local. This makes a future runtime reset / rescenario
+	// control plane safe to drop in without racing the SNMP hot path.
+	ifCounters atomic.Pointer[IfCounterCycler]
 }
 
 // NewMetricsCycler creates a cycler with 100 data points generated from the
