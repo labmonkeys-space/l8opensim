@@ -189,11 +189,14 @@ func (sm *SimulatorManager) StartTrapSubsystem(cfg TrapSubsystemConfig) error {
 	sm.trapGlobalCap = cfg.GlobalCap
 	sm.trapSourcePerDevice = cfg.SourcePerDevice
 	sm.trapCatalogPath = cfg.CatalogPath
-	sm.mu.Unlock()
-	// Publish the scheduler last so any concurrent reader observing
-	// non-nil also sees the catalog/encoder/limiter writes above
-	// (release/acquire ordering via atomic.Pointer.Store/Load).
+	// Publish the scheduler under sm.mu.Lock alongside the dependent
+	// fields so any reader holding sm.mu.RLock sees a consistent
+	// snapshot (scheduler-non-nil ⇔ deps populated). The atomic.Pointer
+	// only exists to give getTrapScheduler a lock-free Load — that
+	// closes the DeleteDevice self-deadlock without sacrificing the
+	// consistency that the RLock-protected readers rely on.
 	sm.trapScheduler.Store(scheduler)
+	sm.mu.Unlock()
 
 	capStr := "unlimited"
 	if cfg.GlobalCap > 0 {
@@ -349,11 +352,11 @@ func (sm *SimulatorManager) StopTrapExport() {
 	}
 	sm.closeTrapConnPool()
 
-	// Clear the scheduler first so a racing reader cannot observe the
-	// scheduler still alive while the dependent fields below are zeroed.
-	sm.trapScheduler.Store(nil)
-
 	sm.mu.Lock()
+	// Clear the scheduler under sm.mu.Lock alongside the dependent
+	// fields so any reader holding sm.mu.RLock sees a consistent
+	// snapshot (scheduler-nil ⇔ deps cleared).
+	sm.trapScheduler.Store(nil)
 	sm.trapCatalog = nil
 	sm.trapCatalogsByType = nil
 	sm.trapCatalogPath = ""
@@ -399,18 +402,22 @@ func (sm *SimulatorManager) startDeviceTrapExporter(device *DeviceSimulator) err
 		return fmt.Errorf("trap export: parse mode: %w", err)
 	}
 
-	scheduler := sm.trapScheduler.Load()
-	if scheduler == nil {
-		return fmt.Errorf("trap export: subsystem not started; call StartTrapSubsystem first")
-	}
-
+	// Snapshot scheduler + dependent fields under one RLock so a
+	// concurrent Stop cannot interleave between the scheduler nil-check
+	// and the encoder/limiter reads. With the Start/Stop fix that puts
+	// Store inside sm.mu.Lock, the RLock window is the consistent unit.
 	sm.mu.RLock()
+	scheduler := sm.trapScheduler.Load()
 	sourcePerDevice := sm.trapSourcePerDevice
 	encoder := sm.trapEncoder
 	limiter := sm.trapLimiter
 	deviceIPStr := device.IP.String()
 	modelLabel := modelLabelForSlug(sm.deviceTypesByIP[deviceIPStr])
 	sm.mu.RUnlock()
+
+	if scheduler == nil {
+		return fmt.Errorf("trap export: subsystem not started; call StartTrapSubsystem first")
+	}
 	if mode == TrapModeInform && !sourcePerDevice {
 		return fmt.Errorf("trap export: INFORM mode requires -trap-source-per-device=true")
 	}

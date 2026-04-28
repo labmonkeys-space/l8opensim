@@ -236,10 +236,13 @@ func (sm *SimulatorManager) StartSyslogSubsystem(cfg SyslogSubsystemConfig) erro
 	sm.syslogGlobalCap = cfg.GlobalCap
 	sm.syslogSourcePerDevice = cfg.SourcePerDevice
 	sm.syslogCatalogPath = cfg.CatalogPath
-	sm.mu.Unlock()
-	// Publish the scheduler last so any concurrent reader observing
-	// non-nil also sees the catalog/encoder/limiter writes above.
+	// Publish the scheduler under sm.mu.Lock alongside the dependent
+	// fields so any reader holding sm.mu.RLock sees a consistent
+	// snapshot (scheduler-non-nil ⇔ deps populated). atomic.Pointer is
+	// only here so getSyslogScheduler can Load lock-free from the
+	// DeleteDevice path.
 	sm.syslogScheduler.Store(scheduler)
+	sm.mu.Unlock()
 
 	capStr := "unlimited"
 	if cfg.GlobalCap > 0 {
@@ -400,11 +403,11 @@ func (sm *SimulatorManager) StopSyslogExport() {
 	}
 	sm.closeSyslogConnPool()
 
-	// Clear the scheduler first so a racing reader cannot observe the
-	// scheduler still alive while the dependent fields below are zeroed.
-	sm.syslogScheduler.Store(nil)
-
 	sm.mu.Lock()
+	// Clear the scheduler under sm.mu.Lock alongside the dependent
+	// fields so any reader holding sm.mu.RLock sees a consistent
+	// snapshot (scheduler-nil ⇔ deps cleared).
+	sm.syslogScheduler.Store(nil)
 	sm.syslogCatalog = nil
 	sm.syslogCatalogsByType = nil
 	sm.syslogCatalogPath = ""
@@ -451,16 +454,20 @@ func (sm *SimulatorManager) startDeviceSyslogExporter(device *DeviceSimulator) e
 		return fmt.Errorf("syslog export: parse format: %w", err)
 	}
 
-	scheduler := sm.syslogScheduler.Load()
-	if scheduler == nil {
-		return fmt.Errorf("syslog export: subsystem not started; call StartSyslogSubsystem first")
-	}
-
+	// Snapshot scheduler + dependent fields under one RLock so a
+	// concurrent Stop cannot interleave between the scheduler nil-check
+	// and the rest of the snapshot. With Store inside sm.mu.Lock the
+	// RLock window is the consistent unit.
 	sm.mu.RLock()
+	scheduler := sm.syslogScheduler.Load()
 	sourcePerDevice := sm.syslogSourcePerDevice
 	deviceIPStr := device.IP.String()
 	modelLabel := modelLabelForSlug(sm.deviceTypesByIP[deviceIPStr])
 	sm.mu.RUnlock()
+
+	if scheduler == nil {
+		return fmt.Errorf("syslog export: subsystem not started; call StartSyslogSubsystem first")
+	}
 
 	encoder, err := sm.syslogEncoderFor(format)
 	if err != nil {
