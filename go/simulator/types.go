@@ -244,7 +244,7 @@ type SimulatorManager struct {
 	// as a legacy alias for the fallback.
 	trapCatalog         *Catalog
 	trapCatalogsByType  map[string]*Catalog
-	trapScheduler       *TrapScheduler
+	trapScheduler       atomic.Pointer[TrapScheduler] // lock-free read so device.Stop can deregister without taking sm.mu
 	trapEncoder         TrapEncoder
 	trapLimiter         *rate.Limiter // shared global cap (nil = unlimited)
 	trapConns           sync.Map      // key: string collector, value: *net.UDPConn (shared-socket fallback pool, TRAP mode only)
@@ -263,8 +263,8 @@ type SimulatorManager struct {
 	// syslogCatalogsByType mirrors trapCatalogsByType for the syslog side.
 	syslogCatalog         *SyslogCatalog
 	syslogCatalogsByType  map[string]*SyslogCatalog
-	syslogScheduler       *SyslogScheduler
-	syslogEncodersByFmt   map[SyslogFormat]SyslogEncoder // one encoder per format; lazily populated
+	syslogScheduler       atomic.Pointer[SyslogScheduler] // lock-free read so device.Stop can deregister without taking sm.mu
+	syslogEncodersByFmt   map[SyslogFormat]SyslogEncoder  // one encoder per format; lazily populated
 	syslogLimiter         *rate.Limiter                  // independent of trap's limiter (design.md §D9)
 	syslogConns           sync.Map                       // key: syslogConnKey, value: *net.UDPConn (shared-socket fallback pool)
 	syslogAggregates      sync.Map                       // key: syslogConnKey, value: *syslogCollectorAggregate — monotonic counters surviving device delete

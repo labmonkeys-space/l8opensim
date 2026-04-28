@@ -177,7 +177,7 @@ type SyslogSubsystemConfig struct {
 // format / interval settings are now on each `DeviceSyslogConfig`. The
 // manager no longer holds those values simulator-wide.
 func (sm *SimulatorManager) StartSyslogSubsystem(cfg SyslogSubsystemConfig) error {
-	if sm.syslogScheduler != nil {
+	if sm.syslogScheduler.Load() != nil {
 		return fmt.Errorf("syslog export: subsystem already started")
 	}
 	if cfg.GlobalCap < 0 {
@@ -231,13 +231,15 @@ func (sm *SimulatorManager) StartSyslogSubsystem(cfg SyslogSubsystemConfig) erro
 	sm.mu.Lock()
 	sm.syslogCatalog = catalog
 	sm.syslogCatalogsByType = catalogsByType
-	sm.syslogScheduler = scheduler
 	sm.syslogEncodersByFmt = map[SyslogFormat]SyslogEncoder{}
 	sm.syslogLimiter = limiter
 	sm.syslogGlobalCap = cfg.GlobalCap
 	sm.syslogSourcePerDevice = cfg.SourcePerDevice
 	sm.syslogCatalogPath = cfg.CatalogPath
 	sm.mu.Unlock()
+	// Publish the scheduler last so any concurrent reader observing
+	// non-nil also sees the catalog/encoder/limiter writes above.
+	sm.syslogScheduler.Store(scheduler)
 
 	capStr := "unlimited"
 	if cfg.GlobalCap > 0 {
@@ -315,16 +317,16 @@ func (sm *SimulatorManager) closeSyslogConnPool() {
 }
 
 // getSyslogScheduler returns the manager's syslog scheduler pointer
-// under sm.mu.RLock so callers cannot race a concurrent
-// StopSyslogExport that nils the field (phase-5 review D3 fix). Safe
-// with nil manager.
+// via a lock-free atomic Load so callers (notably device.Stop, which
+// runs under sm.mu.Lock from the DeleteDevice path) cannot
+// self-deadlock by re-entering sm.mu. The atomic also closes the
+// original D3 race against a concurrent StopSyslogExport. Safe with
+// nil manager.
 func getSyslogScheduler(sm *SimulatorManager) *SyslogScheduler {
 	if sm == nil {
 		return nil
 	}
-	sm.mu.RLock()
-	defer sm.mu.RUnlock()
-	return sm.syslogScheduler
+	return sm.syslogScheduler.Load()
 }
 
 // persistSyslogCounters snapshots a SyslogExporter's cumulative counters
@@ -367,10 +369,7 @@ func (sm *SimulatorManager) persistSyslogCounters(fe *SyslogExporter) {
 // attach-path lock discipline (deferred D1 follow-up in the
 // per-device-export-config change).
 func (sm *SimulatorManager) StopSyslogExport() {
-	sm.mu.RLock()
-	scheduler := sm.syslogScheduler
-	sm.mu.RUnlock()
-
+	scheduler := sm.syslogScheduler.Load()
 	if scheduler == nil {
 		return // subsystem never started
 	}
@@ -401,8 +400,11 @@ func (sm *SimulatorManager) StopSyslogExport() {
 	}
 	sm.closeSyslogConnPool()
 
+	// Clear the scheduler first so a racing reader cannot observe the
+	// scheduler still alive while the dependent fields below are zeroed.
+	sm.syslogScheduler.Store(nil)
+
 	sm.mu.Lock()
-	sm.syslogScheduler = nil
 	sm.syslogCatalog = nil
 	sm.syslogCatalogsByType = nil
 	sm.syslogCatalogPath = ""
@@ -449,16 +451,16 @@ func (sm *SimulatorManager) startDeviceSyslogExporter(device *DeviceSimulator) e
 		return fmt.Errorf("syslog export: parse format: %w", err)
 	}
 
-	sm.mu.RLock()
-	sourcePerDevice := sm.syslogSourcePerDevice
-	scheduler := sm.syslogScheduler
-	deviceIPStr := device.IP.String()
-	modelLabel := modelLabelForSlug(sm.deviceTypesByIP[deviceIPStr])
-	sm.mu.RUnlock()
-
+	scheduler := sm.syslogScheduler.Load()
 	if scheduler == nil {
 		return fmt.Errorf("syslog export: subsystem not started; call StartSyslogSubsystem first")
 	}
+
+	sm.mu.RLock()
+	sourcePerDevice := sm.syslogSourcePerDevice
+	deviceIPStr := device.IP.String()
+	modelLabel := modelLabelForSlug(sm.deviceTypesByIP[deviceIPStr])
+	sm.mu.RUnlock()
 
 	encoder, err := sm.syslogEncoderFor(format)
 	if err != nil {
@@ -605,7 +607,7 @@ func (sm *SimulatorManager) GetSyslogStatus() SyslogStatus {
 
 	sm.mu.RLock()
 	limiter := sm.syslogLimiter
-	status := SyslogStatus{SubsystemActive: sm.syslogScheduler != nil}
+	status := SyslogStatus{SubsystemActive: sm.syslogScheduler.Load() != nil}
 
 	if len(sm.syslogCatalogsByType) > 0 {
 		status.CatalogsByType = make(map[string]CatalogSourceInfo, len(sm.syslogCatalogsByType))
@@ -698,10 +700,7 @@ func (sm *SimulatorManager) GetSyslogStatus() SyslogStatus {
 //   - ErrSyslogDeviceNotFound → 404
 //   - ErrSyslogEntryNotFound  → 400
 func (sm *SimulatorManager) FireSyslogOnDevice(ip, entryName string, overrides map[string]string) error {
-	sm.mu.RLock()
-	schedulerStarted := sm.syslogScheduler != nil
-	sm.mu.RUnlock()
-	if !schedulerStarted {
+	if sm.syslogScheduler.Load() == nil {
 		return ErrSyslogExportDisabled
 	}
 	device := sm.FindDeviceByIP(ip)

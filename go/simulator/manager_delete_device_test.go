@@ -5,6 +5,7 @@ import (
 	"net"
 	"reflect"
 	"testing"
+	"time"
 )
 
 func TestDeleteDeviceDeletesTunInterface(t *testing.T) {
@@ -94,5 +95,73 @@ func TestDeleteDeviceCleansMapsEvenOnTunDeleteError(t *testing.T) {
 	}
 	if _, exists := sm.deviceTypesByIP[deviceIP.String()]; exists {
 		t.Fatal("device type was not removed from deviceTypesByIP despite netlink failure")
+	}
+}
+
+// Regression: DeleteDevice holds sm.mu.Lock() while calling
+// device.Stop(), which in turn calls getTrap/SyslogScheduler. If those
+// accessors take sm.mu.RLock, the same goroutine holds the write lock
+// and self-deadlocks (sync.RWMutex is not reentrant). Symptoms in
+// production: delete spinner never resolves, /traps/status and
+// /syslog/status hang on RLock, create-devices also blocks. With the
+// scheduler stored behind atomic.Pointer the accessors are lock-free.
+func TestDeleteDeviceDoesNotDeadlockWithLiveTrapAndSyslogSubsystems(t *testing.T) {
+	originalDelete := deleteDeviceTunInterfaces
+	t.Cleanup(func() { deleteDeviceTunInterfaces = originalDelete })
+	deleteDeviceTunInterfaces = func(sm *SimulatorManager, interfaceNames []string) error {
+		return nil
+	}
+
+	sm := newTestSimulatorManager()
+	if err := sm.StartTrapSubsystem(TrapSubsystemConfig{
+		SourcePerDevice:       false,
+		MeanSchedulerInterval: time.Hour,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(sm.StopTrapExport)
+	if err := sm.StartSyslogSubsystem(SyslogSubsystemConfig{
+		SourcePerDevice:       false,
+		MeanSchedulerInterval: time.Hour,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(sm.StopSyslogExport)
+
+	prevManager := manager
+	manager = sm
+	t.Cleanup(func() { manager = prevManager })
+
+	deviceIP := net.IPv4(127, 0, 0, 42)
+	device := setupTestDeviceForAttach(t, sm, "dev-deadlock", deviceIP)
+	device.tunIface = &TunInterface{Name: "sim-deadlock"}
+	device.trapConfig = &DeviceTrapConfig{
+		Collector:     "127.0.0.1:16299",
+		Mode:          "trap",
+		Community:     "public",
+		Interval:      jsonDuration(time.Second),
+		InformTimeout: jsonDuration(200 * time.Millisecond),
+	}
+	device.syslogConfig = &DeviceSyslogConfig{
+		Collector: "127.0.0.1:16599",
+		Format:    "5424",
+	}
+	if err := sm.startDeviceTrapExporter(device); err != nil {
+		t.Fatalf("startDeviceTrapExporter: %v", err)
+	}
+	if err := sm.startDeviceSyslogExporter(device); err != nil {
+		t.Fatalf("startDeviceSyslogExporter: %v", err)
+	}
+	device.running = true
+
+	done := make(chan error, 1)
+	go func() { done <- sm.DeleteDevice(device.ID) }()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("DeleteDevice: %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("DeleteDevice did not return within 5s — sm.mu likely self-deadlocked via device.Stop → getTrapScheduler / getSyslogScheduler")
 	}
 }
