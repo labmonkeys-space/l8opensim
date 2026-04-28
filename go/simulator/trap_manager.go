@@ -135,7 +135,7 @@ type TrapSubsystemConfig struct {
 // `DeviceTrapConfig`. The manager no longer holds those values
 // simulator-wide.
 func (sm *SimulatorManager) StartTrapSubsystem(cfg TrapSubsystemConfig) error {
-	if sm.trapScheduler != nil {
+	if sm.trapScheduler.Load() != nil {
 		return fmt.Errorf("trap export: subsystem already started")
 	}
 	if cfg.GlobalCap < 0 {
@@ -184,12 +184,18 @@ func (sm *SimulatorManager) StartTrapSubsystem(cfg TrapSubsystemConfig) error {
 	sm.mu.Lock()
 	sm.trapCatalog = catalog
 	sm.trapCatalogsByType = catalogsByType
-	sm.trapScheduler = scheduler
 	sm.trapEncoder = SNMPv2cEncoder{}
 	sm.trapLimiter = limiter
 	sm.trapGlobalCap = cfg.GlobalCap
 	sm.trapSourcePerDevice = cfg.SourcePerDevice
 	sm.trapCatalogPath = cfg.CatalogPath
+	// Publish the scheduler under sm.mu.Lock alongside the dependent
+	// fields so any reader holding sm.mu.RLock sees a consistent
+	// snapshot (scheduler-non-nil ⇔ deps populated). The atomic.Pointer
+	// only exists to give getTrapScheduler a lock-free Load — that
+	// closes the DeleteDevice self-deadlock without sacrificing the
+	// consistency that the RLock-protected readers rely on.
+	sm.trapScheduler.Store(scheduler)
 	sm.mu.Unlock()
 
 	capStr := "unlimited"
@@ -257,16 +263,16 @@ func (sm *SimulatorManager) TrapSourcePerDevice() bool {
 	return sm.trapSourcePerDevice
 }
 
-// getTrapScheduler returns the manager's trap scheduler pointer under
-// sm.mu.RLock so callers cannot race a concurrent StopTrapExport that
-// nils the field (phase-5 review D3 fix). Safe with nil manager.
+// getTrapScheduler returns the manager's trap scheduler pointer via a
+// lock-free atomic Load so callers (notably device.Stop, which runs
+// under sm.mu.Lock from the DeleteDevice path) cannot self-deadlock by
+// re-entering sm.mu. The atomic also closes the original D3 race
+// against a concurrent StopTrapExport. Safe with nil manager.
 func getTrapScheduler(sm *SimulatorManager) *TrapScheduler {
 	if sm == nil {
 		return nil
 	}
-	sm.mu.RLock()
-	defer sm.mu.RUnlock()
-	return sm.trapScheduler
+	return sm.trapScheduler.Load()
 }
 
 // persistTrapCounters snapshots a TrapExporter's cumulative counters
@@ -316,8 +322,12 @@ func (sm *SimulatorManager) persistTrapCounters(fe *TrapExporter) {
 // without first tightening the attach-path lock discipline (see the
 // deferred D1 follow-up in the per-device-export-config change).
 func (sm *SimulatorManager) StopTrapExport() {
+	scheduler := sm.trapScheduler.Load()
+	if scheduler == nil {
+		return // subsystem never started
+	}
+
 	sm.mu.RLock()
-	scheduler := sm.trapScheduler
 	devices := make([]*DeviceSimulator, 0, len(sm.devices))
 	for _, d := range sm.devices {
 		if d.trapExporter != nil {
@@ -325,10 +335,6 @@ func (sm *SimulatorManager) StopTrapExport() {
 		}
 	}
 	sm.mu.RUnlock()
-
-	if scheduler == nil {
-		return // subsystem never started
-	}
 	scheduler.Stop()
 	for _, d := range devices {
 		// Take d.mu to synchronise with a concurrent device.Stop path.
@@ -347,7 +353,10 @@ func (sm *SimulatorManager) StopTrapExport() {
 	sm.closeTrapConnPool()
 
 	sm.mu.Lock()
-	sm.trapScheduler = nil
+	// Clear the scheduler under sm.mu.Lock alongside the dependent
+	// fields so any reader holding sm.mu.RLock sees a consistent
+	// snapshot (scheduler-nil ⇔ deps cleared).
+	sm.trapScheduler.Store(nil)
 	sm.trapCatalog = nil
 	sm.trapCatalogsByType = nil
 	sm.trapCatalogPath = ""
@@ -393,9 +402,13 @@ func (sm *SimulatorManager) startDeviceTrapExporter(device *DeviceSimulator) err
 		return fmt.Errorf("trap export: parse mode: %w", err)
 	}
 
+	// Snapshot scheduler + dependent fields under one RLock so a
+	// concurrent Stop cannot interleave between the scheduler nil-check
+	// and the encoder/limiter reads. With the Start/Stop fix that puts
+	// Store inside sm.mu.Lock, the RLock window is the consistent unit.
 	sm.mu.RLock()
+	scheduler := sm.trapScheduler.Load()
 	sourcePerDevice := sm.trapSourcePerDevice
-	scheduler := sm.trapScheduler
 	encoder := sm.trapEncoder
 	limiter := sm.trapLimiter
 	deviceIPStr := device.IP.String()
@@ -531,7 +544,7 @@ func (sm *SimulatorManager) GetTrapStatus() TrapStatus {
 
 	sm.mu.RLock()
 	limiter := sm.trapLimiter
-	status := TrapStatus{SubsystemActive: sm.trapScheduler != nil}
+	status := TrapStatus{SubsystemActive: sm.trapScheduler.Load() != nil}
 
 	if len(sm.trapCatalogsByType) > 0 {
 		status.CatalogsByType = make(map[string]CatalogSourceInfo, len(sm.trapCatalogsByType))
@@ -722,10 +735,7 @@ func trapCatalogSource(slug, catalogFlagPath string) string {
 //   - ErrTrapDeviceNotFound → 404
 //   - ErrTrapEntryNotFound  → 400
 func (sm *SimulatorManager) FireTrapOnDevice(ip, trapName string, overrides map[string]string) (uint32, error) {
-	sm.mu.RLock()
-	schedulerStarted := sm.trapScheduler != nil
-	sm.mu.RUnlock()
-	if !schedulerStarted {
+	if sm.trapScheduler.Load() == nil {
 		return 0, ErrTrapExportDisabled
 	}
 	device := sm.FindDeviceByIP(ip)
