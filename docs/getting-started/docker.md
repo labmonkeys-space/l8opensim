@@ -10,7 +10,7 @@ The simulator is published as a single container image at
 ```bash
 docker pull ghcr.io/labmonkeys-space/l8opensim:latest
 
-# The simulator needs TUN + netns privileges. hostNetwork isn't strictly
+# The simulator needs TUN + netns privileges. --network=host isn't strictly
 # required but makes the HTTP control plane reachable on :8080 directly.
 docker run --rm -it \
   --cap-add=NET_ADMIN \

@@ -100,7 +100,7 @@ curl http://localhost:8080/api/v1/syslog/status  | jq '.collectors'
 ```
 
 Full walkthrough: [Getting started → Quick start](https://labmonkeys-space.github.io/l8opensim/getting-started/quick-start/).
-Container and Kubernetes deployment: [Getting started → Docker](https://labmonkeys-space.github.io/l8opensim/getting-started/docker/).
+Container deployment: [Getting started → Docker](https://labmonkeys-space.github.io/l8opensim/getting-started/docker/).
 
 ## Status & scale
 

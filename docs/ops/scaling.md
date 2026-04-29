@@ -67,16 +67,20 @@ Run these before a large deployment:
   memory, and load average. See
   [Web API](../reference/web-api.md#endpoint-catalog).
 
-## Container / Kubernetes scaling
+## Container scaling
 
-When running under Docker or Kubernetes, pair the host tuning above with:
+When running under Docker, pair the host tuning above with:
 
 - `--cap-add=NET_ADMIN` + `--device=/dev/net/tun` so the container can
   manage TUN / netns.
-- `hostNetwork: true` on the K8s StatefulSet so per-device TUN IPs are
-  reachable from outside the pod.
-- A resource `limits.memory` at least `250Mi` for small fleets; budget
-  `~1 KiB * device_count` plus a comfortable buffer.
+- `--network=host` so per-device TUN IPs are reachable from outside the
+  container.
+- A memory budget of `~50 MB base + ~1 KiB * device_count` plus a
+  comfortable buffer.
 
 See [Docker](../getting-started/docker.md) for the full bring-up recipe and
 [Troubleshooting](troubleshooting.md) for bring-up failures.
+
+Kubernetes is not currently supported as a deployment target — see
+[Kubernetes (not supported)](kubernetes.md) for the constraints that put it
+out of scope.
