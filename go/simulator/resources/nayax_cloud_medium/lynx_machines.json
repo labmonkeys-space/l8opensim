@@ -1,0 +1,346 @@
+{
+  "snmp": [],
+  "ssh": [],
+  "api": [
+    {
+      "method": "GET",
+      "path": "/lynx/v1/machines",
+      "response": {
+        "items": [
+          {
+            "machineId": "M-200001",
+            "name": "O'Hare Terminal 2 Snack",
+            "type": "vending_snack",
+            "model": "Crane Merchant 6",
+            "status": "online",
+            "location": { "address": "10000 W O'Hare Ave", "city": "Chicago", "state": "IL", "lat": 41.9742, "lng": -87.9073 },
+            "deviceId": "VPOS-B1C2D3E401",
+            "lastTransactionAt": "2026-04-17T09:22:14Z",
+            "dailyTransactions": 245,
+            "revenue": { "today": 53900, "currency": "USD" }
+          },
+          {
+            "machineId": "M-200002",
+            "name": "Union Station Drinks",
+            "type": "vending_drink",
+            "model": "Dixie Narco 5800",
+            "status": "online",
+            "location": { "address": "225 S Canal St", "city": "Chicago", "state": "IL", "lat": 41.8786, "lng": -87.6399 },
+            "deviceId": "VPOS-B1C2D3E402",
+            "lastTransactionAt": "2026-04-17T09:18:33Z",
+            "dailyTransactions": 189,
+            "revenue": { "today": 37800, "currency": "USD" }
+          },
+          {
+            "machineId": "M-200003",
+            "name": "Denver Tech Center Coffee",
+            "type": "coffee",
+            "model": "Wittern 3589",
+            "status": "online",
+            "location": { "address": "8000 E Belleview Ave", "city": "Denver", "state": "CO", "lat": 39.6147, "lng": -104.8979 },
+            "deviceId": "VPOS-B1C2D3E403",
+            "lastTransactionAt": "2026-04-17T09:15:01Z",
+            "dailyTransactions": 178,
+            "revenue": { "today": 53400, "currency": "USD" }
+          },
+          {
+            "machineId": "M-200004",
+            "name": "Phoenix Sky Harbor Combo",
+            "type": "vending_combo",
+            "model": "Crane Merchant 4",
+            "status": "online",
+            "location": { "address": "3400 E Sky Harbor Blvd", "city": "Phoenix", "state": "AZ", "lat": 33.4373, "lng": -112.0078 },
+            "deviceId": "VPOS-B1C2D3E404",
+            "lastTransactionAt": "2026-04-17T09:10:45Z",
+            "dailyTransactions": 210,
+            "revenue": { "today": 52500, "currency": "USD" }
+          },
+          {
+            "machineId": "M-200005",
+            "name": "Seattle Convention Center Snack",
+            "type": "vending_snack",
+            "model": "AMS 39",
+            "status": "online",
+            "location": { "address": "705 Pike St", "city": "Seattle", "state": "WA", "lat": 47.6115, "lng": -122.3325 },
+            "deviceId": "VPOS-B1C2D3E405",
+            "lastTransactionAt": "2026-04-17T09:05:22Z",
+            "dailyTransactions": 156,
+            "revenue": { "today": 35100, "currency": "USD" }
+          },
+          {
+            "machineId": "M-200006",
+            "name": "Miami Beach Hotel Lobby",
+            "type": "vending_combo",
+            "model": "Crane Merchant 6",
+            "status": "online",
+            "location": { "address": "1701 Collins Ave", "city": "Miami Beach", "state": "FL", "lat": 25.7907, "lng": -80.1300 },
+            "deviceId": "VPOS-B1C2D3E406",
+            "lastTransactionAt": "2026-04-17T09:20:18Z",
+            "dailyTransactions": 132,
+            "revenue": { "today": 33000, "currency": "USD" }
+          },
+          {
+            "machineId": "M-200007",
+            "name": "Denver Fitness Club Drinks",
+            "type": "vending_drink",
+            "model": "Royal 650",
+            "status": "online",
+            "location": { "address": "1600 Glenarm Pl", "city": "Denver", "state": "CO", "lat": 39.7435, "lng": -104.9886 },
+            "deviceId": "VPOS-B1C2D3E407",
+            "lastTransactionAt": "2026-04-17T08:55:10Z",
+            "dailyTransactions": 98,
+            "revenue": { "today": 19600, "currency": "USD" }
+          },
+          {
+            "machineId": "M-200008",
+            "name": "Phoenix Office Park EV-1",
+            "type": "ev_charger",
+            "model": "Nayax EV Meter",
+            "status": "online",
+            "location": { "address": "2555 E Camelback Rd", "city": "Phoenix", "state": "AZ", "lat": 33.5092, "lng": -111.9714 },
+            "deviceId": "VPOS-B1C2D3E408",
+            "lastTransactionAt": "2026-04-17T08:42:00Z",
+            "dailyTransactions": 18,
+            "revenue": { "today": 43200, "currency": "USD" }
+          },
+          {
+            "machineId": "M-200009",
+            "name": "Seattle Laundromat Hub",
+            "type": "laundry",
+            "model": "Speed Queen SC40",
+            "status": "warning",
+            "location": { "address": "4501 University Way NE", "city": "Seattle", "state": "WA", "lat": 47.6625, "lng": -122.3133 },
+            "deviceId": "VPOS-B1C2D3E409",
+            "lastTransactionAt": "2026-04-17T07:50:22Z",
+            "dailyTransactions": 42,
+            "revenue": { "today": 16800, "currency": "USD" }
+          },
+          {
+            "machineId": "M-200010",
+            "name": "Chicago Midway Car Wash",
+            "type": "car_wash",
+            "model": "WashTec SoftCare",
+            "status": "online",
+            "location": { "address": "5700 S Cicero Ave", "city": "Chicago", "state": "IL", "lat": 41.7868, "lng": -87.7522 },
+            "deviceId": "VPOS-B1C2D3E410",
+            "lastTransactionAt": "2026-04-17T08:15:30Z",
+            "dailyTransactions": 28,
+            "revenue": { "today": 25200, "currency": "USD" }
+          },
+          {
+            "machineId": "M-200011",
+            "name": "Miami Hospital Cafeteria",
+            "type": "vending_combo",
+            "model": "Crane Merchant 4",
+            "status": "online",
+            "location": { "address": "1611 NW 12th Ave", "city": "Miami", "state": "FL", "lat": 25.7906, "lng": -80.2135 },
+            "deviceId": "VPOS-B1C2D3E411",
+            "lastTransactionAt": "2026-04-17T09:08:44Z",
+            "dailyTransactions": 168,
+            "revenue": { "today": 42000, "currency": "USD" }
+          },
+          {
+            "machineId": "M-200012",
+            "name": "Denver University Coffee",
+            "type": "coffee",
+            "model": "Wittern 3589",
+            "status": "online",
+            "location": { "address": "2199 S University Blvd", "city": "Denver", "state": "CO", "lat": 39.6778, "lng": -104.9619 },
+            "deviceId": "VPOS-B1C2D3E412",
+            "lastTransactionAt": "2026-04-17T09:12:55Z",
+            "dailyTransactions": 220,
+            "revenue": { "today": 66000, "currency": "USD" }
+          },
+          {
+            "machineId": "M-200013",
+            "name": "Phoenix Amusement Park",
+            "type": "vending_drink",
+            "model": "Dixie Narco 5800",
+            "status": "offline",
+            "location": { "address": "4619 E Washington St", "city": "Phoenix", "state": "AZ", "lat": 33.4484, "lng": -111.9474 },
+            "deviceId": "VPOS-B1C2D3E413",
+            "lastTransactionAt": "2026-04-16T21:45:10Z",
+            "dailyTransactions": 0,
+            "revenue": { "today": 0, "currency": "USD" }
+          },
+          {
+            "machineId": "M-200014",
+            "name": "Seattle Pike Place Micro Market",
+            "type": "micro_market",
+            "model": "365 Retail Markets",
+            "status": "online",
+            "location": { "address": "85 Pike St", "city": "Seattle", "state": "WA", "lat": 47.6088, "lng": -122.3401 },
+            "deviceId": "VPOS-B1C2D3E414",
+            "lastTransactionAt": "2026-04-17T09:25:00Z",
+            "dailyTransactions": 310,
+            "revenue": { "today": 108500, "currency": "USD" }
+          },
+          {
+            "machineId": "M-200015",
+            "name": "Miami Airport EV Station",
+            "type": "ev_charger",
+            "model": "Nayax EV Meter",
+            "status": "online",
+            "location": { "address": "2100 NW 42nd Ave", "city": "Miami", "state": "FL", "lat": 25.7959, "lng": -80.2870 },
+            "deviceId": "VPOS-B1C2D3E415",
+            "lastTransactionAt": "2026-04-17T08:30:00Z",
+            "dailyTransactions": 24,
+            "revenue": { "today": 57600, "currency": "USD" }
+          }
+        ],
+        "totalCount": 250,
+        "page": 1,
+        "pageSize": 50
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/lynx/v1/machines/{machineId}",
+      "response": {
+        "machineId": "M-200001",
+        "name": "O'Hare Terminal 2 Snack",
+        "type": "vending_snack",
+        "model": "Crane Merchant 6",
+        "serialNumber": "CM6-2024-20001",
+        "status": "online",
+        "location": {
+          "address": "10000 W O'Hare Ave",
+          "city": "Chicago",
+          "state": "IL",
+          "zip": "60666",
+          "country": "US",
+          "lat": 41.9742,
+          "lng": -87.9073,
+          "timezone": "America/Chicago"
+        },
+        "deviceId": "VPOS-B1C2D3E401",
+        "actorId": "ACT-2001",
+        "operatorName": "NationWide Vending Inc.",
+        "lastTransactionAt": "2026-04-17T09:22:14Z",
+        "dailyTransactions": 245,
+        "revenue": { "today": 53900, "month": 1617000, "currency": "USD" },
+        "uptime": { "percentage": 99.6, "lastDowntime": "2026-04-05T02:10:00Z" },
+        "installedAt": "2024-02-15T10:00:00Z",
+        "updatedAt": "2026-04-17T09:22:14Z"
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/lynx/v1/machines",
+      "response": {
+        "machineId": "M-200251",
+        "name": "New Machine",
+        "status": "pending",
+        "createdAt": "2026-04-17T12:00:00Z"
+      }
+    },
+    {
+      "method": "PUT",
+      "path": "/lynx/v1/machines/{machineId}",
+      "response": {
+        "machineId": "M-200001",
+        "name": "O'Hare Terminal 2 Snack",
+        "status": "online",
+        "updatedAt": "2026-04-17T12:00:00Z"
+      }
+    },
+    {
+      "method": "DELETE",
+      "path": "/lynx/v1/machines/{machineId}",
+      "response": {}
+    },
+    {
+      "method": "GET",
+      "path": "/lynx/v1/machines/{machineId}/inventory",
+      "response": {
+        "machineId": "M-200001",
+        "lastUpdated": "2026-04-17T06:00:00Z",
+        "slots": [
+          { "slotNumber": 1, "productName": "Coca-Cola 12oz", "sku": "SKU-CC12", "price": 175, "capacity": 10, "currentStock": 7, "status": "ok" },
+          { "slotNumber": 2, "productName": "Pepsi 12oz", "sku": "SKU-PP12", "price": 175, "capacity": 10, "currentStock": 3, "status": "low" },
+          { "slotNumber": 3, "productName": "Snickers Bar", "sku": "SKU-SN01", "price": 200, "capacity": 8, "currentStock": 5, "status": "ok" },
+          { "slotNumber": 4, "productName": "Lay's Classic Chips", "sku": "SKU-LC01", "price": 225, "capacity": 8, "currentStock": 1, "status": "critical" },
+          { "slotNumber": 5, "productName": "Monster Energy 16oz", "sku": "SKU-ME16", "price": 350, "capacity": 6, "currentStock": 6, "status": "ok" },
+          { "slotNumber": 6, "productName": "Bottled Water 16oz", "sku": "SKU-BW16", "price": 150, "capacity": 12, "currentStock": 9, "status": "ok" },
+          { "slotNumber": 7, "productName": "KitKat Bar", "sku": "SKU-KK01", "price": 200, "capacity": 8, "currentStock": 0, "status": "empty" },
+          { "slotNumber": 8, "productName": "Doritos Nacho", "sku": "SKU-DN01", "price": 225, "capacity": 8, "currentStock": 4, "status": "ok" }
+        ],
+        "totalSlots": 8,
+        "emptySlots": 1,
+        "lowStockSlots": 2
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/lynx/v1/machines/{machineId}/attributes",
+      "response": {
+        "machineId": "M-200001",
+        "manufacturer": "Crane",
+        "model": "Merchant 6",
+        "serialNumber": "CM6-2024-20001",
+        "firmware": "3.4.09",
+        "protocol": "MDB",
+        "coinAcceptor": true,
+        "billAcceptor": true,
+        "cashlessReader": "VPOS Touch",
+        "temperatureControl": true,
+        "targetTemperature": 4,
+        "currentTemperature": 5,
+        "doorSensor": true,
+        "lastDoorOpen": "2026-04-15T06:30:00Z"
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/lynx/v1/machines/{machineId}/statistics",
+      "response": {
+        "machineId": "M-200001",
+        "period": "last_30_days",
+        "totalTransactions": 7350,
+        "totalRevenue": 1617000,
+        "averageTransactionValue": 220,
+        "currency": "USD",
+        "topProducts": [
+          { "sku": "SKU-CC12", "name": "Coca-Cola 12oz", "quantity": 1250, "revenue": 218750 },
+          { "sku": "SKU-ME16", "name": "Monster Energy 16oz", "quantity": 890, "revenue": 311500 },
+          { "sku": "SKU-BW16", "name": "Bottled Water 16oz", "quantity": 1100, "revenue": 165000 }
+        ],
+        "paymentBreakdown": {
+          "contactless": 64,
+          "chip": 22,
+          "qr": 9,
+          "cash": 5
+        },
+        "uptimePercent": 99.6,
+        "refillCount": 12
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/lynx/v1/machines/{machineId}/alerts",
+      "response": {
+        "items": [
+          {
+            "alertId": "ALR-25001",
+            "machineId": "M-200001",
+            "type": "LOW_INVENTORY",
+            "severity": "warning",
+            "message": "Slot 4 (Lay's Classic Chips) stock critical: 1 remaining",
+            "createdAt": "2026-04-17T06:00:00Z",
+            "acknowledged": false
+          },
+          {
+            "alertId": "ALR-25002",
+            "machineId": "M-200001",
+            "type": "EMPTY_SLOT",
+            "severity": "high",
+            "message": "Slot 7 (KitKat Bar) is empty",
+            "createdAt": "2026-04-16T18:22:00Z",
+            "acknowledged": false
+          }
+        ],
+        "totalCount": 2
+      }
+    }
+  ]
+}

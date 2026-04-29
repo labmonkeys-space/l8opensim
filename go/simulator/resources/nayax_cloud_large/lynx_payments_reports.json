@@ -1,0 +1,196 @@
+{
+  "snmp": [],
+  "ssh": [],
+  "api": [
+    {
+      "method": "POST",
+      "path": "/lynx/v1/payments",
+      "response": {
+        "paymentId": "PAY-380001",
+        "transactionId": "TXN-lg-e1f2a3b4-0100",
+        "status": "approved",
+        "amount": 200,
+        "currency": "USD",
+        "authCode": "B67890",
+        "createdAt": "2026-04-17T12:00:00Z"
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/lynx/v1/payments/{paymentId}/refund",
+      "response": {
+        "refundId": "REF-390001",
+        "paymentId": "PAY-380001",
+        "status": "approved",
+        "amount": 200,
+        "currency": "USD",
+        "createdAt": "2026-04-17T12:05:00Z"
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/lynx/v1/reports/revenue",
+      "response": {
+        "period": "last_30_days",
+        "totalRevenue": 142500000,
+        "totalTransactions": 634000,
+        "averageTransactionValue": 225,
+        "currency": "USD",
+        "dailyBreakdown": [
+          { "date": "2026-04-17", "revenue": 4825000, "transactions": 21440 },
+          { "date": "2026-04-16", "revenue": 5130000, "transactions": 22800 },
+          { "date": "2026-04-15", "revenue": 4680000, "transactions": 20800 },
+          { "date": "2026-04-14", "revenue": 4210000, "transactions": 18710 },
+          { "date": "2026-04-13", "revenue": 3850000, "transactions": 17110 }
+        ],
+        "byMachineType": {
+          "vending_snack": { "revenue": 42465000, "percentage": 29.8 },
+          "vending_drink": { "revenue": 38047500, "percentage": 26.7 },
+          "coffee": { "revenue": 31207500, "percentage": 21.9 },
+          "ev_charger": { "revenue": 19237500, "percentage": 13.5 },
+          "laundry": { "revenue": 7267500, "percentage": 5.1 },
+          "car_wash": { "revenue": 4417500, "percentage": 3.1 }
+        }
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/lynx/v1/reports/sales-by-period",
+      "response": {
+        "period": "last_7_days",
+        "currency": "USD",
+        "data": [
+          { "date": "2026-04-17", "sales": 21440, "revenue": 4825000 },
+          { "date": "2026-04-16", "sales": 22800, "revenue": 5130000 },
+          { "date": "2026-04-15", "sales": 20800, "revenue": 4680000 },
+          { "date": "2026-04-14", "sales": 18710, "revenue": 4210000 },
+          { "date": "2026-04-13", "sales": 17110, "revenue": 3850000 },
+          { "date": "2026-04-12", "sales": 19500, "revenue": 4387500 },
+          { "date": "2026-04-11", "sales": 20200, "revenue": 4545000 }
+        ]
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/lynx/v1/reports/machine-performance",
+      "response": {
+        "period": "last_30_days",
+        "machines": [
+          { "machineId": "M-300020", "name": "Las Vegas Strip Kiosk", "transactions": 12300, "revenue": 3075000, "uptimePercent": 99.9 },
+          { "machineId": "M-300004", "name": "Houston Medical Center Coffee", "transactions": 12600, "revenue": 3780000, "uptimePercent": 99.8 },
+          { "machineId": "M-300012", "name": "Atlanta Hartsfield Coffee", "transactions": 11550, "revenue": 3465000, "uptimePercent": 99.7 },
+          { "machineId": "M-300009", "name": "Penn Station Snack Wall", "transactions": 10200, "revenue": 2244000, "uptimePercent": 99.6 },
+          { "machineId": "M-300001", "name": "Times Square Snack Hub", "transactions": 9300, "revenue": 2046000, "uptimePercent": 99.7 },
+          { "machineId": "M-300015", "name": "San Diego Zoo Drinks", "transactions": 9300, "revenue": 1860000, "uptimePercent": 99.5 },
+          { "machineId": "M-300013", "name": "Boston University Coffee", "transactions": 8700, "revenue": 2610000, "uptimePercent": 98.2 },
+          { "machineId": "M-300002", "name": "LAX Terminal 4 Drinks", "transactions": 8250, "revenue": 1650000, "uptimePercent": 99.4 },
+          { "machineId": "M-300014", "name": "Philadelphia 30th St Snack", "transactions": 7350, "revenue": 1617000, "uptimePercent": 99.3 },
+          { "machineId": "M-300010", "name": "Denver Airport Drinks", "transactions": 6900, "revenue": 1380000, "uptimePercent": 99.6 },
+          { "machineId": "M-300003", "name": "Millennium Park Combo", "transactions": 5940, "revenue": 1485000, "uptimePercent": 99.5 },
+          { "machineId": "M-300011", "name": "Seattle Tech Campus Combo", "transactions": 5250, "revenue": 1312500, "uptimePercent": 99.8 },
+          { "machineId": "M-300008", "name": "Miami Beach Kiosk", "transactions": 4950, "revenue": 1237500, "uptimePercent": 99.1 },
+          { "machineId": "M-300005", "name": "Phoenix Convention EV-1", "transactions": 540, "revenue": 1296000, "uptimePercent": 99.9 },
+          { "machineId": "M-300016", "name": "Minneapolis Skyway Combo", "transactions": 4650, "revenue": 1162500, "uptimePercent": 99.4 }
+        ]
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/lynx/v1/routes",
+      "response": {
+        "items": [
+          {
+            "routeId": "RTE-3001",
+            "name": "NYC Midtown Morning",
+            "driverId": "DRV-3101",
+            "driverName": "Marcus Johnson",
+            "status": "in_progress",
+            "machineIds": ["M-300001", "M-300009"],
+            "scheduledDate": "2026-04-17",
+            "startedAt": "2026-04-17T06:30:00Z"
+          },
+          {
+            "routeId": "RTE-3002",
+            "name": "LA Airport Route",
+            "driverId": "DRV-3102",
+            "driverName": "Sandra Kim",
+            "status": "scheduled",
+            "machineIds": ["M-300002"],
+            "scheduledDate": "2026-04-17"
+          },
+          {
+            "routeId": "RTE-3003",
+            "name": "Chicago Loop Afternoon",
+            "driverId": "DRV-3103",
+            "driverName": "David Chen",
+            "status": "scheduled",
+            "machineIds": ["M-300003"],
+            "scheduledDate": "2026-04-17"
+          }
+        ],
+        "totalCount": 48
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/lynx/v1/routes",
+      "response": {
+        "routeId": "RTE-3049",
+        "name": "New Route",
+        "status": "scheduled",
+        "createdAt": "2026-04-17T12:00:00Z"
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/lynx/v1/tasks",
+      "response": {
+        "items": [
+          {
+            "taskId": "TSK-30001",
+            "routeId": "RTE-3001",
+            "machineId": "M-300001",
+            "type": "refill",
+            "status": "pending",
+            "priority": "medium",
+            "notes": "Refill slots 2, 4, 7 — low/empty stock",
+            "scheduledDate": "2026-04-17"
+          },
+          {
+            "taskId": "TSK-30002",
+            "routeId": "RTE-3001",
+            "machineId": "M-300019",
+            "type": "repair",
+            "status": "pending",
+            "priority": "high",
+            "notes": "Machine offline since last night — check connectivity",
+            "scheduledDate": "2026-04-17"
+          }
+        ],
+        "totalCount": 85
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/lynx/v1/ereceipts/{transactionId}",
+      "response": {
+        "transactionId": "TXN-lg-e1f2a3b4-0001",
+        "receiptNumber": "RCP-20260417-300001",
+        "machineId": "M-300020",
+        "machineName": "Las Vegas Strip Kiosk",
+        "operatorName": "Global Vend Corp.",
+        "operatorAddress": "1200 Enterprise Way, Suite 800, Chicago, IL 60601",
+        "items": [
+          { "name": "Souvenir Photo", "quantity": 1, "unitPrice": 250, "total": 250 }
+        ],
+        "subtotal": 250,
+        "tax": 20,
+        "total": 270,
+        "currency": "USD",
+        "paymentMethod": "Visa contactless ****4242",
+        "authCode": "L30001",
+        "timestamp": "2026-04-17T09:22:10Z"
+      }
+    }
+  ]
+}

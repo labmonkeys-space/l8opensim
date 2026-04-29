@@ -1,0 +1,176 @@
+{
+  "snmp": [],
+  "ssh": [],
+  "api": [
+    {
+      "method": "POST",
+      "path": "/cortina/v1/Authorization",
+      "response": {
+        "transactionId": "CTX-large-auth-0001",
+        "statusCode": 0,
+        "statusDescription": "Approved",
+        "authCode": "CL30001",
+        "amount": 350,
+        "currency": "USD",
+        "cardBrand": "visa",
+        "cardLastFour": "4242",
+        "emvData": {
+          "applicationId": "A0000000031010",
+          "applicationLabel": "Visa Credit",
+          "tvr": "0000000000",
+          "tsi": "E800"
+        },
+        "rrn": "262107120001",
+        "createdAt": "2026-04-17T12:00:00Z"
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/cortina/v1/Sale",
+      "response": {
+        "transactionId": "CTX-large-sale-0001",
+        "statusCode": 0,
+        "statusDescription": "Approved",
+        "authCode": "CL30002",
+        "amount": 225,
+        "currency": "USD",
+        "cardBrand": "mastercard",
+        "cardLastFour": "8888",
+        "rrn": "262107120002",
+        "settled": true,
+        "createdAt": "2026-04-17T12:00:00Z"
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/cortina/v1/Void",
+      "response": {
+        "transactionId": "CTX-large-void-0001",
+        "originalTransactionId": "CTX-large-sale-0001",
+        "statusCode": 0,
+        "statusDescription": "Void approved",
+        "amount": 225,
+        "currency": "USD",
+        "createdAt": "2026-04-17T12:05:00Z"
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/cortina/v1/Cancel",
+      "response": {
+        "transactionId": "CTX-large-cancel-0001",
+        "originalTransactionId": "CTX-large-auth-0001",
+        "statusCode": 0,
+        "statusDescription": "Cancellation approved",
+        "amount": 350,
+        "currency": "USD",
+        "createdAt": "2026-04-17T12:05:00Z"
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/cortina/v1/Refund",
+      "response": {
+        "transactionId": "CTX-large-refund-0001",
+        "originalTransactionId": "CTX-large-sale-0001",
+        "statusCode": 0,
+        "statusDescription": "Refund approved",
+        "amount": 225,
+        "currency": "USD",
+        "authCode": "RL67890",
+        "rrn": "262107120003",
+        "createdAt": "2026-04-17T12:10:00Z"
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/cortina/v1/Settlement",
+      "response": {
+        "batchId": "BATCH-LG-0417-001",
+        "statusCode": 0,
+        "statusDescription": "Settlement completed",
+        "transactionCount": 2150,
+        "totalAmount": 4825000,
+        "currency": "USD",
+        "settledAt": "2026-04-17T23:59:59Z"
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/cortina/v1/Prepaid/BalanceCheck",
+      "response": {
+        "statusCode": 0,
+        "statusDescription": "Balance retrieved",
+        "balance": 2500,
+        "currency": "USD",
+        "cardBrand": "prepaid",
+        "cardLastFour": "3333",
+        "expiresAt": "2027-12-31T23:59:59Z"
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/cortina/v1/Prepaid/Sale",
+      "response": {
+        "transactionId": "CTX-large-prepaid-0001",
+        "statusCode": 0,
+        "statusDescription": "Approved",
+        "amount": 175,
+        "currency": "USD",
+        "remainingBalance": 2325,
+        "cardLastFour": "3333",
+        "createdAt": "2026-04-17T12:00:00Z"
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/cortina/v1/QR/Static",
+      "response": {
+        "qrId": "QR-large-static-0001",
+        "statusCode": 0,
+        "statusDescription": "Static QR generated",
+        "qrData": "https://pay.nayax.com/s/M300001",
+        "machineId": "M-300001",
+        "createdAt": "2026-04-17T12:00:00Z"
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/cortina/v1/QR/Dynamic",
+      "response": {
+        "qrId": "QR-large-dynamic-0001",
+        "statusCode": 0,
+        "statusDescription": "Dynamic QR generated",
+        "qrData": "https://pay.nayax.com/d/TXN-lg-qr-0001?amt=350&cur=USD",
+        "amount": 350,
+        "currency": "USD",
+        "expiresAt": "2026-04-17T12:15:00Z",
+        "createdAt": "2026-04-17T12:00:00Z"
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/cortina/v1/Onboarding/Actor",
+      "response": {
+        "actorId": "ACT-large-new-0001",
+        "statusCode": 0,
+        "statusDescription": "Actor onboarded successfully",
+        "merchantId": "MID-LG-NEW-001",
+        "status": "pending_review",
+        "createdAt": "2026-04-17T12:00:00Z"
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/cortina/v1/Onboarding/Machine",
+      "response": {
+        "machineId": "M-large-new-0001",
+        "statusCode": 0,
+        "statusDescription": "Machine onboarded successfully",
+        "activationCode": "ACTV-LG-XY7890",
+        "status": "pending_activation",
+        "createdAt": "2026-04-17T12:00:00Z"
+      }
+    }
+  ]
+}

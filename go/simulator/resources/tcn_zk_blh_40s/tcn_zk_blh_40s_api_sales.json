@@ -1,0 +1,102 @@
+{
+  "snmp": [],
+  "ssh": [],
+  "api": [
+    {
+      "method": "GET",
+      "path": "/api/v1/transactions",
+      "response": {
+        "machineId": "VM-TCN-040-001",
+        "timestamp": "2026-04-09T14:18:05Z",
+        "transactions": [
+          {
+            "transactionId": "TXN-040-20260409-0026",
+            "timestamp": "2026-04-09T12:04:33Z",
+            "slotId": "A01",
+            "productId": "PRD-6001",
+            "productName": "Grilled Chicken Caesar Wrap",
+            "price": 750,
+            "paymentMethod": "NFC_CONTACTLESS",
+            "paymentStatus": "COMPLETED",
+            "cardType": "VISA",
+            "cardLastFour": "8812",
+            "dispensed": true
+          },
+          {
+            "transactionId": "TXN-040-20260409-0027",
+            "timestamp": "2026-04-09T12:31:17Z",
+            "slotId": "B04",
+            "productId": "PRD-6012",
+            "productName": "Turkey Club Sandwich",
+            "price": 799,
+            "paymentMethod": "CARD",
+            "paymentStatus": "COMPLETED",
+            "cardType": "MASTERCARD",
+            "cardLastFour": "3341",
+            "dispensed": true
+          },
+          {
+            "transactionId": "TXN-040-20260409-0028",
+            "timestamp": "2026-04-09T14:02:51Z",
+            "slotId": "D05",
+            "productId": "PRD-6029",
+            "productName": "Mixed Berry Smoothie 16oz",
+            "price": 499,
+            "paymentMethod": "QR_CODE",
+            "paymentStatus": "COMPLETED",
+            "qrProvider": "Apple Pay",
+            "dispensed": true
+          }
+        ]
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/transactions/summary",
+      "response": {
+        "machineId": "VM-TCN-040-001",
+        "period": "TODAY",
+        "date": "2026-04-09",
+        "totalVends": 28,
+        "totalRevenue": 54600,
+        "averageTransactionValue": 1950,
+        "paymentBreakdown": {
+          "CARD": {"count": 10, "revenue": 19250},
+          "NFC_CONTACTLESS": {"count": 12, "revenue": 24100},
+          "QR_CODE": {"count": 4, "revenue": 7550},
+          "CASH": {"count": 2, "revenue": 3700}
+        },
+        "categoryBreakdown": {
+          "FRESH_FOOD": {"count": 18, "revenue": 38200},
+          "COLD_BEVERAGE": {"count": 6, "revenue": 9600},
+          "SNACK": {"count": 4, "revenue": 6800}
+        },
+        "peakHour": 12,
+        "peakHourVends": 8
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/transactions/TXN-040-20260409-0026",
+      "response": {
+        "transactionId": "TXN-040-20260409-0026",
+        "machineId": "VM-TCN-040-001",
+        "timestamp": "2026-04-09T12:04:33Z",
+        "slotId": "A01",
+        "productId": "PRD-6001",
+        "productName": "Grilled Chicken Caesar Wrap",
+        "category": "FRESH_FOOD",
+        "price": 750,
+        "paymentMethod": "NFC_CONTACTLESS",
+        "paymentStatus": "COMPLETED",
+        "cardType": "VISA",
+        "cardLastFour": "8812",
+        "authorizationCode": "NFC-884291",
+        "dispensed": true,
+        "dispenseTime": 1.8,
+        "lockOpenDuration": 12.4,
+        "receiptPrinted": false
+      }
+    }
+  ]
+}

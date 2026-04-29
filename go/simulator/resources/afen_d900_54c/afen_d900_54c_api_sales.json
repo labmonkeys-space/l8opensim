@@ -1,0 +1,126 @@
+{
+  "snmp": [],
+  "ssh": [],
+  "api": [
+    {
+      "method": "GET",
+      "path": "/api/v1/transactions",
+      "response": {
+        "machineId": "VM-AFD9-001",
+        "transactions": [
+          {
+            "transactionId": "TXN-20260409-0445",
+            "timestamp": "2026-04-09T14:58:11Z",
+            "slotId": "D1",
+            "zone": "LOWER",
+            "productId": "PRD-D001",
+            "productName": "Coca-Cola Classic 12oz",
+            "category": "COLD_BEVERAGE",
+            "price": 200,
+            "paymentMethod": "NFC_CONTACTLESS",
+            "cardType": "VISA",
+            "cardLastFour": "3847",
+            "vendResult": "SUCCESS",
+            "dispenseDuration": 2.1
+          },
+          {
+            "transactionId": "TXN-20260409-0444",
+            "timestamp": "2026-04-09T14:42:18Z",
+            "slotId": "A1",
+            "zone": "UPPER",
+            "productId": "PRD-S001",
+            "productName": "Snickers Bar 1.86oz",
+            "category": "SNACK",
+            "price": 175,
+            "paymentMethod": "CASH",
+            "cashInserted": 200,
+            "changeGiven": 25,
+            "vendResult": "SUCCESS",
+            "dispenseDuration": 1.4
+          },
+          {
+            "transactionId": "TXN-20260409-0443",
+            "timestamp": "2026-04-09T14:30:22Z",
+            "slotId": "D5",
+            "zone": "LOWER",
+            "productId": "PRD-D005",
+            "productName": "Dasani Water 16.9oz",
+            "category": "COLD_BEVERAGE",
+            "price": 175,
+            "paymentMethod": "CREDIT_CARD",
+            "cardType": "MASTERCARD",
+            "cardLastFour": "6210",
+            "vendResult": "SUCCESS",
+            "dispenseDuration": 2.3
+          },
+          {
+            "transactionId": "TXN-20260409-0442",
+            "timestamp": "2026-04-09T13:18:05Z",
+            "slotId": "A5",
+            "zone": "UPPER",
+            "productId": "PRD-S005",
+            "productName": "Doritos Nacho Cheese 2.75oz",
+            "category": "SNACK",
+            "price": 200,
+            "paymentMethod": "QR_CODE",
+            "qrProvider": "GOOGLE_PAY",
+            "vendResult": "SUCCESS",
+            "dispenseDuration": 1.3
+          }
+        ],
+        "totalCount": 612,
+        "page": 1,
+        "pageSize": 20
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/transactions/summary",
+      "response": {
+        "machineId": "VM-AFD9-001",
+        "date": "2026-04-09",
+        "totalVends": 45,
+        "totalRevenue": 10125,
+        "currency": "USD",
+        "successRate": 97.8,
+        "failedVends": 1,
+        "byPaymentMethod": {
+          "CASH": {"count": 12, "revenue": 2475},
+          "CREDIT_CARD": {"count": 14, "revenue": 3150},
+          "NFC_CONTACTLESS": {"count": 13, "revenue": 2950},
+          "QR_CODE": {"count": 6, "revenue": 1550}
+        },
+        "byCategory": {
+          "SNACK": {"count": 22, "revenue": 4225},
+          "COLD_BEVERAGE": {"count": 18, "revenue": 4200},
+          "ENERGY_DRINK": {"count": 5, "revenue": 1700}
+        },
+        "peakHour": 12,
+        "averageTransactionValue": 225
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/transactions/TXN-20260409-0445",
+      "response": {
+        "transactionId": "TXN-20260409-0445",
+        "machineId": "VM-AFD9-001",
+        "timestamp": "2026-04-09T14:58:11Z",
+        "slotId": "D1",
+        "zone": "LOWER",
+        "productId": "PRD-D001",
+        "productName": "Coca-Cola Classic 12oz",
+        "category": "COLD_BEVERAGE",
+        "price": 200,
+        "paymentMethod": "NFC_CONTACTLESS",
+        "cardType": "VISA",
+        "cardLastFour": "3847",
+        "authorizationCode": "B2941E",
+        "vendResult": "SUCCESS",
+        "dispenseDuration": 2.1,
+        "conveyorCycleTime": 1.8,
+        "customerInteractionTime": 9.2
+      }
+    }
+  ]
+}

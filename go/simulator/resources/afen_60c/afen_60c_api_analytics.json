@@ -1,0 +1,90 @@
+{
+  "snmp": [],
+  "ssh": [],
+  "api": [
+    {
+      "method": "GET",
+      "path": "/api/v1/analytics/traffic",
+      "response": {
+        "machineId": "VM-AF60-001",
+        "date": "2026-04-09",
+        "hourlyVends": [
+          {"hour": 5, "vends": 1},
+          {"hour": 6, "vends": 7},
+          {"hour": 7, "vends": 8},
+          {"hour": 8, "vends": 5},
+          {"hour": 9, "vends": 2},
+          {"hour": 10, "vends": 2},
+          {"hour": 11, "vends": 3},
+          {"hour": 12, "vends": 6},
+          {"hour": 13, "vends": 4},
+          {"hour": 14, "vends": 2},
+          {"hour": 15, "vends": 2},
+          {"hour": 16, "vends": 3},
+          {"hour": 17, "vends": 7},
+          {"hour": 18, "vends": 4}
+        ],
+        "peakHour": 7,
+        "peakVends": 8,
+        "averageVendsPerHour": 4.0
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/analytics/performance",
+      "response": {
+        "machineId": "VM-AF60-001",
+        "period": "2026-04-01 to 2026-04-09",
+        "topProducts": [
+          {"productName": "Red Bull Energy 8.4oz", "vends": 142, "revenueCents": 49700, "rank": 1},
+          {"productName": "Dasani Water 16.9oz", "vends": 128, "revenueCents": 19200, "rank": 2},
+          {"productName": "Gatorade Cool Blue 20oz", "vends": 115, "revenueCents": 28750, "rank": 3},
+          {"productName": "Monster Energy 16oz", "vends": 98, "revenueCents": 31850, "rank": 4},
+          {"productName": "Coca-Cola Classic 12oz", "vends": 87, "revenueCents": 15225, "rank": 5}
+        ],
+        "topCategories": [
+          {"category": "ENERGY_DRINK", "vends": 256, "revenueCents": 84480},
+          {"category": "COLD_BEVERAGE", "vends": 215, "revenueCents": 37625},
+          {"category": "SPORTS_DRINK", "vends": 172, "revenueCents": 43000},
+          {"category": "WATER", "vends": 128, "revenueCents": 19200}
+        ],
+        "vendSuccessRate": 96.4
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/analytics/demand",
+      "response": {
+        "machineId": "VM-AF60-001",
+        "weeklyPattern": [
+          {"day": "Monday", "avgVends": 58, "avgRevenueCents": 11890},
+          {"day": "Tuesday", "avgVends": 55, "avgRevenueCents": 11275},
+          {"day": "Wednesday", "avgVends": 60, "avgRevenueCents": 12300},
+          {"day": "Thursday", "avgVends": 57, "avgRevenueCents": 11685},
+          {"day": "Friday", "avgVends": 52, "avgRevenueCents": 10660},
+          {"day": "Saturday", "avgVends": 38, "avgRevenueCents": 7790},
+          {"day": "Sunday", "avgVends": 32, "avgRevenueCents": 6560}
+        ],
+        "avgDailyVends": 50.3,
+        "avgWeeklyRevenueCents": 72160,
+        "restockFrequencyDays": 3
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/analytics/health",
+      "response": {
+        "machineId": "VM-AF60-001",
+        "overallHealthScore": 84,
+        "components": [
+          {"component": "COMPRESSOR", "healthPercent": 82, "status": "GOOD", "runHoursTotal": 14280, "lastServiceDate": "2026-03-22T09:00:00Z", "notes": "Duty cycle slightly elevated due to ambient temperature"},
+          {"component": "BILL_VALIDATOR", "healthPercent": 95, "status": "EXCELLENT", "totalBillsProcessed": 8420, "jamCount": 2, "lastCleanDate": "2026-03-22T09:00:00Z"},
+          {"component": "COIN_MECH", "healthPercent": 91, "status": "EXCELLENT", "totalCoinsProcessed": 12680, "jamCount": 1},
+          {"component": "CARD_READER", "healthPercent": 98, "status": "EXCELLENT", "totalTransactions": 28450},
+          {"component": "DISPLAY", "healthPercent": 100, "status": "EXCELLENT", "pixelDefects": 0},
+          {"component": "MOTORS", "healthPercent": 88, "status": "GOOD", "totalMotors": 60, "motorsOk": 58, "motorsAttention": 2, "motorsAttentionSlots": ["E4", "F10"]}
+        ]
+      }
+    }
+  ]
+}

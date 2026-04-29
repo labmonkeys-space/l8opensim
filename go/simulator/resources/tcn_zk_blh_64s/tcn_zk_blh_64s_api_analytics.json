@@ -1,0 +1,82 @@
+{
+  "snmp": [],
+  "ssh": [],
+  "api": [
+    {
+      "method": "GET",
+      "path": "/api/v1/analytics/traffic",
+      "response": {
+        "machineId": "VM-TCN-064-001",
+        "date": "2026-04-09",
+        "totalApproaches": 187,
+        "totalPurchases": 34,
+        "conversionRate": 18.2,
+        "averageDwellTime": 28.5,
+        "hourlyTraffic": [
+          {"hour": 6, "approaches": 5, "purchases": 1},
+          {"hour": 7, "approaches": 12, "purchases": 3},
+          {"hour": 8, "approaches": 18, "purchases": 4},
+          {"hour": 9, "approaches": 14, "purchases": 3},
+          {"hour": 10, "approaches": 16, "purchases": 3},
+          {"hour": 11, "approaches": 22, "purchases": 4},
+          {"hour": 12, "approaches": 31, "purchases": 6},
+          {"hour": 13, "approaches": 28, "purchases": 5},
+          {"hour": 14, "approaches": 19, "purchases": 3},
+          {"hour": 15, "approaches": 22, "purchases": 2}
+        ]
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/analytics/performance",
+      "response": {
+        "machineId": "VM-TCN-064-001",
+        "period": "2026-04-01/2026-04-09",
+        "topSlots": [
+          {"rank": 1, "slotId": "A01", "productName": "Coca-Cola Classic 12oz", "vendCount": 28, "revenue": 6300, "velocity": 3.1, "marginPercent": 42.5},
+          {"rank": 2, "slotId": "A05", "productName": "Monster Energy Ultra 16oz", "vendCount": 24, "revenue": 8400, "velocity": 2.7, "marginPercent": 38.2},
+          {"rank": 3, "slotId": "C07", "productName": "Turkey & Swiss Sandwich", "vendCount": 18, "revenue": 11700, "velocity": 2.0, "marginPercent": 35.8},
+          {"rank": 4, "slotId": "D02", "productName": "Dasani Water 20oz", "vendCount": 22, "revenue": 4400, "velocity": 2.4, "marginPercent": 55.1},
+          {"rank": 5, "slotId": "B03", "productName": "Lay's Classic Chips 2.75oz", "vendCount": 19, "revenue": 3800, "velocity": 2.1, "marginPercent": 48.3}
+        ],
+        "overallVelocity": 1.8,
+        "averageRevenuePerSlot": 1066
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/analytics/demand",
+      "response": {
+        "machineId": "VM-TCN-064-001",
+        "period": "WEEKLY",
+        "peakDays": ["TUESDAY", "WEDNESDAY", "THURSDAY"],
+        "peakHours": [12, 13, 8],
+        "predictedStockouts": [
+          {"slotId": "A01", "productName": "Coca-Cola Classic 12oz", "estimatedStockoutTime": "2026-04-10T11:00:00Z", "urgency": "HIGH"},
+          {"slotId": "E04", "productName": "Nature Valley Granola Bar", "estimatedStockoutTime": "2026-04-10T15:00:00Z", "urgency": "MEDIUM"}
+        ],
+        "restockUrgency": "MODERATE",
+        "recommendedRestockDate": "2026-04-10T06:00:00Z",
+        "slotsNeedingRestock": 17,
+        "demandTrend": "STABLE"
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/analytics/health",
+      "response": {
+        "machineId": "VM-TCN-064-001",
+        "timestamp": "2026-04-09T14:32:18Z",
+        "overallScore": 94,
+        "components": [
+          {"component": "DOOR_LOCKS", "score": 96, "status": "HEALTHY", "issueCount": 0, "lastInspection": "2026-03-28T10:15:00Z", "details": "All 64 locks operational, 3 showing elevated cycle counts"},
+          {"component": "BILL_VALIDATOR", "score": 88, "status": "HEALTHY", "issueCount": 1, "lastInspection": "2026-03-28T10:15:00Z", "details": "Stacker at 24% capacity, 2 bill jams this month"},
+          {"component": "CARD_READER", "score": 98, "status": "HEALTHY", "issueCount": 0, "lastInspection": "2026-03-28T10:15:00Z", "details": "All payment methods functional"},
+          {"component": "CONTROLLER", "score": 95, "status": "HEALTHY", "issueCount": 0, "lastInspection": "2026-03-28T10:15:00Z", "details": "CPU 12%, memory 55%, firmware current"}
+        ],
+        "nextScheduledMaintenance": "2026-04-28T06:00:00Z",
+        "daysSinceLastService": 12
+      }
+    }
+  ]
+}

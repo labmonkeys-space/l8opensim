@@ -1,0 +1,119 @@
+{
+  "snmp": [],
+  "ssh": [],
+  "api": [
+    {
+      "method": "GET",
+      "path": "/api/v1/transactions",
+      "response": {
+        "machineId": "VM-TCN-064-001",
+        "transactions": [
+          {
+            "transactionId": "TXN-20260409-0339",
+            "timestamp": "2026-04-09T14:18:44Z",
+            "slotId": "A01",
+            "productId": "PRD-1001",
+            "productName": "Coca-Cola Classic 12oz",
+            "price": 225,
+            "paymentMethod": "NFC_CONTACTLESS",
+            "cardType": "VISA",
+            "cardLastFour": "4821",
+            "vendResult": "SUCCESS",
+            "dispenseDuration": 1.2
+          },
+          {
+            "transactionId": "TXN-20260409-0338",
+            "timestamp": "2026-04-09T14:05:11Z",
+            "slotId": "D02",
+            "productId": "PRD-4002",
+            "productName": "Dasani Water 20oz",
+            "price": 200,
+            "paymentMethod": "CASH",
+            "cashInserted": 200,
+            "changeGiven": 0,
+            "vendResult": "SUCCESS",
+            "dispenseDuration": 1.1
+          },
+          {
+            "transactionId": "TXN-20260409-0337",
+            "timestamp": "2026-04-09T13:47:22Z",
+            "slotId": "A05",
+            "productId": "PRD-1005",
+            "productName": "Monster Energy Ultra 16oz",
+            "price": 350,
+            "paymentMethod": "QR_CODE",
+            "qrProvider": "APPLE_PAY",
+            "vendResult": "SUCCESS",
+            "dispenseDuration": 1.3
+          },
+          {
+            "transactionId": "TXN-20260409-0336",
+            "timestamp": "2026-04-09T13:22:05Z",
+            "slotId": "B03",
+            "productId": "PRD-2003",
+            "productName": "Lay's Classic Chips 2.75oz",
+            "price": 200,
+            "paymentMethod": "CREDIT_CARD",
+            "cardType": "MASTERCARD",
+            "cardLastFour": "7193",
+            "vendResult": "SUCCESS",
+            "dispenseDuration": 1.0
+          }
+        ],
+        "totalCount": 342,
+        "page": 1,
+        "pageSize": 20
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/transactions/summary",
+      "response": {
+        "machineId": "VM-TCN-064-001",
+        "date": "2026-04-09",
+        "totalVends": 34,
+        "totalRevenue": 6825,
+        "currency": "USD",
+        "successRate": 97.1,
+        "failedVends": 1,
+        "byPaymentMethod": {
+          "CASH": {"count": 8, "revenue": 1650},
+          "CREDIT_CARD": {"count": 11, "revenue": 2475},
+          "NFC_CONTACTLESS": {"count": 10, "revenue": 1900},
+          "QR_CODE": {"count": 5, "revenue": 800}
+        },
+        "byCategory": {
+          "COLD_BEVERAGE": {"count": 14, "revenue": 2975},
+          "SNACK": {"count": 10, "revenue": 1850},
+          "FRESH_FOOD": {"count": 4, "revenue": 2600},
+          "ENERGY_DRINK": {"count": 6, "revenue": 2100}
+        },
+        "peakHour": 12,
+        "averageTransactionValue": 201
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/transactions/TXN-20260409-0339",
+      "response": {
+        "transactionId": "TXN-20260409-0339",
+        "machineId": "VM-TCN-064-001",
+        "timestamp": "2026-04-09T14:18:44Z",
+        "slotId": "A01",
+        "productId": "PRD-1001",
+        "productName": "Coca-Cola Classic 12oz",
+        "category": "COLD_BEVERAGE",
+        "price": 225,
+        "paymentMethod": "NFC_CONTACTLESS",
+        "cardType": "VISA",
+        "cardLastFour": "4821",
+        "authorizationCode": "A7832F",
+        "vendResult": "SUCCESS",
+        "lockOpenDuration": 0.3,
+        "dispenseDuration": 1.2,
+        "doorOpenDuration": 4.8,
+        "customerInteractionTime": 12.5
+      }
+    }
+  ]
+}

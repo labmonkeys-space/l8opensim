@@ -1,0 +1,94 @@
+{
+  "snmp": [],
+  "ssh": [],
+  "api": [
+    {
+      "method": "GET",
+      "path": "/api/v1/payment/status",
+      "response": {
+        "machineId": "VM-TCN-040-001",
+        "timestamp": "2026-04-09T14:18:05Z",
+        "peripherals": [
+          {
+            "type": "BILL_ACCEPTOR",
+            "model": "ICT-A7-V7",
+            "status": "ACTIVE",
+            "firmwareVersion": "3.21",
+            "acceptedDenominations": [100, 500, 1000, 2000],
+            "lastActivity": "2026-04-09T09:15:22Z"
+          },
+          {
+            "type": "COIN_ACCEPTOR",
+            "model": "NRI-G13",
+            "status": "ACTIVE",
+            "firmwareVersion": "2.04",
+            "acceptedDenominations": [5, 10, 25, 100],
+            "lastActivity": "2026-04-09T08:42:10Z"
+          },
+          {
+            "type": "CARD_READER",
+            "model": "Nayax-VPOS-Touch",
+            "status": "ACTIVE",
+            "firmwareVersion": "5.12.1",
+            "supportedTypes": ["VISA", "MASTERCARD", "AMEX", "DISCOVER"],
+            "nfcEnabled": true,
+            "lastActivity": "2026-04-09T14:02:51Z"
+          },
+          {
+            "type": "QR_SCANNER",
+            "model": "TCN-QR-200",
+            "status": "ACTIVE",
+            "firmwareVersion": "1.08",
+            "supportedProviders": ["Apple Pay", "Google Pay", "Venmo", "PayPal"],
+            "lastActivity": "2026-04-09T14:02:51Z"
+          }
+        ]
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/payment/cashbox",
+      "response": {
+        "machineId": "VM-TCN-040-001",
+        "timestamp": "2026-04-09T14:18:05Z",
+        "billStacker": {
+          "status": "OK",
+          "capacity": 300,
+          "currentCount": 18,
+          "percentFull": 6,
+          "totalValue": 4200,
+          "denomination": {"$1": 8, "$5": 2}
+        },
+        "coinTubes": [
+          {"denomination": 25, "label": "Quarter", "currentCount": 32, "capacity": 60, "value": 800},
+          {"denomination": 10, "label": "Dime", "currentCount": 28, "capacity": 60, "value": 280},
+          {"denomination": 5, "label": "Nickel", "currentCount": 40, "capacity": 60, "value": 200}
+        ],
+        "coinCashbox": {
+          "currentCount": 45,
+          "totalValue": 575
+        },
+        "lastCashCollection": "2026-04-07T07:00:00Z"
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/payment/cashless",
+      "response": {
+        "machineId": "VM-TCN-040-001",
+        "timestamp": "2026-04-09T14:18:05Z",
+        "status": "ACTIVE",
+        "provider": "Nayax",
+        "terminalId": "NYX-040-2891",
+        "todayTransactions": 26,
+        "todayRevenue": 50900,
+        "percentOfTotal": 92.8,
+        "lastTransaction": "2026-04-09T14:02:51Z",
+        "batchStatus": "OPEN",
+        "pendingSettlement": 50900,
+        "lastSettlement": "2026-04-08T23:59:59Z",
+        "lastSettlementAmount": 48350
+      }
+    }
+  ]
+}

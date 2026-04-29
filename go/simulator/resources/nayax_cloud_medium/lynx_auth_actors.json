@@ -1,0 +1,144 @@
+{
+  "snmp": [],
+  "ssh": [],
+  "api": [
+    {
+      "method": "POST",
+      "path": "/lynx/v1/SignIn",
+      "response": {
+        "token": "eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9.sim.nayax-cloud-medium",
+        "expiresIn": 3600,
+        "tokenType": "Bearer",
+        "user": {
+          "userId": "USR-201",
+          "email": "operator@nationwide-vending.com",
+          "role": "operator",
+          "actorId": "ACT-2001"
+        }
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/lynx/v1/SignOut",
+      "response": {
+        "success": true,
+        "message": "Session terminated"
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/lynx/v1/actors",
+      "response": {
+        "items": [
+          {
+            "actorId": "ACT-2001",
+            "name": "NationWide Vending Inc.",
+            "type": "operator",
+            "email": "ops@nationwide-vending.com",
+            "phone": "+1-312-555-0100",
+            "status": "active",
+            "machineCount": 250,
+            "createdAt": "2023-06-10T10:00:00Z"
+          },
+          {
+            "actorId": "ACT-2002",
+            "name": "Windy City Refreshments",
+            "type": "sub-operator",
+            "email": "admin@windycity-refresh.com",
+            "phone": "+1-312-555-0201",
+            "status": "active",
+            "machineCount": 55,
+            "parentActorId": "ACT-2001",
+            "createdAt": "2024-01-15T09:00:00Z"
+          },
+          {
+            "actorId": "ACT-2003",
+            "name": "Rocky Mountain Vend Co.",
+            "type": "sub-operator",
+            "email": "ops@rockymtn-vend.com",
+            "phone": "+1-720-555-0302",
+            "status": "active",
+            "machineCount": 42,
+            "parentActorId": "ACT-2001",
+            "createdAt": "2024-03-20T14:30:00Z"
+          },
+          {
+            "actorId": "ACT-2004",
+            "name": "Desert Sun Vending",
+            "type": "sub-operator",
+            "email": "info@desertsun-vending.com",
+            "phone": "+1-602-555-0403",
+            "status": "active",
+            "machineCount": 38,
+            "parentActorId": "ACT-2001",
+            "createdAt": "2024-05-11T11:00:00Z"
+          },
+          {
+            "actorId": "ACT-2005",
+            "name": "Pacific Coast Services",
+            "type": "sub-operator",
+            "email": "ops@paccoast-svc.com",
+            "phone": "+1-206-555-0504",
+            "status": "active",
+            "machineCount": 60,
+            "parentActorId": "ACT-2001",
+            "createdAt": "2024-07-02T08:30:00Z"
+          },
+          {
+            "actorId": "ACT-2006",
+            "name": "Sunshine State Micro Markets",
+            "type": "sub-operator",
+            "email": "admin@sunshine-micro.com",
+            "phone": "+1-305-555-0605",
+            "status": "active",
+            "machineCount": 55,
+            "parentActorId": "ACT-2001",
+            "createdAt": "2024-09-18T13:00:00Z"
+          }
+        ],
+        "totalCount": 6,
+        "page": 1,
+        "pageSize": 50
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/lynx/v1/actors/{actorId}",
+      "response": {
+        "actorId": "ACT-2001",
+        "name": "NationWide Vending Inc.",
+        "type": "operator",
+        "email": "ops@nationwide-vending.com",
+        "phone": "+1-312-555-0100",
+        "status": "active",
+        "address": {
+          "street": "200 N Michigan Ave, Suite 1500",
+          "city": "Chicago",
+          "state": "IL",
+          "zip": "60601",
+          "country": "US"
+        },
+        "machineCount": 250,
+        "deviceCount": 300,
+        "settings": {
+          "currency": "USD",
+          "timezone": "America/Chicago",
+          "language": "en"
+        },
+        "createdAt": "2023-06-10T10:00:00Z",
+        "updatedAt": "2026-04-10T08:45:00Z"
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/lynx/v1/actors",
+      "response": {
+        "actorId": "ACT-2007",
+        "name": "New Sub-Operator",
+        "type": "sub-operator",
+        "status": "active",
+        "createdAt": "2026-04-17T12:00:00Z"
+      }
+    }
+  ]
+}

@@ -132,6 +132,14 @@ var profileGPUServerH200 = DeviceProfile{
 	},
 }
 
+// Nayax Cloud API profiles (lightweight — no physical hardware metrics needed)
+var profileNayaxCloud = DeviceProfile{
+	CPUBaseMin: 10, CPUBaseMax: 30, CPUSpike: 10,
+	MemTotalKB: 4 * 1024 * 1024, // 4 GB
+	MemBaseMin: 30, MemBaseMax: 60, MemVariance: 8,
+	TempBaseMin: 22, TempBaseMax: 32, TempSpike: 3,
+}
+
 // deviceProfileMap maps resource file names to their device profiles.
 var deviceProfileMap = map[string]DeviceProfile{
 	// Core Routers
@@ -170,6 +178,11 @@ var deviceProfileMap = map[string]DeviceProfile{
 	"nvidia_dgx_a100.json": profileGPUServerA100,
 	"nvidia_dgx_h100.json": profileGPUServerH100,
 	"nvidia_hgx_h200.json": profileGPUServerH200,
+
+	// Nayax Cloud API Simulators
+	"nayax_cloud_small.json":  profileNayaxCloud,
+	"nayax_cloud_medium.json": profileNayaxCloud,
+	"nayax_cloud_large.json":  profileNayaxCloud,
 }
 
 // GetDeviceProfile returns the metric profile for a given resource file.

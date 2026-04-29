@@ -1,0 +1,81 @@
+{
+  "snmp": [],
+  "ssh": [],
+  "api": [
+    {
+      "method": "GET",
+      "path": "/api/v1/dex/audit",
+      "response": {
+        "machineId": "VM-AFD9-001",
+        "timestamp": "2026-04-09T15:08:42Z",
+        "dexVersion": "UCS-01-1.0",
+        "communicationId": "AFD9001",
+        "auditData": {
+          "VA1": {
+            "label": "Value of All Paid Vend Sales Since Last Reset",
+            "value": 240225,
+            "count": 1180
+          },
+          "VA2": {
+            "label": "Value of All Paid Vend Sales Since Initialization",
+            "value": 1842750,
+            "count": 8941
+          },
+          "VA3": {
+            "label": "Value of All Free Vend Sales Since Last Reset",
+            "value": 0,
+            "count": 0
+          },
+          "CA1": {
+            "label": "Value of Cash Sales Since Last Reset",
+            "value": 72800,
+            "count": 358
+          },
+          "CA2": {
+            "label": "Value of Cashless Sales Since Last Reset",
+            "value": 167425,
+            "count": 822
+          },
+          "CA3": {
+            "label": "Cash In Since Last Reset",
+            "value": 78450
+          },
+          "CA4": {
+            "label": "Cash To Cash Box Since Last Reset",
+            "value": 72800
+          },
+          "CA8": {
+            "label": "Value of Cash Overpay Since Last Reset",
+            "value": 5650
+          },
+          "CA10": {
+            "label": "Value of Cash Dispensed Since Last Reset",
+            "value": 0
+          },
+          "DA1": {
+            "label": "Value of Cash Manually Dispensed Since Last Reset",
+            "value": 0
+          },
+          "TA1": {
+            "label": "Value of Token Sales Since Last Reset",
+            "value": 0,
+            "count": 0
+          }
+        },
+        "intervals": {
+          "lastResetDate": "2026-03-10T00:00:00Z",
+          "initializationDate": "2025-06-20T08:00:00Z",
+          "daysSinceReset": 30,
+          "daysSinceInit": 294
+        },
+        "machineInfo": {
+          "serialNumber": "AFEN2024D900054C001",
+          "model": "AF-D900-54C(22SP)",
+          "firmwareVersion": "22SP-4.1.0",
+          "totalSlots": 54,
+          "machineType": "COMBO"
+        }
+      }
+    }
+  ]
+}

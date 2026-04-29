@@ -1,0 +1,100 @@
+{
+  "snmp": [],
+  "ssh": [],
+  "api": [
+    {
+      "method": "POST",
+      "path": "/lynx/v1/SignIn",
+      "response": {
+        "token": "eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9.sim.nayax-cloud-small",
+        "expiresIn": 3600,
+        "tokenType": "Bearer",
+        "user": {
+          "userId": "USR-001",
+          "email": "operator@vend-regional.com",
+          "role": "operator",
+          "actorId": "ACT-1001"
+        }
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/lynx/v1/SignOut",
+      "response": {
+        "success": true,
+        "message": "Session terminated"
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/lynx/v1/actors",
+      "response": {
+        "items": [
+          {
+            "actorId": "ACT-1001",
+            "name": "Metro Vending Co.",
+            "type": "operator",
+            "email": "ops@metro-vending.com",
+            "phone": "+1-555-0101",
+            "status": "active",
+            "machineCount": 25,
+            "createdAt": "2024-03-15T10:00:00Z"
+          },
+          {
+            "actorId": "ACT-1002",
+            "name": "Downtown Refreshments",
+            "type": "sub-operator",
+            "email": "admin@downtown-refresh.com",
+            "phone": "+1-555-0102",
+            "status": "active",
+            "machineCount": 8,
+            "parentActorId": "ACT-1001",
+            "createdAt": "2024-06-20T14:30:00Z"
+          }
+        ],
+        "totalCount": 2,
+        "page": 1,
+        "pageSize": 50
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/lynx/v1/actors/{actorId}",
+      "response": {
+        "actorId": "ACT-1001",
+        "name": "Metro Vending Co.",
+        "type": "operator",
+        "email": "ops@metro-vending.com",
+        "phone": "+1-555-0101",
+        "status": "active",
+        "address": {
+          "street": "450 Commerce Blvd",
+          "city": "Austin",
+          "state": "TX",
+          "zip": "78701",
+          "country": "US"
+        },
+        "machineCount": 25,
+        "deviceCount": 25,
+        "settings": {
+          "currency": "USD",
+          "timezone": "America/Chicago",
+          "language": "en"
+        },
+        "createdAt": "2024-03-15T10:00:00Z",
+        "updatedAt": "2026-01-10T08:45:00Z"
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/lynx/v1/actors",
+      "response": {
+        "actorId": "ACT-1003",
+        "name": "New Sub-Operator",
+        "type": "sub-operator",
+        "status": "active",
+        "createdAt": "2026-04-17T12:00:00Z"
+      }
+    }
+  ]
+}

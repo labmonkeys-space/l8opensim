@@ -1,0 +1,98 @@
+{
+  "snmp": [],
+  "ssh": [],
+  "api": [
+    {
+      "method": "GET",
+      "path": "/api/v1/machine",
+      "response": {
+        "machineId": "VM-TCN-064-001",
+        "serialNumber": "TCN2024BLH064S-00847",
+        "model": "TCN-ZK(22SP)+BLH-64S",
+        "manufacturer": "TCN Vending Technology",
+        "machineType": "LOCKER",
+        "totalSlots": 64,
+        "slotLayout": {"rows": 8, "columns": 8},
+        "firmwareVersion": "22SP-3.8.2",
+        "controllerBoard": "RK3288-SP22",
+        "operatingSystem": "Android 7.1.2",
+        "screenSize": "21.5 inch",
+        "screenResolution": "1920x1080",
+        "location": {
+          "siteId": "SITE-0042",
+          "siteName": "Building A - Lobby",
+          "address": "1200 Commerce Blvd, Suite 100, Dallas, TX 75201",
+          "latitude": 32.7872,
+          "longitude": -96.7985,
+          "floor": 1,
+          "zone": "Main Entrance"
+        },
+        "connectivity": {
+          "type": "4G_LTE",
+          "carrier": "T-Mobile",
+          "signalStrength": -67,
+          "ipAddress": "10.44.12.87",
+          "macAddress": "A8:3F:A1:22:6B:04",
+          "lastHeartbeat": "2026-04-09T14:32:18Z"
+        },
+        "capabilities": [
+          "CASH_PAYMENT",
+          "CARD_PAYMENT",
+          "NFC_CONTACTLESS",
+          "QR_CODE_PAYMENT",
+          "TOUCHSCREEN_UI",
+          "REMOTE_MANAGEMENT",
+          "DEX_AUDIT",
+          "INDIVIDUAL_CELL_LOCKS",
+          "CAMERA_SURVEILLANCE"
+        ],
+        "installDate": "2025-09-15T08:00:00Z",
+        "lastServiceDate": "2026-03-28T10:15:00Z"
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/machine/status",
+      "response": {
+        "machineId": "VM-TCN-064-001",
+        "status": "OPERATIONAL",
+        "timestamp": "2026-04-09T14:32:18Z",
+        "uptime": 184729,
+        "doorStatus": "CLOSED",
+        "paymentSystemStatus": "READY",
+        "refrigerationStatus": "N/A",
+        "networkStatus": "CONNECTED",
+        "screenStatus": "ACTIVE",
+        "vendsSinceLastService": 342,
+        "slotsOccupied": 47,
+        "slotsEmpty": 17,
+        "warnings": [
+          {"code": "W-CASH-80", "message": "Bill stacker 80% full", "severity": "WARNING", "since": "2026-04-09T09:14:00Z"},
+          {"code": "W-STOCK-LOW", "message": "12 slots sold out", "severity": "INFO", "since": "2026-04-09T11:45:00Z"}
+        ]
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/machine/config",
+      "response": {
+        "machineId": "VM-TCN-064-001",
+        "locale": "en-US",
+        "currency": "USD",
+        "timezone": "America/Chicago",
+        "screenBrightness": 80,
+        "volumeLevel": 60,
+        "energySavingEnabled": true,
+        "autoShutdownStart": "23:00",
+        "autoShutdownEnd": "05:00",
+        "idleScreenTimeout": 30,
+        "maxTransactionTime": 120,
+        "receiptPrinting": false,
+        "ageVerificationEnabled": false,
+        "telemetryInterval": 300,
+        "autoRestockAlert": true,
+        "restockThreshold": 0
+      }
+    }
+  ]
+}

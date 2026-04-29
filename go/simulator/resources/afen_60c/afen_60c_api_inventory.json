@@ -1,0 +1,77 @@
+{
+  "snmp": [],
+  "ssh": [],
+  "api": [
+    {
+      "method": "GET",
+      "path": "/api/v1/inventory",
+      "response": {
+        "machineId": "VM-AF60-001",
+        "totalSlots": 60,
+        "activeSlots": 58,
+        "emptySlots": 4,
+        "lowStockSlots": 7,
+        "slots": [
+          {"slotId": "A1", "productId": "SKU-CC-12OZ", "productName": "Coca-Cola Classic 12oz", "category": "COLD_BEVERAGE", "priceCents": 175, "currentQty": 10, "maxCapacity": 12, "status": "IN_STOCK", "motorStatus": "OK"},
+          {"slotId": "A5", "productId": "SKU-PEPSI-12OZ", "productName": "Pepsi 12oz", "category": "COLD_BEVERAGE", "priceCents": 175, "currentQty": 2, "maxCapacity": 12, "status": "LOW_STOCK", "motorStatus": "OK"},
+          {"slotId": "B3", "productId": "SKU-SPRITE-12OZ", "productName": "Sprite 12oz", "category": "COLD_BEVERAGE", "priceCents": 175, "currentQty": 8, "maxCapacity": 10, "status": "IN_STOCK", "motorStatus": "OK"},
+          {"slotId": "C7", "productId": "SKU-WATER-16OZ", "productName": "Dasani Water 16.9oz", "category": "COLD_BEVERAGE", "priceCents": 150, "currentQty": 0, "maxCapacity": 10, "status": "SOLD_OUT", "motorStatus": "OK"},
+          {"slotId": "D2", "productId": "SKU-GATOR-20OZ", "productName": "Gatorade Cool Blue 20oz", "category": "SPORTS_DRINK", "priceCents": 250, "currentQty": 5, "maxCapacity": 8, "status": "IN_STOCK", "motorStatus": "OK"},
+          {"slotId": "E4", "productId": "SKU-REDBULL-8OZ", "productName": "Red Bull Energy 8.4oz", "category": "ENERGY_DRINK", "priceCents": 350, "currentQty": 1, "maxCapacity": 12, "status": "LOW_STOCK", "motorStatus": "ATTENTION"},
+          {"slotId": "F8", "productId": "SKU-MONSTER-16OZ", "productName": "Monster Energy 16oz", "category": "ENERGY_DRINK", "priceCents": 325, "currentQty": 6, "maxCapacity": 8, "status": "IN_STOCK", "motorStatus": "OK"}
+        ]
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/inventory/slots/A1",
+      "response": {
+        "slotId": "A1",
+        "row": "A",
+        "column": 1,
+        "productId": "SKU-CC-12OZ",
+        "productName": "Coca-Cola Classic 12oz",
+        "category": "COLD_BEVERAGE",
+        "priceCents": 175,
+        "currentQty": 10,
+        "maxCapacity": 12,
+        "status": "IN_STOCK",
+        "motorStatus": "OK",
+        "motorCycleCount": 1432,
+        "lastDispenseTime": "2026-04-09T16:55:03Z",
+        "vendCountToday": 4,
+        "vendCountTotal": 1432,
+        "lastRestockTime": "2026-04-08T07:15:00Z"
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/inventory/alerts",
+      "response": {
+        "alerts": [
+          {"alertId": "INV-4001", "type": "LOW_STOCK", "slotId": "A5", "productName": "Pepsi 12oz", "currentQty": 2, "maxCapacity": 12, "threshold": 3, "timestamp": "2026-04-09T15:20:00Z"},
+          {"alertId": "INV-4002", "type": "LOW_STOCK", "slotId": "E4", "productName": "Red Bull Energy 8.4oz", "currentQty": 1, "maxCapacity": 12, "threshold": 3, "timestamp": "2026-04-09T16:10:00Z"},
+          {"alertId": "INV-4003", "type": "SOLD_OUT", "slotId": "C7", "productName": "Dasani Water 16.9oz", "currentQty": 0, "maxCapacity": 10, "timestamp": "2026-04-09T14:45:00Z"}
+        ]
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/planogram",
+      "response": {
+        "machineId": "VM-AF60-001",
+        "planogramId": "PLN-GYM-BEV-003",
+        "name": "Gym Beverage Mix - Spring 2026",
+        "effectiveDate": "2026-03-01",
+        "categories": [
+          {"name": "Colas", "rows": ["A"], "slotCount": 10, "products": ["Coca-Cola Classic", "Pepsi", "Diet Coke", "Coca-Cola Zero"]},
+          {"name": "Lemon-Lime & Citrus", "rows": ["B"], "slotCount": 10, "products": ["Sprite", "Mountain Dew", "Fanta Orange", "Mello Yello"]},
+          {"name": "Water & Iced Tea", "rows": ["C"], "slotCount": 10, "products": ["Dasani Water", "Smartwater", "Gold Peak Iced Tea", "Pure Leaf"]},
+          {"name": "Sports Drinks", "rows": ["D"], "slotCount": 10, "products": ["Gatorade Cool Blue", "Gatorade Fruit Punch", "Gatorade Lemon-Lime", "Powerade"]},
+          {"name": "Energy Drinks", "rows": ["E"], "slotCount": 10, "products": ["Red Bull", "Monster Energy", "Monster Ultra", "Celsius"]},
+          {"name": "Juice & Specialty", "rows": ["F"], "slotCount": 10, "products": ["Minute Maid OJ", "Simply Lemonade", "Vitaminwater", "Bodyarmor"]}
+        ]
+      }
+    }
+  ]
+}

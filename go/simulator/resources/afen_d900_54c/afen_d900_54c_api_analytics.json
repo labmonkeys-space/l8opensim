@@ -1,0 +1,97 @@
+{
+  "snmp": [],
+  "ssh": [],
+  "api": [
+    {
+      "method": "GET",
+      "path": "/api/v1/analytics/traffic",
+      "response": {
+        "machineId": "VM-AFD9-001",
+        "date": "2026-04-09",
+        "totalInteractions": 112,
+        "totalVends": 45,
+        "conversionRate": 40.2,
+        "hourlyTraffic": [
+          {"hour": 6, "interactions": 2, "vends": 1},
+          {"hour": 7, "interactions": 6, "vends": 3},
+          {"hour": 8, "interactions": 8, "vends": 4},
+          {"hour": 9, "interactions": 7, "vends": 3},
+          {"hour": 10, "interactions": 8, "vends": 3},
+          {"hour": 11, "interactions": 10, "vends": 4},
+          {"hour": 12, "interactions": 14, "vends": 6},
+          {"hour": 13, "interactions": 12, "vends": 5},
+          {"hour": 14, "interactions": 11, "vends": 5},
+          {"hour": 15, "interactions": 10, "vends": 4},
+          {"hour": 16, "interactions": 8, "vends": 3},
+          {"hour": 17, "interactions": 7, "vends": 2},
+          {"hour": 18, "interactions": 5, "vends": 1},
+          {"hour": 19, "interactions": 4, "vends": 1}
+        ],
+        "peakHour": 12,
+        "avgVendsPerHour": 3.2
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/analytics/performance",
+      "response": {
+        "machineId": "VM-AFD9-001",
+        "period": "last_30_days",
+        "topProducts": [
+          {"rank": 1, "productId": "PRD-D001", "productName": "Coca-Cola Classic 12oz", "zone": "LOWER", "category": "COLD_BEVERAGE", "totalVends": 186, "revenue": 37200, "avgDaily": 6.2},
+          {"rank": 2, "productId": "PRD-S001", "productName": "Snickers Bar 1.86oz", "zone": "UPPER", "category": "SNACK", "totalVends": 142, "revenue": 24850, "avgDaily": 4.7},
+          {"rank": 3, "productId": "PRD-D005", "productName": "Dasani Water 16.9oz", "zone": "LOWER", "category": "COLD_BEVERAGE", "totalVends": 138, "revenue": 24150, "avgDaily": 4.6},
+          {"rank": 4, "productId": "PRD-S005", "productName": "Doritos Nacho Cheese 2.75oz", "zone": "UPPER", "category": "SNACK", "totalVends": 115, "revenue": 23000, "avgDaily": 3.8},
+          {"rank": 5, "productId": "PRD-D011", "productName": "Minute Maid Orange Juice 12oz", "zone": "LOWER", "category": "COLD_BEVERAGE", "totalVends": 98, "revenue": 22050, "avgDaily": 3.3}
+        ],
+        "zonePerformance": {
+          "UPPER": {"totalVends": 645, "revenue": 121475, "avgDaily": 21.5},
+          "LOWER": {"totalVends": 535, "revenue": 118750, "avgDaily": 17.8}
+        },
+        "overallRevenue": 240225,
+        "overallVends": 1180,
+        "avgRevenuePerDay": 8007
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/analytics/demand",
+      "response": {
+        "machineId": "VM-AFD9-001",
+        "period": "last_7_days",
+        "dailyTrend": [
+          {"date": "2026-04-03", "vends": 42, "revenue": 9450, "dayType": "WEEKDAY"},
+          {"date": "2026-04-04", "vends": 44, "revenue": 9900, "dayType": "WEEKDAY"},
+          {"date": "2026-04-05", "vends": 38, "revenue": 8550, "dayType": "WEEKEND"},
+          {"date": "2026-04-06", "vends": 36, "revenue": 8100, "dayType": "WEEKEND"},
+          {"date": "2026-04-07", "vends": 41, "revenue": 9225, "dayType": "WEEKDAY"},
+          {"date": "2026-04-08", "vends": 43, "revenue": 9675, "dayType": "WEEKDAY"},
+          {"date": "2026-04-09", "vends": 45, "revenue": 10125, "dayType": "WEEKDAY"}
+        ],
+        "weekdayAvg": {"vends": 43, "revenue": 9675},
+        "weekendAvg": {"vends": 37, "revenue": 8325},
+        "restockFrequency": "every_3_days"
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/analytics/health",
+      "response": {
+        "machineId": "VM-AFD9-001",
+        "timestamp": "2026-04-09T15:08:42Z",
+        "overallScore": 89,
+        "components": [
+          {"component": "COMPRESSOR", "healthScore": 85, "status": "GOOD", "runtime": 14.2, "unit": "hours/day", "lastService": "2026-04-02T09:30:00Z", "nextServiceDue": "2026-07-02"},
+          {"component": "UPPER_ZONE_MOTORS", "healthScore": 92, "status": "GOOD", "totalCycles": 12840, "failedCycles": 14, "failureRate": 0.11, "lastService": "2026-04-02T09:30:00Z"},
+          {"component": "LOWER_ZONE_CONVEYOR", "healthScore": 88, "status": "GOOD", "totalCycles": 9650, "failedCycles": 18, "failureRate": 0.19, "lastService": "2026-04-02T09:30:00Z"},
+          {"component": "BILL_VALIDATOR", "healthScore": 93, "status": "GOOD", "totalBills": 2847, "rejectedBills": 52, "rejectionRate": 1.83, "lastCalibration": "2026-03-15T10:00:00Z"},
+          {"component": "CARD_READER", "healthScore": 96, "status": "EXCELLENT", "totalTransactions": 8412, "failedReads": 31, "failureRate": 0.37},
+          {"component": "TOUCHSCREEN", "healthScore": 94, "status": "EXCELLENT", "uptimePercent": 99.8}
+        ],
+        "predictiveAlerts": [
+          {"component": "COMPRESSOR", "alert": "Filter replacement recommended within 90 days", "severity": "INFO"}
+        ]
+      }
+    }
+  ]
+}

@@ -1,0 +1,213 @@
+{
+  "snmp": [],
+  "ssh": [],
+  "api": [
+    {
+      "method": "POST",
+      "path": "/lynx/v1/payments",
+      "response": {
+        "paymentId": "PAY-28001",
+        "transactionId": "TXN-m1d2e3f4-0100",
+        "status": "approved",
+        "amount": 200,
+        "currency": "USD",
+        "authCode": "B67890",
+        "createdAt": "2026-04-17T12:00:00Z"
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/lynx/v1/payments/{paymentId}/refund",
+      "response": {
+        "refundId": "REF-29001",
+        "paymentId": "PAY-28001",
+        "status": "approved",
+        "amount": 200,
+        "currency": "USD",
+        "createdAt": "2026-04-17T12:05:00Z"
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/lynx/v1/reports/revenue",
+      "response": {
+        "period": "last_30_days",
+        "totalRevenue": 14250000,
+        "totalTransactions": 63400,
+        "averageTransactionValue": 225,
+        "currency": "USD",
+        "dailyBreakdown": [
+          { "date": "2026-04-17", "revenue": 482500, "transactions": 2145 },
+          { "date": "2026-04-16", "revenue": 513000, "transactions": 2280 },
+          { "date": "2026-04-15", "revenue": 468000, "transactions": 2080 },
+          { "date": "2026-04-14", "revenue": 421000, "transactions": 1870 },
+          { "date": "2026-04-13", "revenue": 385000, "transactions": 1711 }
+        ],
+        "byMachineType": {
+          "vending_snack": { "revenue": 3990000, "percentage": 28.0 },
+          "vending_drink": { "revenue": 3420000, "percentage": 24.0 },
+          "coffee": { "revenue": 2993000, "percentage": 21.0 },
+          "micro_market": { "revenue": 1853000, "percentage": 13.0 },
+          "ev_charger": { "revenue": 1140000, "percentage": 8.0 },
+          "laundry": { "revenue": 498000, "percentage": 3.5 },
+          "car_wash": { "revenue": 356000, "percentage": 2.5 }
+        }
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/lynx/v1/reports/sales-by-period",
+      "response": {
+        "period": "last_7_days",
+        "currency": "USD",
+        "data": [
+          { "date": "2026-04-17", "sales": 2145, "revenue": 482500 },
+          { "date": "2026-04-16", "sales": 2280, "revenue": 513000 },
+          { "date": "2026-04-15", "sales": 2080, "revenue": 468000 },
+          { "date": "2026-04-14", "sales": 1870, "revenue": 421000 },
+          { "date": "2026-04-13", "sales": 1711, "revenue": 385000 },
+          { "date": "2026-04-12", "sales": 1950, "revenue": 438750 },
+          { "date": "2026-04-11", "sales": 2020, "revenue": 454500 }
+        ]
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/lynx/v1/reports/machine-performance",
+      "response": {
+        "period": "last_30_days",
+        "machines": [
+          { "machineId": "M-200014", "name": "Seattle Pike Place Micro Market", "transactions": 9300, "revenue": 3255000, "uptimePercent": 99.9 },
+          { "machineId": "M-200012", "name": "Denver University Coffee", "transactions": 6600, "revenue": 1980000, "uptimePercent": 99.7 },
+          { "machineId": "M-200001", "name": "O'Hare Terminal 2 Snack", "transactions": 7350, "revenue": 1617000, "uptimePercent": 99.6 },
+          { "machineId": "M-200004", "name": "Phoenix Sky Harbor Combo", "transactions": 6300, "revenue": 1575000, "uptimePercent": 99.5 },
+          { "machineId": "M-200011", "name": "Miami Hospital Cafeteria", "transactions": 5040, "revenue": 1260000, "uptimePercent": 99.4 },
+          { "machineId": "M-200003", "name": "Denver Tech Center Coffee", "transactions": 5340, "revenue": 1602000, "uptimePercent": 99.3 },
+          { "machineId": "M-200002", "name": "Union Station Drinks", "transactions": 5670, "revenue": 1134000, "uptimePercent": 98.8 },
+          { "machineId": "M-200015", "name": "Miami Airport EV Station", "transactions": 720, "revenue": 1728000, "uptimePercent": 99.8 },
+          { "machineId": "M-200005", "name": "Seattle Convention Center Snack", "transactions": 4680, "revenue": 1053000, "uptimePercent": 99.1 },
+          { "machineId": "M-200008", "name": "Phoenix Office Park EV-1", "transactions": 540, "revenue": 1296000, "uptimePercent": 99.9 }
+        ]
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/lynx/v1/routes",
+      "response": {
+        "items": [
+          {
+            "routeId": "RTE-201",
+            "name": "Chicago Downtown AM",
+            "driverId": "DRV-301",
+            "driverName": "Marcus Johnson",
+            "status": "in_progress",
+            "machineIds": ["M-200001", "M-200002", "M-200010"],
+            "scheduledDate": "2026-04-17",
+            "startedAt": "2026-04-17T06:30:00Z"
+          },
+          {
+            "routeId": "RTE-202",
+            "name": "Denver Metro Route",
+            "driverId": "DRV-302",
+            "driverName": "Sarah Williams",
+            "status": "scheduled",
+            "machineIds": ["M-200003", "M-200007", "M-200012"],
+            "scheduledDate": "2026-04-17"
+          },
+          {
+            "routeId": "RTE-203",
+            "name": "Phoenix Area PM",
+            "driverId": "DRV-303",
+            "driverName": "David Lopez",
+            "status": "scheduled",
+            "machineIds": ["M-200004", "M-200008", "M-200013"],
+            "scheduledDate": "2026-04-17"
+          },
+          {
+            "routeId": "RTE-204",
+            "name": "Seattle District Route",
+            "driverId": "DRV-304",
+            "driverName": "Emily Chen",
+            "status": "completed",
+            "machineIds": ["M-200005", "M-200009", "M-200014"],
+            "scheduledDate": "2026-04-16",
+            "startedAt": "2026-04-16T07:00:00Z",
+            "completedAt": "2026-04-16T14:30:00Z"
+          }
+        ],
+        "totalCount": 4
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/lynx/v1/routes",
+      "response": {
+        "routeId": "RTE-205",
+        "name": "New Route",
+        "status": "scheduled",
+        "createdAt": "2026-04-17T12:00:00Z"
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/lynx/v1/tasks",
+      "response": {
+        "items": [
+          {
+            "taskId": "TSK-201",
+            "routeId": "RTE-201",
+            "machineId": "M-200001",
+            "type": "refill",
+            "status": "pending",
+            "priority": "medium",
+            "notes": "Refill slots 2, 4, 7 — low/empty stock",
+            "scheduledDate": "2026-04-17"
+          },
+          {
+            "taskId": "TSK-202",
+            "routeId": "RTE-203",
+            "machineId": "M-200013",
+            "type": "repair",
+            "status": "pending",
+            "priority": "high",
+            "notes": "Machine offline since last night — check connectivity and power",
+            "scheduledDate": "2026-04-17"
+          },
+          {
+            "taskId": "TSK-203",
+            "routeId": "RTE-202",
+            "machineId": "M-200007",
+            "type": "preventive_maintenance",
+            "status": "pending",
+            "priority": "low",
+            "notes": "Quarterly cleaning and filter replacement",
+            "scheduledDate": "2026-04-17"
+          }
+        ],
+        "totalCount": 3
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/lynx/v1/ereceipts/{transactionId}",
+      "response": {
+        "transactionId": "TXN-m1d2e3f4-0001",
+        "receiptNumber": "RCP-20260417-M0001",
+        "machineId": "M-200014",
+        "machineName": "Seattle Pike Place Micro Market",
+        "operatorName": "NationWide Vending Inc.",
+        "operatorAddress": "200 N Michigan Ave, Suite 1500, Chicago, IL 60601",
+        "items": [
+          { "name": "Organic Salad Bowl", "quantity": 1, "unitPrice": 875, "total": 875 }
+        ],
+        "subtotal": 875,
+        "tax": 78,
+        "total": 953,
+        "currency": "USD",
+        "paymentMethod": "Visa contactless ****7721",
+        "authCode": "M12345",
+        "timestamp": "2026-04-17T09:25:00Z"
+      }
+    }
+  ]
+}

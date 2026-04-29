@@ -1,0 +1,83 @@
+{
+  "snmp": [],
+  "ssh": [],
+  "api": [
+    {
+      "method": "GET",
+      "path": "/api/v1/inventory",
+      "response": {
+        "machineId": "VM-AFD9-001",
+        "timestamp": "2026-04-09T15:08:42Z",
+        "totalSlots": 54,
+        "occupiedSlots": 46,
+        "emptySlots": 8,
+        "slots": [
+          {"slotId": "A1", "row": 1, "column": 1, "zone": "UPPER", "status": "STOCKED", "productId": "PRD-S001", "productName": "Snickers Bar 1.86oz", "category": "SNACK", "currentQuantity": 5, "capacity": 8, "price": 175, "motorType": "SPRING", "motorStatus": "OK", "lastVendTime": "2026-04-09T14:42:18Z", "expirationDate": "2026-12-01"},
+          {"slotId": "A5", "row": 1, "column": 5, "zone": "UPPER", "status": "STOCKED", "productId": "PRD-S005", "productName": "Doritos Nacho Cheese 2.75oz", "category": "SNACK", "currentQuantity": 3, "capacity": 7, "price": 200, "motorType": "SPRING", "motorStatus": "OK", "lastVendTime": "2026-04-09T13:18:05Z", "expirationDate": "2026-10-15"},
+          {"slotId": "B7", "row": 2, "column": 7, "zone": "UPPER", "status": "LOW_STOCK", "productId": "PRD-S012", "productName": "Nature Valley Granola Bar 2pk", "category": "SNACK", "currentQuantity": 1, "capacity": 6, "price": 175, "motorType": "SPRING", "motorStatus": "OK", "lastVendTime": "2026-04-09T12:55:30Z", "expirationDate": "2027-02-28"},
+          {"slotId": "D1", "row": 4, "column": 1, "zone": "LOWER", "status": "STOCKED", "productId": "PRD-D001", "productName": "Coca-Cola Classic 12oz", "category": "COLD_BEVERAGE", "currentQuantity": 8, "capacity": 10, "price": 200, "motorType": "CONVEYOR", "motorStatus": "OK", "lastVendTime": "2026-04-09T14:58:11Z", "expirationDate": "2026-09-20"},
+          {"slotId": "D5", "row": 4, "column": 5, "zone": "LOWER", "status": "STOCKED", "productId": "PRD-D005", "productName": "Dasani Water 16.9oz", "category": "COLD_BEVERAGE", "currentQuantity": 6, "capacity": 10, "price": 175, "motorType": "CONVEYOR", "motorStatus": "OK", "lastVendTime": "2026-04-09T14:30:22Z", "expirationDate": "2027-06-01"},
+          {"slotId": "E3", "row": 5, "column": 3, "zone": "LOWER", "status": "SOLD_OUT", "productId": "PRD-D011", "productName": "Minute Maid Orange Juice 12oz", "category": "COLD_BEVERAGE", "currentQuantity": 0, "capacity": 8, "price": 225, "motorType": "CONVEYOR", "motorStatus": "OK", "lastVendTime": "2026-04-09T13:40:47Z", "expirationDate": "2026-04-25"}
+        ]
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/inventory/slots/A1",
+      "response": {
+        "slotId": "A1",
+        "row": 1,
+        "column": 1,
+        "zone": "UPPER",
+        "status": "STOCKED",
+        "productId": "PRD-S001",
+        "productName": "Snickers Bar 1.86oz",
+        "category": "SNACK",
+        "currentQuantity": 5,
+        "capacity": 8,
+        "price": 175,
+        "motorType": "SPRING",
+        "motorStatus": "OK",
+        "lastVendTime": "2026-04-09T14:42:18Z",
+        "expirationDate": "2026-12-01",
+        "totalVendsLifetime": 423,
+        "totalVendsToday": 4,
+        "motorCyclesLifetime": 431,
+        "lastRestocked": "2026-04-07T07:15:00Z"
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/inventory/alerts",
+      "response": {
+        "machineId": "VM-AFD9-001",
+        "timestamp": "2026-04-09T15:08:42Z",
+        "alerts": [
+          {"alertId": "INV-A-001", "type": "LOW_STOCK", "slotId": "B7", "zone": "UPPER", "productName": "Nature Valley Granola Bar 2pk", "currentQuantity": 1, "capacity": 6, "since": "2026-04-09T11:22:00Z", "severity": "WARNING"},
+          {"alertId": "INV-A-002", "type": "SOLD_OUT", "slotId": "E3", "zone": "LOWER", "productName": "Minute Maid Orange Juice 12oz", "currentQuantity": 0, "capacity": 8, "since": "2026-04-09T13:40:47Z", "severity": "WARNING"}
+        ]
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/planogram",
+      "response": {
+        "machineId": "VM-AFD9-001",
+        "planogramId": "PLN-D900-2026Q2-001",
+        "effectiveDate": "2026-04-01",
+        "layout": {
+          "upperZone": {"rows": 3, "columns": 10, "slots": 30},
+          "lowerZone": {"rows": 3, "columns": 8, "slots": 24}
+        },
+        "assignments": [
+          {"slotId": "A1", "zone": "UPPER", "productId": "PRD-S001", "productName": "Snickers Bar 1.86oz", "category": "SNACK", "targetPrice": 175},
+          {"slotId": "A5", "zone": "UPPER", "productId": "PRD-S005", "productName": "Doritos Nacho Cheese 2.75oz", "category": "SNACK", "targetPrice": 200},
+          {"slotId": "B7", "zone": "UPPER", "productId": "PRD-S012", "productName": "Nature Valley Granola Bar 2pk", "category": "SNACK", "targetPrice": 175},
+          {"slotId": "D1", "zone": "LOWER", "productId": "PRD-D001", "productName": "Coca-Cola Classic 12oz", "category": "COLD_BEVERAGE", "targetPrice": 200},
+          {"slotId": "D5", "zone": "LOWER", "productId": "PRD-D005", "productName": "Dasani Water 16.9oz", "category": "COLD_BEVERAGE", "targetPrice": 175},
+          {"slotId": "E3", "zone": "LOWER", "productId": "PRD-D011", "productName": "Minute Maid Orange Juice 12oz", "category": "COLD_BEVERAGE", "targetPrice": 225}
+        ]
+      }
+    }
+  ]
+}

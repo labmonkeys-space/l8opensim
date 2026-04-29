@@ -1,0 +1,106 @@
+{
+  "snmp": [],
+  "ssh": [],
+  "api": [
+    {
+      "method": "GET",
+      "path": "/api/v1/machine",
+      "response": {
+        "machineId": "VM-AFD9-001",
+        "serialNumber": "AFEN2024D900054C001",
+        "model": "AF-D900-54C(22SP)",
+        "manufacturer": "Afen (Hunan TCN Vending Technology)",
+        "machineType": "COMBO",
+        "totalSlots": 54,
+        "slotLayout": {
+          "upperZone": {"rows": 3, "columns": 10, "slots": 30, "label": "Ambient Snacks"},
+          "lowerZone": {"rows": 3, "columns": 8, "slots": 24, "label": "Refrigerated Drinks"}
+        },
+        "firmwareVersion": "22SP-4.1.0",
+        "controllerBoard": "RK3288-SP22",
+        "operatingSystem": "Android 7.1.2",
+        "screenSize": "21.5 inch",
+        "screenResolution": "1920x1080",
+        "location": {
+          "siteId": "SITE-0078",
+          "siteName": "Hospital - Cafeteria Wing",
+          "address": "321 Medical Center Dr, Houston, TX 77030",
+          "latitude": 29.7069,
+          "longitude": -95.3977,
+          "floor": 1,
+          "zone": "Cafeteria Corridor"
+        },
+        "connectivity": {
+          "type": "4G_LTE",
+          "carrier": "AT&T",
+          "signalStrength": -62,
+          "ipAddress": "10.52.18.34",
+          "macAddress": "B4:7A:F1:33:9C:12",
+          "lastHeartbeat": "2026-04-09T15:08:42Z"
+        },
+        "capabilities": [
+          "CASH_PAYMENT",
+          "CARD_PAYMENT",
+          "NFC_CONTACTLESS",
+          "QR_CODE_PAYMENT",
+          "TOUCHSCREEN_UI",
+          "REMOTE_MANAGEMENT",
+          "DEX_AUDIT",
+          "DUAL_ZONE",
+          "REFRIGERATION",
+          "SPRING_MOTOR",
+          "CONVEYOR"
+        ],
+        "installDate": "2025-06-20T08:00:00Z",
+        "lastServiceDate": "2026-04-02T09:30:00Z"
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/machine/status",
+      "response": {
+        "machineId": "VM-AFD9-001",
+        "status": "OPERATIONAL",
+        "timestamp": "2026-04-09T15:08:42Z",
+        "uptime": 158392,
+        "doorStatus": "CLOSED",
+        "paymentSystemStatus": "READY",
+        "refrigerationStatus": "RUNNING",
+        "networkStatus": "CONNECTED",
+        "screenStatus": "ACTIVE",
+        "vendsSinceLastService": 612,
+        "upperZone": {"slotsOccupied": 26, "slotsEmpty": 4, "motorStatus": "OK"},
+        "lowerZone": {"slotsOccupied": 20, "slotsEmpty": 4, "compressorStatus": "RUNNING"},
+        "warnings": [
+          {"code": "W-STOCK-LOW", "message": "Slot B7 below restock threshold", "severity": "WARNING", "since": "2026-04-09T11:22:00Z"},
+          {"code": "W-SOLD-OUT", "message": "Slot E3 sold out", "severity": "WARNING", "since": "2026-04-09T13:40:00Z"}
+        ]
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/machine/config",
+      "response": {
+        "machineId": "VM-AFD9-001",
+        "locale": "en-US",
+        "currency": "USD",
+        "timezone": "America/Chicago",
+        "screenBrightness": 85,
+        "volumeLevel": 50,
+        "energySavingEnabled": true,
+        "autoShutdownStart": "23:30",
+        "autoShutdownEnd": "05:00",
+        "idleScreenTimeout": 30,
+        "maxTransactionTime": 90,
+        "receiptPrinting": false,
+        "telemetryInterval": 300,
+        "autoRestockAlert": true,
+        "restockThreshold": 2,
+        "temperatureZones": {
+          "upper": {"label": "Ambient (Snacks)", "setpoint": null, "controlType": "NONE"},
+          "lower": {"label": "Refrigerated (Drinks)", "setpoint": 4.0, "controlType": "COMPRESSOR", "defrostInterval": 480}
+        }
+      }
+    }
+  ]
+}

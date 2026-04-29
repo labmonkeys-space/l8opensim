@@ -1,0 +1,85 @@
+{
+  "snmp": [],
+  "ssh": [],
+  "api": [
+    {
+      "method": "POST",
+      "path": "/spark/v1/StartSession",
+      "response": {
+        "sessionId": "SESS-medium-a1b2-0001",
+        "deviceId": "VPOS-B1C2D3E401",
+        "statusCode": 0,
+        "statusDescription": "Session started successfully",
+        "mode": "remote_start",
+        "expiresAt": "2026-04-17T12:30:00Z",
+        "createdAt": "2026-04-17T12:00:00Z"
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/spark/v1/TriggerTransaction",
+      "response": {
+        "sessionId": "SESS-medium-a1b2-0001",
+        "transactionId": "TXN-medium-spark-0001",
+        "statusCode": 0,
+        "statusDescription": "Transaction triggered",
+        "amount": 350,
+        "currency": "USD",
+        "state": "pending_authorization",
+        "createdAt": "2026-04-17T12:00:30Z"
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/spark/v1/Settlement",
+      "response": {
+        "sessionId": "SESS-medium-a1b2-0001",
+        "transactionId": "TXN-medium-spark-0001",
+        "statusCode": 0,
+        "statusDescription": "Settlement completed",
+        "settledAmount": 350,
+        "currency": "USD",
+        "authCode": "SM12345",
+        "settledAt": "2026-04-17T12:01:00Z"
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/spark/v1/CancelTransaction",
+      "response": {
+        "sessionId": "SESS-medium-a1b2-0001",
+        "transactionId": "TXN-medium-spark-0001",
+        "statusCode": 0,
+        "statusDescription": "Transaction cancelled",
+        "cancelledAt": "2026-04-17T12:01:30Z"
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/spark/v1/InfoQuery",
+      "response": {
+        "deviceId": "VPOS-B1C2D3E401",
+        "statusCode": 0,
+        "statusDescription": "Device info retrieved",
+        "deviceType": "VPOS Touch",
+        "firmwareVersion": "3.4.09",
+        "connectionStatus": "connected",
+        "lastSeen": "2026-04-17T09:22:14Z",
+        "capabilities": ["contactless", "chip", "swipe", "qr"],
+        "merchantId": "MID-NATIONWIDE-001"
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/spark/v1/AvailabilityCheck",
+      "response": {
+        "deviceId": "VPOS-B1C2D3E401",
+        "statusCode": 0,
+        "statusDescription": "Device available",
+        "available": true,
+        "currentSession": null,
+        "lastActivity": "2026-04-17T09:22:14Z"
+      }
+    }
+  ]
+}

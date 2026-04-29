@@ -1,0 +1,65 @@
+{
+  "snmp": [],
+  "ssh": [],
+  "api": [
+    {
+      "method": "GET",
+      "path": "/api/v1/dex/audit",
+      "response": {
+        "machineId": "VM-AF60-001",
+        "serialNumber": "AFEN2024060C001",
+        "dexVersion": "UCS-01",
+        "generatedAt": "2026-04-09T17:50:00Z",
+        "interval": {
+          "startDate": "2026-04-07T08:00:00Z",
+          "endDate": "2026-04-09T17:50:00Z",
+          "reportType": "COLLECTION_TO_CURRENT"
+        },
+        "vendData": {
+          "totalPaidVends": 162,
+          "totalPaidValueCents": 33210,
+          "totalFreeVends": 0,
+          "totalTestVends": 3,
+          "cashVends": 38,
+          "cashValueCents": 6650,
+          "cashlessVends": 124,
+          "cashlessValueCents": 26560
+        },
+        "cashIn": {
+          "totalBillsInserted": 52,
+          "totalBillValueCents": 7800,
+          "totalCoinsInserted": 145,
+          "totalCoinValueCents": 2175,
+          "totalOverpayReturnedCents": 3325
+        },
+        "cashOut": {
+          "totalChangePaidCents": 3325,
+          "manualDispenseCents": 0
+        },
+        "tubeInventory": {
+          "quarters": 42,
+          "dimes": 35,
+          "nickels": 28,
+          "totalTubeValueCents": 1430
+        },
+        "productVends": [
+          {"column": "A1", "productId": "SKU-CC-12OZ", "vendCount": 12, "revenueCents": 2100},
+          {"column": "A5", "productId": "SKU-PEPSI-12OZ", "vendCount": 10, "revenueCents": 1750},
+          {"column": "B3", "productId": "SKU-SPRITE-12OZ", "vendCount": 8, "revenueCents": 1400},
+          {"column": "C7", "productId": "SKU-WATER-16OZ", "vendCount": 15, "revenueCents": 2250},
+          {"column": "D2", "productId": "SKU-GATOR-20OZ", "vendCount": 14, "revenueCents": 3500},
+          {"column": "E4", "productId": "SKU-REDBULL-8OZ", "vendCount": 18, "revenueCents": 6300},
+          {"column": "F8", "productId": "SKU-MONSTER-16OZ", "vendCount": 11, "revenueCents": 3575}
+        ],
+        "machineCounters": {
+          "lifetimeVends": 28734,
+          "lifetimeRevenueCents": 5889470,
+          "motorCyclesTotal": 28937,
+          "doorOpenCount": 186,
+          "compressorStartCount": 4821,
+          "powerOutageCount": 3
+        }
+      }
+    }
+  ]
+}

@@ -1,0 +1,136 @@
+{
+  "snmp": [],
+  "ssh": [],
+  "api": [
+    {
+      "method": "GET",
+      "path": "/api/v1/temperature",
+      "response": {
+        "machineId": "VM-AFD9-001",
+        "timestamp": "2026-04-09T15:08:42Z",
+        "zones": [
+          {
+            "zoneId": "UPPER",
+            "label": "Ambient (Snacks)",
+            "currentTemp": 22.1,
+            "setpoint": null,
+            "unit": "C",
+            "controlType": "NONE",
+            "compressorStatus": "N/A",
+            "status": "NORMAL"
+          },
+          {
+            "zoneId": "LOWER",
+            "label": "Refrigerated (Drinks)",
+            "currentTemp": 4.3,
+            "setpoint": 4.0,
+            "unit": "C",
+            "controlType": "COMPRESSOR",
+            "compressorStatus": "RUNNING",
+            "compressorRuntime": 14.2,
+            "defrostCyclestoday": 3,
+            "lastDefrost": "2026-04-09T12:00:00Z",
+            "status": "NORMAL"
+          }
+        ]
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/temperature/history",
+      "response": {
+        "machineId": "VM-AFD9-001",
+        "period": "last_6h",
+        "zones": {
+          "UPPER": [
+            {"timestamp": "2026-04-09T10:00:00Z", "temp": 21.8},
+            {"timestamp": "2026-04-09T11:00:00Z", "temp": 22.0},
+            {"timestamp": "2026-04-09T12:00:00Z", "temp": 22.3},
+            {"timestamp": "2026-04-09T13:00:00Z", "temp": 22.1},
+            {"timestamp": "2026-04-09T14:00:00Z", "temp": 22.0},
+            {"timestamp": "2026-04-09T15:00:00Z", "temp": 22.1}
+          ],
+          "LOWER": [
+            {"timestamp": "2026-04-09T10:00:00Z", "temp": 4.1},
+            {"timestamp": "2026-04-09T11:00:00Z", "temp": 4.2},
+            {"timestamp": "2026-04-09T12:00:00Z", "temp": 5.8},
+            {"timestamp": "2026-04-09T13:00:00Z", "temp": 4.0},
+            {"timestamp": "2026-04-09T14:00:00Z", "temp": 4.1},
+            {"timestamp": "2026-04-09T15:00:00Z", "temp": 4.3}
+          ]
+        }
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/energy",
+      "response": {
+        "machineId": "VM-AFD9-001",
+        "timestamp": "2026-04-09T15:08:42Z",
+        "currentPowerDraw": 265,
+        "unit": "W",
+        "breakdown": {
+          "compressor": 180,
+          "controller": 25,
+          "display": 35,
+          "motors": 10,
+          "lighting": 15
+        },
+        "today": {
+          "totalKwh": 4.12,
+          "peakWatts": 410,
+          "peakTime": "2026-04-09T12:15:00Z"
+        },
+        "monthToDate": {
+          "totalKwh": 36.8,
+          "avgDailyKwh": 4.09,
+          "estimatedMonthlyCost": 5.52
+        },
+        "energySavingMode": false
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/environment",
+      "response": {
+        "machineId": "VM-AFD9-001",
+        "timestamp": "2026-04-09T15:08:42Z",
+        "ambientTemperature": 23.2,
+        "ambientHumidity": 42.8,
+        "temperatureUnit": "C",
+        "lightLevel": "INDOOR_BRIGHT",
+        "vibrationLevel": "LOW"
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/access/events",
+      "response": {
+        "machineId": "VM-AFD9-001",
+        "events": [
+          {
+            "eventId": "ACC-0047",
+            "timestamp": "2026-04-07T07:15:00Z",
+            "type": "SERVICE_VISIT",
+            "technicianId": "TECH-204",
+            "duration": 2400,
+            "notes": "Routine restock upper and lower zones, cleaned conveyor tracks",
+            "doorOpenDuration": 1860
+          },
+          {
+            "eventId": "ACC-0046",
+            "timestamp": "2026-04-02T09:30:00Z",
+            "type": "SERVICE_VISIT",
+            "technicianId": "TECH-118",
+            "duration": 3600,
+            "notes": "Quarterly maintenance: compressor filter cleaned, spring motors inspected, firmware updated",
+            "doorOpenDuration": 2700
+          }
+        ],
+        "totalCount": 47,
+        "page": 1,
+        "pageSize": 20
+      }
+    }
+  ]
+}

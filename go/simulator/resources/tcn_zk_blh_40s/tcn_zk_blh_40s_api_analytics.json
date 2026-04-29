@@ -1,0 +1,95 @@
+{
+  "snmp": [],
+  "ssh": [],
+  "api": [
+    {
+      "method": "GET",
+      "path": "/api/v1/analytics/traffic",
+      "response": {
+        "machineId": "VM-TCN-040-001",
+        "period": "TODAY",
+        "date": "2026-04-09",
+        "hourlyVends": [
+          {"hour": 6, "vends": 0},
+          {"hour": 7, "vends": 1},
+          {"hour": 8, "vends": 4},
+          {"hour": 9, "vends": 2},
+          {"hour": 10, "vends": 3},
+          {"hour": 11, "vends": 2},
+          {"hour": 12, "vends": 8},
+          {"hour": 13, "vends": 3},
+          {"hour": 14, "vends": 3},
+          {"hour": 15, "vends": 2}
+        ],
+        "peakHours": [
+          {"hour": 8, "label": "Morning Break", "vends": 4},
+          {"hour": 12, "label": "Lunch Rush", "vends": 8},
+          {"hour": 15, "label": "Afternoon Break", "vends": 2}
+        ],
+        "averageDailyVends": 32,
+        "trafficTrend": "STABLE"
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/analytics/performance",
+      "response": {
+        "machineId": "VM-TCN-040-001",
+        "period": "LAST_7_DAYS",
+        "topProducts": [
+          {"productId": "PRD-6001", "productName": "Grilled Chicken Caesar Wrap", "totalVends": 18, "revenue": 13500, "rank": 1},
+          {"productId": "PRD-6012", "productName": "Turkey Club Sandwich", "totalVends": 15, "revenue": 11985, "rank": 2},
+          {"productId": "PRD-6018", "productName": "Southwest Chicken Salad", "totalVends": 12, "revenue": 10200, "rank": 3},
+          {"productId": "PRD-6006", "productName": "Greek Yogurt Parfait", "totalVends": 11, "revenue": 6050, "rank": 4},
+          {"productId": "PRD-6029", "productName": "Mixed Berry Smoothie 16oz", "totalVends": 9, "revenue": 4491, "rank": 5}
+        ],
+        "topCategories": [
+          {"category": "FRESH_FOOD", "totalVends": 156, "revenue": 112400, "percentOfTotal": 78.2},
+          {"category": "COLD_BEVERAGE", "totalVends": 22, "revenue": 14800, "percentOfTotal": 10.3},
+          {"category": "SNACK", "totalVends": 16, "revenue": 16600, "percentOfTotal": 11.5}
+        ]
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/analytics/demand",
+      "response": {
+        "machineId": "VM-TCN-040-001",
+        "period": "LAST_30_DAYS",
+        "weekdayAverage": 34,
+        "weekendAverage": 4,
+        "dayOfWeekBreakdown": [
+          {"day": "Monday", "averageVends": 36, "averageRevenue": 70200},
+          {"day": "Tuesday", "averageVends": 35, "averageRevenue": 68250},
+          {"day": "Wednesday", "averageVends": 34, "averageRevenue": 66300},
+          {"day": "Thursday", "averageVends": 33, "averageRevenue": 64350},
+          {"day": "Friday", "averageVends": 32, "averageRevenue": 62400},
+          {"day": "Saturday", "averageVends": 5, "averageRevenue": 9750},
+          {"day": "Sunday", "averageVends": 3, "averageRevenue": 5850}
+        ],
+        "demandPattern": "WEEKDAY_HEAVY"
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/analytics/health",
+      "response": {
+        "machineId": "VM-TCN-040-001",
+        "timestamp": "2026-04-09T14:18:05Z",
+        "overallHealth": "HEALTHY",
+        "components": [
+          {"component": "CONTROLLER", "status": "HEALTHY", "uptime": 99.98, "lastIssue": null},
+          {"component": "PAYMENT_SYSTEM", "status": "HEALTHY", "uptime": 99.95, "lastIssue": null},
+          {"component": "LOCK_SYSTEM", "status": "HEALTHY", "uptime": 100.0, "lastIssue": null},
+          {"component": "DISPLAY", "status": "HEALTHY", "uptime": 100.0, "lastIssue": null},
+          {"component": "NETWORK", "status": "HEALTHY", "uptime": 99.92, "lastIssue": "2026-04-03T02:14:00Z"},
+          {"component": "CAMERA", "status": "HEALTHY", "uptime": 100.0, "lastIssue": null}
+        ],
+        "vendSuccessRate": 99.6,
+        "failedVendsToday": 0,
+        "totalFailedVendsMonth": 2,
+        "meanTimeBetweenFailures": 720
+      }
+    }
+  ]
+}

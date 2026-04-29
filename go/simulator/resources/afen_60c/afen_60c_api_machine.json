@@ -1,0 +1,69 @@
+{
+  "snmp": [],
+  "ssh": [],
+  "api": [
+    {
+      "method": "GET",
+      "path": "/api/v1/machine",
+      "response": {
+        "machineId": "VM-AF60-001",
+        "serialNumber": "AFEN2024060C001",
+        "model": "AF-60C(22SP)",
+        "manufacturer": "Afen (Hunan TCN Vending Technology)",
+        "machineType": "REFRIGERATED_BEVERAGE",
+        "firmwareVersion": "22SP-4.1.0",
+        "androidVersion": "7.1.2",
+        "platform": "RK3288 Smart Platform",
+        "totalSlots": 60,
+        "slotLayout": {"rows": 6, "columns": 10, "pattern": "A1-F10"},
+        "dispensingMechanism": "SPRING_MOTOR",
+        "location": {
+          "name": "Gym - Main Entrance",
+          "address": "789 Fitness Ave, Miami, FL 33101",
+          "floor": "1",
+          "zone": "Lobby"
+        },
+        "capabilities": ["REFRIGERATION", "SPRING_MOTOR", "TOUCHSCREEN", "NFC", "QR_CODE", "CASH", "CARD"],
+        "temperatureRange": {"minC": 4, "maxC": 25},
+        "connectivity": {"wifi": true, "ethernet": true, "cellular": "4G LTE"}
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/machine/status",
+      "response": {
+        "machineId": "VM-AF60-001",
+        "status": "OPERATIONAL",
+        "refrigerationStatus": "RUNNING",
+        "compressorActive": true,
+        "doorClosed": true,
+        "displayActive": true,
+        "paymentSystemOnline": true,
+        "lastServiceDate": "2026-03-22T09:00:00Z",
+        "nextServiceDate": "2026-04-22T09:00:00Z",
+        "uptimeSeconds": 2674839,
+        "activeAlerts": 3,
+        "totalVendsToday": 56,
+        "lastVendTime": "2026-04-09T17:42:18Z"
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/machine/config",
+      "response": {
+        "machineId": "VM-AF60-001",
+        "temperatureSetpointC": 4.0,
+        "defrostIntervalMinutes": 360,
+        "defrostDurationMinutes": 15,
+        "displayBrightness": 80,
+        "displayTimeoutSeconds": 30,
+        "locale": "en-US",
+        "currency": "USD",
+        "maxCashAccepted": 2000,
+        "freeVendEnabled": false,
+        "energySaveMode": false,
+        "compressorDelaySeconds": 180
+      }
+    }
+  ]
+}

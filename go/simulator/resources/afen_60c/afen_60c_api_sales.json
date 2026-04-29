@@ -1,0 +1,111 @@
+{
+  "snmp": [],
+  "ssh": [],
+  "api": [
+    {
+      "method": "GET",
+      "path": "/api/v1/transactions",
+      "response": {
+        "transactions": [
+          {
+            "transactionId": "TXN-AF60-20260409-0054",
+            "timestamp": "2026-04-09T17:42:18Z",
+            "slotId": "E4",
+            "productId": "SKU-REDBULL-8OZ",
+            "productName": "Red Bull Energy 8.4oz",
+            "category": "ENERGY_DRINK",
+            "priceCents": 350,
+            "paymentMethod": "NFC",
+            "paymentStatus": "COMPLETED",
+            "dispensed": true
+          },
+          {
+            "transactionId": "TXN-AF60-20260409-0053",
+            "timestamp": "2026-04-09T17:38:05Z",
+            "slotId": "D2",
+            "productId": "SKU-GATOR-20OZ",
+            "productName": "Gatorade Cool Blue 20oz",
+            "category": "SPORTS_DRINK",
+            "priceCents": 250,
+            "paymentMethod": "CONTACTLESS_CARD",
+            "paymentStatus": "COMPLETED",
+            "dispensed": true
+          },
+          {
+            "transactionId": "TXN-AF60-20260409-0052",
+            "timestamp": "2026-04-09T17:25:41Z",
+            "slotId": "C7",
+            "productId": "SKU-WATER-16OZ",
+            "productName": "Dasani Water 16.9oz",
+            "category": "COLD_BEVERAGE",
+            "priceCents": 150,
+            "paymentMethod": "NFC",
+            "paymentStatus": "REFUNDED",
+            "dispensed": false,
+            "failureReason": "SLOT_EMPTY"
+          },
+          {
+            "transactionId": "TXN-AF60-20260409-0051",
+            "timestamp": "2026-04-09T17:12:33Z",
+            "slotId": "A1",
+            "productId": "SKU-CC-12OZ",
+            "productName": "Coca-Cola Classic 12oz",
+            "category": "COLD_BEVERAGE",
+            "priceCents": 175,
+            "paymentMethod": "CASH",
+            "paymentStatus": "COMPLETED",
+            "dispensed": true
+          }
+        ],
+        "totalCount": 56,
+        "page": 1,
+        "pageSize": 20
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/transactions/summary",
+      "response": {
+        "machineId": "VM-AF60-001",
+        "date": "2026-04-09",
+        "totalVends": 56,
+        "successfulVends": 54,
+        "failedVends": 2,
+        "totalRevenueCents": 11200,
+        "averageTransactionCents": 207,
+        "byCategory": [
+          {"category": "COLD_BEVERAGE", "vends": 18, "revenueCents": 3150},
+          {"category": "ENERGY_DRINK", "vends": 15, "revenueCents": 5025},
+          {"category": "SPORTS_DRINK", "vends": 12, "revenueCents": 3000},
+          {"category": "WATER", "vends": 9, "revenueCents": 1350}
+        ],
+        "byPaymentMethod": [
+          {"method": "NFC", "count": 22, "revenueCents": 4510},
+          {"method": "CONTACTLESS_CARD", "count": 16, "revenueCents": 3360},
+          {"method": "CASH", "count": 12, "revenueCents": 2180},
+          {"method": "QR_CODE", "count": 6, "revenueCents": 1150}
+        ]
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/transactions/TXN-AF60-20260409-0054",
+      "response": {
+        "transactionId": "TXN-AF60-20260409-0054",
+        "timestamp": "2026-04-09T17:42:18Z",
+        "machineId": "VM-AF60-001",
+        "slotId": "E4",
+        "productId": "SKU-REDBULL-8OZ",
+        "productName": "Red Bull Energy 8.4oz",
+        "category": "ENERGY_DRINK",
+        "priceCents": 350,
+        "paymentMethod": "NFC",
+        "paymentStatus": "COMPLETED",
+        "dispensed": true,
+        "motorCycleTimeMs": 820,
+        "productTemperatureC": 4.3,
+        "remainingQtyAfter": 1
+      }
+    }
+  ]
+}

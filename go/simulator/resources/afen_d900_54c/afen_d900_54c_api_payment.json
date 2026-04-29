@@ -1,0 +1,99 @@
+{
+  "snmp": [],
+  "ssh": [],
+  "api": [
+    {
+      "method": "GET",
+      "path": "/api/v1/payment/status",
+      "response": {
+        "machineId": "VM-AFD9-001",
+        "timestamp": "2026-04-09T15:08:42Z",
+        "overallStatus": "READY",
+        "peripherals": [
+          {
+            "type": "BILL_ACCEPTOR",
+            "model": "ICT A7-V4",
+            "status": "ACTIVE",
+            "firmwareVersion": "2.14",
+            "acceptedDenominations": [100, 500, 1000, 2000],
+            "lastCalibration": "2026-03-15T10:00:00Z",
+            "totalBillsAccepted": 2847,
+            "jamCount": 2
+          },
+          {
+            "type": "COIN_ACCEPTOR",
+            "model": "Crane Currenza C2 Blue",
+            "status": "ACTIVE",
+            "firmwareVersion": "1.08",
+            "acceptedDenominations": [5, 10, 25, 100],
+            "totalCoinsAccepted": 5219,
+            "coinTubes": [
+              {"denomination": 5, "count": 38, "capacity": 50},
+              {"denomination": 10, "count": 42, "capacity": 50},
+              {"denomination": 25, "count": 35, "capacity": 40}
+            ]
+          },
+          {
+            "type": "CARD_READER",
+            "model": "Nayax VPOS Touch",
+            "status": "ACTIVE",
+            "firmwareVersion": "5.3.1",
+            "supportedCards": ["VISA", "MASTERCARD", "AMEX", "DISCOVER"],
+            "nfcEnabled": true,
+            "qrEnabled": true,
+            "lastTransaction": "2026-04-09T14:58:11Z"
+          }
+        ]
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/payment/cashbox",
+      "response": {
+        "machineId": "VM-AFD9-001",
+        "timestamp": "2026-04-09T15:08:42Z",
+        "billStacker": {
+          "currentCount": 64,
+          "capacity": 300,
+          "percentFull": 21.3,
+          "totalValue": 8700,
+          "byDenomination": {
+            "100": 28,
+            "500": 22,
+            "1000": 10,
+            "2000": 4
+          }
+        },
+        "coinBox": {
+          "totalValue": 1425,
+          "totalCoins": 142
+        },
+        "lastCollection": "2026-04-05T08:00:00Z",
+        "collectionDue": false
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/payment/cashless",
+      "response": {
+        "machineId": "VM-AFD9-001",
+        "timestamp": "2026-04-09T15:08:42Z",
+        "status": "ACTIVE",
+        "provider": "Nayax",
+        "terminalId": "NX-AFD9-001",
+        "todayStats": {
+          "totalTransactions": 33,
+          "totalAmount": 7650,
+          "byType": {
+            "CREDIT_CARD": {"count": 14, "amount": 3150},
+            "NFC_CONTACTLESS": {"count": 13, "amount": 2950},
+            "QR_CODE": {"count": 6, "amount": 1550}
+          }
+        },
+        "lastSettlement": "2026-04-09T03:00:00Z",
+        "pendingSettlement": 7650,
+        "connectionStatus": "ONLINE"
+      }
+    }
+  ]
+}

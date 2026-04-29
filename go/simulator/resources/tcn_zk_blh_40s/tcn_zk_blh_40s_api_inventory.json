@@ -1,0 +1,76 @@
+{
+  "snmp": [],
+  "ssh": [],
+  "api": [
+    {
+      "method": "GET",
+      "path": "/api/v1/inventory",
+      "response": {
+        "machineId": "VM-TCN-040-001",
+        "timestamp": "2026-04-09T14:18:05Z",
+        "totalSlots": 40,
+        "occupiedSlots": 33,
+        "emptySlots": 7,
+        "slots": [
+          {"slotId": "A01", "row": 1, "column": 1, "status": "STOCKED", "productId": "PRD-6001", "productName": "Grilled Chicken Caesar Wrap", "category": "FRESH_FOOD", "currentQuantity": 1, "capacity": 1, "price": 750, "lockStatus": "LOCKED", "lastVendTime": "2026-04-09T12:04:33Z", "expirationDate": "2026-04-11"},
+          {"slotId": "A06", "row": 1, "column": 6, "status": "STOCKED", "productId": "PRD-6006", "productName": "Greek Yogurt Parfait", "category": "FRESH_FOOD", "currentQuantity": 1, "capacity": 1, "price": 550, "lockStatus": "LOCKED", "lastVendTime": null, "expirationDate": "2026-04-12"},
+          {"slotId": "B04", "row": 2, "column": 4, "status": "SOLD_OUT", "productId": "PRD-6012", "productName": "Turkey Club Sandwich", "category": "FRESH_FOOD", "currentQuantity": 0, "capacity": 1, "price": 799, "lockStatus": "LOCKED", "lastVendTime": "2026-04-09T12:31:17Z", "expirationDate": null},
+          {"slotId": "C02", "row": 3, "column": 2, "status": "STOCKED", "productId": "PRD-6018", "productName": "Southwest Chicken Salad", "category": "FRESH_FOOD", "currentQuantity": 1, "capacity": 1, "price": 850, "lockStatus": "LOCKED", "lastVendTime": null, "expirationDate": "2026-04-11"},
+          {"slotId": "D05", "row": 4, "column": 5, "status": "STOCKED", "productId": "PRD-6029", "productName": "Mixed Berry Smoothie 16oz", "category": "COLD_BEVERAGE", "currentQuantity": 1, "capacity": 1, "price": 499, "lockStatus": "LOCKED", "lastVendTime": "2026-04-09T10:22:08Z", "expirationDate": "2026-04-13"}
+        ]
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/inventory/slots/A01",
+      "response": {
+        "slotId": "A01",
+        "row": 1,
+        "column": 1,
+        "status": "STOCKED",
+        "productId": "PRD-6001",
+        "productName": "Grilled Chicken Caesar Wrap",
+        "category": "FRESH_FOOD",
+        "currentQuantity": 1,
+        "capacity": 1,
+        "price": 750,
+        "lockStatus": "LOCKED",
+        "lockType": "ELECTROMAGNETIC",
+        "lastVendTime": "2026-04-09T12:04:33Z",
+        "expirationDate": "2026-04-11",
+        "totalVendsLifetime": 94,
+        "totalVendsToday": 2,
+        "lockCyclesLifetime": 210,
+        "lastRestocked": "2026-04-09T06:15:00Z"
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/inventory/alerts",
+      "response": {
+        "machineId": "VM-TCN-040-001",
+        "timestamp": "2026-04-09T14:18:05Z",
+        "alerts": [
+          {"alertId": "INV-A-040-001", "type": "SOLD_OUT", "slotId": "B04", "productName": "Turkey Club Sandwich", "since": "2026-04-09T12:31:17Z", "severity": "WARNING"}
+        ]
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/planogram",
+      "response": {
+        "machineId": "VM-TCN-040-001",
+        "planogramId": "PLN-2026-Q2-040",
+        "effectiveDate": "2026-04-01",
+        "layout": {"rows": 5, "columns": 8, "totalSlots": 40},
+        "assignments": [
+          {"slotId": "A01", "productId": "PRD-6001", "productName": "Grilled Chicken Caesar Wrap", "category": "FRESH_FOOD", "targetPrice": 750},
+          {"slotId": "A06", "productId": "PRD-6006", "productName": "Greek Yogurt Parfait", "category": "FRESH_FOOD", "targetPrice": 550},
+          {"slotId": "B04", "productId": "PRD-6012", "productName": "Turkey Club Sandwich", "category": "FRESH_FOOD", "targetPrice": 799},
+          {"slotId": "C02", "productId": "PRD-6018", "productName": "Southwest Chicken Salad", "category": "FRESH_FOOD", "targetPrice": 850},
+          {"slotId": "D05", "productId": "PRD-6029", "productName": "Mixed Berry Smoothie 16oz", "category": "COLD_BEVERAGE", "targetPrice": 499}
+        ]
+      }
+    }
+  ]
+}

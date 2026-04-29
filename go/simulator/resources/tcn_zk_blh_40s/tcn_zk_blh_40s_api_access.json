@@ -1,0 +1,53 @@
+{
+  "snmp": [],
+  "ssh": [],
+  "api": [
+    {
+      "method": "GET",
+      "path": "/api/v1/access/events",
+      "response": {
+        "machineId": "VM-TCN-040-001",
+        "timestamp": "2026-04-09T14:18:05Z",
+        "events": [
+          {
+            "eventId": "ACC-040-001",
+            "type": "SERVICE_VISIT",
+            "timestamp": "2026-04-09T06:15:00Z",
+            "userId": "TECH-204",
+            "userName": "Maria Gonzalez",
+            "action": "RESTOCK",
+            "details": "Restocked 22 slots with fresh food items",
+            "duration": 1140
+          },
+          {
+            "eventId": "ACC-040-002",
+            "type": "VEND_DISPENSE",
+            "timestamp": "2026-04-09T12:04:33Z",
+            "slotId": "A01",
+            "lockId": "LOCK-A01",
+            "action": "UNLOCK_VEND",
+            "details": "Cell A01 unlocked for product pickup",
+            "duration": 12
+          }
+        ]
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/access/locks",
+      "response": {
+        "machineId": "VM-TCN-040-001",
+        "timestamp": "2026-04-09T14:18:05Z",
+        "totalLocks": 40,
+        "locks": [
+          {"lockId": "LOCK-A01", "slotId": "A01", "status": "LOCKED", "type": "ELECTROMAGNETIC", "cyclesLifetime": 210, "lastActivity": "2026-04-09T12:04:33Z", "health": "GOOD"},
+          {"lockId": "LOCK-A08", "slotId": "A08", "status": "LOCKED", "type": "ELECTROMAGNETIC", "cyclesLifetime": 185, "lastActivity": "2026-04-09T11:18:40Z", "health": "GOOD"},
+          {"lockId": "LOCK-B04", "slotId": "B04", "status": "LOCKED", "type": "ELECTROMAGNETIC", "cyclesLifetime": 198, "lastActivity": "2026-04-09T12:31:17Z", "health": "GOOD"},
+          {"lockId": "LOCK-C05", "slotId": "C05", "status": "LOCKED", "type": "ELECTROMAGNETIC", "cyclesLifetime": 172, "lastActivity": "2026-04-09T09:55:02Z", "health": "GOOD"},
+          {"lockId": "LOCK-D02", "slotId": "D02", "status": "LOCKED", "type": "ELECTROMAGNETIC", "cyclesLifetime": 156, "lastActivity": "2026-04-09T10:44:29Z", "health": "GOOD"},
+          {"lockId": "LOCK-E06", "slotId": "E06", "status": "LOCKED", "type": "ELECTROMAGNETIC", "cyclesLifetime": 143, "lastActivity": "2026-04-09T08:12:55Z", "health": "GOOD"}
+        ]
+      }
+    }
+  ]
+}

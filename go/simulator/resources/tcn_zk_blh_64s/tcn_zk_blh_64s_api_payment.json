@@ -1,0 +1,105 @@
+{
+  "snmp": [],
+  "ssh": [],
+  "api": [
+    {
+      "method": "GET",
+      "path": "/api/v1/payment/status",
+      "response": {
+        "machineId": "VM-TCN-064-001",
+        "timestamp": "2026-04-09T14:32:18Z",
+        "coinAcceptor": {
+          "model": "MEI CF-7900",
+          "protocol": "MDB",
+          "status": "READY",
+          "firmwareVersion": "3.12",
+          "acceptedDenominations": [5, 10, 25, 100],
+          "lastActivity": "2026-04-09T13:55:20Z"
+        },
+        "billValidator": {
+          "model": "MEI AE-2800",
+          "protocol": "MDB",
+          "status": "READY",
+          "firmwareVersion": "2.08",
+          "acceptedDenominations": [100, 500, 1000, 2000],
+          "stackerCount": 145,
+          "stackerCapacity": 600,
+          "stackerPercentFull": 24.2,
+          "jammed": false,
+          "lastActivity": "2026-04-09T14:05:11Z"
+        },
+        "cardReader": {
+          "model": "Nayax VPOS Touch",
+          "status": "READY",
+          "firmwareVersion": "5.4.1",
+          "supportedMethods": ["CHIP", "CONTACTLESS", "NFC", "MAGNETIC_STRIPE"],
+          "supportedCards": ["VISA", "MASTERCARD", "AMEX", "DISCOVER"],
+          "emvKernelVersion": "3.1",
+          "lastTransaction": "2026-04-09T14:18:44Z"
+        },
+        "qrScanner": {
+          "status": "READY",
+          "supportedProviders": ["APPLE_PAY", "GOOGLE_PAY", "ALIPAY", "WECHAT_PAY", "VENMO"],
+          "lastTransaction": "2026-04-09T13:47:22Z"
+        }
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/payment/cashbox",
+      "response": {
+        "machineId": "VM-TCN-064-001",
+        "timestamp": "2026-04-09T14:32:18Z",
+        "coinTubes": [
+          {"denomination": 5, "label": "Nickel", "count": 38, "capacity": 50},
+          {"denomination": 10, "label": "Dime", "count": 42, "capacity": 50},
+          {"denomination": 25, "label": "Quarter", "count": 31, "capacity": 40},
+          {"denomination": 100, "label": "Dollar Coin", "count": 12, "capacity": 20}
+        ],
+        "coinBox": {
+          "totalValue": 1845,
+          "estimatedCount": 87,
+          "lastEmptied": "2026-03-28T10:15:00Z"
+        },
+        "billStacker": {
+          "totalBills": 145,
+          "capacity": 600,
+          "denominations": [
+            {"value": 100, "count": 82},
+            {"value": 500, "count": 45},
+            {"value": 1000, "count": 14},
+            {"value": 2000, "count": 4}
+          ],
+          "totalValue": 58700,
+          "lastEmptied": "2026-03-28T10:15:00Z"
+        },
+        "totalCashToCollect": 60545,
+        "changeAvailable": 3405
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/payment/cashless",
+      "response": {
+        "machineId": "VM-TCN-064-001",
+        "readerStatus": "ONLINE",
+        "connectivity": "4G_LTE",
+        "signalStrength": -67,
+        "telemetryProvider": "Nayax",
+        "terminalId": "NAYAX-VM064-001",
+        "merchantId": "MID-8827431",
+        "lastSettlement": {
+          "date": "2026-04-08T23:59:59Z",
+          "transactionCount": 28,
+          "totalAmount": 5925,
+          "status": "SETTLED"
+        },
+        "pendingSettlement": {
+          "transactionCount": 26,
+          "totalAmount": 5175,
+          "oldestTransaction": "2026-04-09T06:12:33Z"
+        }
+      }
+    }
+  ]
+}

@@ -1,0 +1,77 @@
+{
+  "snmp": [],
+  "ssh": [],
+  "api": [
+    {
+      "method": "GET",
+      "path": "/api/v1/dex/audit",
+      "response": {
+        "machineId": "VM-TCN-064-001",
+        "dexVersion": "UCS-06.01",
+        "generatedAt": "2026-04-09T14:32:18Z",
+        "machineIdentification": {
+          "serialNumber": "TCN2024BLH064S-00847",
+          "modelNumber": "BLH-64S",
+          "buildStandard": "UCS",
+          "machineType": "LOCKER",
+          "assetNumber": "AST-VM-0042",
+          "controllerSerial": "RK3288-SP22-118744"
+        },
+        "intervalData": {
+          "intervalStart": "2026-04-08T00:00:00Z",
+          "intervalEnd": "2026-04-09T14:32:18Z",
+          "vendCount": 68,
+          "totalCashSales": 13250,
+          "totalCashlessSales": 22750,
+          "totalFreeVends": 0,
+          "totalTestVends": 2,
+          "cashIn": 14100,
+          "cashOut": 850,
+          "cashToTubes": 1200,
+          "cashToBox": 12050,
+          "billsIn": 9800,
+          "billsToRecycler": 0,
+          "billsToStacker": 9800,
+          "valueOfCashlessPayments": 22750,
+          "numberOfCashlessTransactions": 48
+        },
+        "cumulativeData": {
+          "lifetimeVendCount": 14823,
+          "lifetimeTotalSales": 3412750,
+          "lifetimeCashSales": 1285400,
+          "lifetimeCashlessSales": 2127350,
+          "lifetimeFreeVends": 12,
+          "lifetimeTestVends": 87,
+          "machineOnlineHours": 4392,
+          "machineOfflineHours": 168
+        },
+        "cashAudit": {
+          "cashInTubes": 3405,
+          "cashInCoinBox": 1845,
+          "cashInBillStacker": 58700,
+          "totalCashInMachine": 63950,
+          "lastCollectionAmount": 52300,
+          "lastCollectionDate": "2026-03-28T10:15:00Z",
+          "cashOvershort": 0
+        },
+        "eventLog": [
+          {"timestamp": "2026-04-09T09:14:00Z", "code": "EVT-201", "description": "Bill stacker 80% warning"},
+          {"timestamp": "2026-04-09T06:30:00Z", "code": "EVT-100", "description": "Service door opened"},
+          {"timestamp": "2026-04-09T06:30:00Z", "code": "EVT-110", "description": "Restock operation started"},
+          {"timestamp": "2026-04-09T07:08:00Z", "code": "EVT-111", "description": "Restock operation completed, 22 slots filled"},
+          {"timestamp": "2026-04-09T07:08:00Z", "code": "EVT-101", "description": "Service door closed"},
+          {"timestamp": "2026-04-08T14:22:33Z", "code": "EVT-301", "description": "Bill jam detected and cleared automatically"},
+          {"timestamp": "2026-04-07T23:00:00Z", "code": "EVT-500", "description": "Energy save mode activated"},
+          {"timestamp": "2026-04-08T05:00:00Z", "code": "EVT-501", "description": "Energy save mode deactivated"}
+        ],
+        "selectionAudit": [
+          {"slotId": "A01", "productId": "PRD-1001", "vendCount": 7, "revenue": 1575, "testVends": 0, "freeVends": 0},
+          {"slotId": "A05", "productId": "PRD-1005", "vendCount": 5, "revenue": 1750, "testVends": 0, "freeVends": 0},
+          {"slotId": "B03", "productId": "PRD-2003", "vendCount": 4, "revenue": 800, "testVends": 1, "freeVends": 0},
+          {"slotId": "C07", "productId": "PRD-3007", "vendCount": 3, "revenue": 1950, "testVends": 0, "freeVends": 0},
+          {"slotId": "D02", "productId": "PRD-4002", "vendCount": 6, "revenue": 1200, "testVends": 1, "freeVends": 0}
+        ]
+      }
+    }
+  ]
+}

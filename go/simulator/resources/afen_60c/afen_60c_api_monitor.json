@@ -1,0 +1,90 @@
+{
+  "snmp": [],
+  "ssh": [],
+  "api": [
+    {
+      "method": "GET",
+      "path": "/api/v1/temperature",
+      "response": {
+        "machineId": "VM-AF60-001",
+        "zones": [
+          {
+            "zoneId": "MAIN",
+            "zoneName": "Main Refrigerated Cabinet",
+            "type": "REFRIGERATED",
+            "currentTemperatureC": 4.2,
+            "setpointC": 4.0,
+            "status": "NORMAL",
+            "compressorStatus": "RUNNING",
+            "compressorDutyCyclePercent": 62.5,
+            "compressorRunTimeMinutesToday": 542,
+            "defrostStatus": "IDLE",
+            "lastDefrostTime": "2026-04-09T14:00:00Z",
+            "nextDefrostTime": "2026-04-09T20:00:00Z",
+            "evaporatorTempC": -8.3,
+            "condenserTempC": 38.7
+          }
+        ]
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/temperature/history",
+      "response": {
+        "machineId": "VM-AF60-001",
+        "zoneId": "MAIN",
+        "readings": [
+          {"timestamp": "2026-04-09T17:30:00Z", "temperatureC": 4.2, "compressorStatus": "RUNNING"},
+          {"timestamp": "2026-04-09T17:00:00Z", "temperatureC": 4.0, "compressorStatus": "RUNNING"},
+          {"timestamp": "2026-04-09T16:30:00Z", "temperatureC": 4.4, "compressorStatus": "RUNNING"},
+          {"timestamp": "2026-04-09T16:00:00Z", "temperatureC": 3.8, "compressorStatus": "RUNNING"},
+          {"timestamp": "2026-04-09T15:30:00Z", "temperatureC": 5.1, "compressorStatus": "RUNNING"},
+          {"timestamp": "2026-04-09T15:00:00Z", "temperatureC": 4.1, "compressorStatus": "RUNNING"}
+        ]
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/energy",
+      "response": {
+        "machineId": "VM-AF60-001",
+        "currentPowerW": 285,
+        "todayKwh": 4.92,
+        "monthToDateKwh": 42.6,
+        "averageDailyKwh": 4.73,
+        "compressorPowerW": 210,
+        "displayPowerW": 35,
+        "controllerPowerW": 15,
+        "lightingPowerW": 20,
+        "peripheralsPowerW": 5,
+        "energySaveActive": false,
+        "peakPowerTodayW": 340,
+        "peakPowerTimestamp": "2026-04-09T14:15:00Z"
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/environment",
+      "response": {
+        "machineId": "VM-AF60-001",
+        "ambientTemperatureC": 26.8,
+        "ambientHumidityPercent": 55.2,
+        "lightLevelLux": 480,
+        "vibrationLevel": "LOW",
+        "timestamp": "2026-04-09T17:45:00Z"
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/access/events",
+      "response": {
+        "events": [
+          {"eventId": "ACC-3001", "type": "DOOR_OPEN", "timestamp": "2026-04-08T07:10:00Z", "duration_seconds": 312, "triggeredBy": "SERVICE_KEY", "technicianId": "TECH-042"},
+          {"eventId": "ACC-3002", "type": "DOOR_CLOSE", "timestamp": "2026-04-08T07:15:12Z", "triggeredBy": "SERVICE_KEY", "technicianId": "TECH-042"},
+          {"eventId": "ACC-3003", "type": "DOOR_OPEN", "timestamp": "2026-04-05T06:45:00Z", "duration_seconds": 480, "triggeredBy": "SERVICE_KEY", "technicianId": "TECH-019"},
+          {"eventId": "ACC-3004", "type": "DOOR_CLOSE", "timestamp": "2026-04-05T06:53:00Z", "triggeredBy": "SERVICE_KEY", "technicianId": "TECH-019"}
+        ]
+      }
+    }
+  ]
+}

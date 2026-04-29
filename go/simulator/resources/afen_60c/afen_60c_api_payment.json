@@ -1,0 +1,58 @@
+{
+  "snmp": [],
+  "ssh": [],
+  "api": [
+    {
+      "method": "GET",
+      "path": "/api/v1/payment/status",
+      "response": {
+        "machineId": "VM-AF60-001",
+        "overallStatus": "ONLINE",
+        "peripherals": [
+          {"type": "BILL_VALIDATOR", "model": "ICT A7-V5", "status": "ONLINE", "firmwareVersion": "3.42", "lastActivity": "2026-04-09T17:12:33Z"},
+          {"type": "COIN_MECH", "model": "Coges Unica", "status": "ONLINE", "firmwareVersion": "2.18", "lastActivity": "2026-04-09T16:08:22Z"},
+          {"type": "CARD_READER", "model": "Nayax VPOS Touch", "status": "ONLINE", "firmwareVersion": "7.1.3", "nfcEnabled": true, "qrEnabled": true, "lastActivity": "2026-04-09T17:42:18Z"}
+        ]
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/payment/cashbox",
+      "response": {
+        "machineId": "VM-AF60-001",
+        "billBox": {
+          "status": "OK",
+          "billCount": 18,
+          "estimatedValueCents": 2700,
+          "capacityPercent": 12,
+          "lastCollectionDate": "2026-04-07T08:00:00Z"
+        },
+        "coinTubes": [
+          {"denomination": 25, "label": "Quarter", "count": 42, "capacity": 80, "status": "OK"},
+          {"denomination": 10, "label": "Dime", "count": 35, "capacity": 80, "status": "OK"},
+          {"denomination": 5, "label": "Nickel", "count": 28, "capacity": 80, "status": "OK"}
+        ],
+        "totalCashValueCents": 4400,
+        "changeAvailable": true
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/payment/cashless",
+      "response": {
+        "machineId": "VM-AF60-001",
+        "status": "ACTIVE",
+        "provider": "Nayax",
+        "deviceId": "NYX-AF60-00192",
+        "networkStatus": "CONNECTED",
+        "signalStrength": -62,
+        "supportedMethods": ["VISA", "MASTERCARD", "AMEX", "APPLE_PAY", "GOOGLE_PAY", "SAMSUNG_PAY", "QR_CODE"],
+        "todayTransactions": 44,
+        "todayRevenueCents": 9020,
+        "lastTransactionTime": "2026-04-09T17:42:18Z",
+        "settlementStatus": "CURRENT",
+        "lastSettlementDate": "2026-04-08T23:59:59Z"
+      }
+    }
+  ]
+}

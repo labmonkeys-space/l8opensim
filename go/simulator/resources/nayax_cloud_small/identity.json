@@ -1,0 +1,39 @@
+{
+  "snmp": [
+    {
+      "oid": "1.3.6.1.2.1.1.1.0",
+      "response": "Nayax Cloud API Simulator — Lynx/Spark/Cortina REST endpoints"
+    },
+    {
+      "oid": "1.3.6.1.2.1.1.2.0",
+      "response": "1.3.6.1.4.1.99999.1"
+    },
+    {
+      "oid": "1.3.6.1.2.1.1.3.0",
+      "response": "864000000"
+    },
+    {
+      "oid": "1.3.6.1.2.1.1.4.0",
+      "response": "Nayax Cloud Operations"
+    },
+    {
+      "oid": "1.3.6.1.2.1.1.5.0",
+      "response": "nayax-cloud-01"
+    },
+    {
+      "oid": "1.3.6.1.2.1.1.6.0",
+      "response": "Simulator"
+    }
+  ],
+  "ssh": [
+    {
+      "command": "show version",
+      "response": "Nayax Cloud API Simulator v1.0\nAPI Families: Lynx, Spark, Cortina\nProfile: Small (Regional Operator)\nMachines: ~25  Devices: ~25  Daily Transactions: ~2,000"
+    },
+    {
+      "command": "show status",
+      "response": "Service Status: RUNNING\nAPI Port: 8443 (HTTPS)\nUptime: 14 days 6 hours\nEndpoints: Lynx (20), Spark (6), Cortina (12)"
+    }
+  ],
+  "api": []
+}

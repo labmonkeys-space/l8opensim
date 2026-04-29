@@ -1,0 +1,62 @@
+{
+  "snmp": [],
+  "ssh": [],
+  "api": [
+    {
+      "method": "GET",
+      "path": "/api/v1/dex/audit",
+      "response": {
+        "machineId": "VM-TCN-040-001",
+        "timestamp": "2026-04-09T14:18:05Z",
+        "dexVersion": "UCS-06-01",
+        "communicationId": "TCN2024ZK040001",
+        "auditData": {
+          "reportPeriod": {
+            "startDate": "2026-04-02T00:00:00Z",
+            "endDate": "2026-04-09T14:18:05Z"
+          },
+          "meterReadings": {
+            "totalVendCount": 28,
+            "totalCashVends": 2,
+            "totalCashlessVends": 26,
+            "totalCashIn": 3700,
+            "totalCashOut": 0,
+            "totalCashlessRevenue": 50900,
+            "totalRevenue": 54600,
+            "freeVendCount": 0,
+            "testVendCount": 1
+          },
+          "intervalReadings": {
+            "vendCountSinceLastAudit": 28,
+            "cashInSinceLastAudit": 3700,
+            "cashlessRevenueSinceLastAudit": 50900,
+            "revenueSinceLastAudit": 54600
+          },
+          "cashBoxAudit": {
+            "billsInBox": 18,
+            "billBoxValue": 4200,
+            "coinInTubes": 100,
+            "coinTubeValue": 1280,
+            "coinInBox": 45,
+            "coinBoxValue": 575
+          },
+          "productAudit": [
+            {"slotId": "A01", "productId": "PRD-6001", "vendCount": 2, "revenue": 1500, "currentStock": 1},
+            {"slotId": "A06", "productId": "PRD-6006", "vendCount": 0, "revenue": 0, "currentStock": 1},
+            {"slotId": "B04", "productId": "PRD-6012", "vendCount": 3, "revenue": 2397, "currentStock": 0},
+            {"slotId": "C02", "productId": "PRD-6018", "vendCount": 1, "revenue": 850, "currentStock": 1},
+            {"slotId": "D05", "productId": "PRD-6029", "vendCount": 2, "revenue": 998, "currentStock": 1}
+          ],
+          "eventLog": [
+            {"eventCode": "EA01-01", "description": "Machine powered on", "timestamp": "2026-04-02T05:30:00Z", "count": 1},
+            {"eventCode": "EA06-00", "description": "Service door opened", "timestamp": "2026-04-09T06:15:00Z", "count": 3},
+            {"eventCode": "EA06-01", "description": "Service door closed", "timestamp": "2026-04-09T06:34:00Z", "count": 3},
+            {"eventCode": "PA01-01", "description": "Cashless reader online", "timestamp": "2026-04-02T05:30:12Z", "count": 1}
+          ],
+          "lastAuditDate": "2026-04-02T07:00:00Z",
+          "auditSequenceNumber": 47
+        }
+      }
+    }
+  ]
+}

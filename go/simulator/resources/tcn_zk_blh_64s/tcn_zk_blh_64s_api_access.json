@@ -1,0 +1,93 @@
+{
+  "snmp": [],
+  "ssh": [],
+  "api": [
+    {
+      "method": "GET",
+      "path": "/api/v1/access/events",
+      "response": {
+        "machineId": "VM-TCN-064-001",
+        "events": [
+          {
+            "eventId": "ACC-20260409-0047",
+            "timestamp": "2026-04-09T14:18:44Z",
+            "type": "VEND_DISPENSE",
+            "slotId": "A01",
+            "lockAction": "UNLOCK",
+            "duration": 4.8,
+            "transactionId": "TXN-20260409-0339",
+            "result": "DOOR_CLOSED"
+          },
+          {
+            "eventId": "ACC-20260409-0046",
+            "timestamp": "2026-04-09T14:05:11Z",
+            "type": "VEND_DISPENSE",
+            "slotId": "D02",
+            "lockAction": "UNLOCK",
+            "duration": 3.9,
+            "transactionId": "TXN-20260409-0338",
+            "result": "DOOR_CLOSED"
+          },
+          {
+            "eventId": "ACC-20260409-0045",
+            "timestamp": "2026-04-09T13:47:22Z",
+            "type": "VEND_DISPENSE",
+            "slotId": "A05",
+            "lockAction": "UNLOCK",
+            "duration": 5.2,
+            "transactionId": "TXN-20260409-0337",
+            "result": "DOOR_CLOSED"
+          },
+          {
+            "eventId": "ACC-20260409-0001",
+            "timestamp": "2026-04-09T06:30:00Z",
+            "type": "SERVICE_VISIT",
+            "operatorId": "OPR-0114",
+            "operatorName": "Mike Torres",
+            "accessMethod": "SERVICE_KEY",
+            "duration": 2280,
+            "slotsRestocked": 22,
+            "cashCollected": true,
+            "result": "COMPLETED"
+          },
+          {
+            "eventId": "ACC-20260328-0082",
+            "timestamp": "2026-03-28T10:15:00Z",
+            "type": "SERVICE_VISIT",
+            "operatorId": "OPR-0087",
+            "operatorName": "Sarah Chen",
+            "accessMethod": "SERVICE_KEY",
+            "duration": 3600,
+            "slotsRestocked": 48,
+            "cashCollected": true,
+            "maintenancePerformed": ["LOCK_LUBRICATION", "SCREEN_CLEANING", "BILL_PATH_CLEANING"],
+            "result": "COMPLETED"
+          }
+        ],
+        "totalCount": 389,
+        "page": 1,
+        "pageSize": 20
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/access/locks",
+      "response": {
+        "machineId": "VM-TCN-064-001",
+        "timestamp": "2026-04-09T14:32:18Z",
+        "locks": [
+          {"slotId": "A01", "lockState": "LOCKED", "cellOccupied": true, "cycleCount": 412, "lastCycleTime": "2026-04-09T14:18:44Z", "health": "GOOD"},
+          {"slotId": "A05", "lockState": "LOCKED", "cellOccupied": false, "cycleCount": 389, "lastCycleTime": "2026-04-09T13:47:22Z", "health": "GOOD"},
+          {"slotId": "B03", "lockState": "LOCKED", "cellOccupied": true, "cycleCount": 201, "lastCycleTime": "2026-04-08T16:22:10Z", "health": "GOOD"},
+          {"slotId": "C07", "lockState": "LOCKED", "cellOccupied": true, "cycleCount": 97, "lastCycleTime": "2026-04-07T11:05:33Z", "health": "GOOD"},
+          {"slotId": "D02", "lockState": "LOCKED", "cellOccupied": false, "cycleCount": 455, "lastCycleTime": "2026-04-09T14:05:11Z", "health": "GOOD"},
+          {"slotId": "E04", "lockState": "LOCKED", "cellOccupied": true, "cycleCount": 312, "lastCycleTime": "2026-04-09T10:33:17Z", "health": "GOOD"},
+          {"slotId": "F06", "lockState": "LOCKED", "cellOccupied": true, "cycleCount": 528, "lastCycleTime": "2026-04-09T11:45:09Z", "health": "FAIR"},
+          {"slotId": "H08", "lockState": "LOCKED", "cellOccupied": false, "cycleCount": 0, "lastCycleTime": null, "health": "GOOD"}
+        ],
+        "totalLocks": 64,
+        "healthySummary": {"GOOD": 61, "FAIR": 3, "POOR": 0, "FAILED": 0}
+      }
+    }
+  ]
+}

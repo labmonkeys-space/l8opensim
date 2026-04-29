@@ -1,0 +1,95 @@
+{
+  "snmp": [],
+  "ssh": [],
+  "api": [
+    {
+      "method": "GET",
+      "path": "/api/v1/machine",
+      "response": {
+        "machineId": "VM-TCN-040-001",
+        "serialNumber": "TCN2024ZK040001",
+        "model": "TCN-ZK(22SP)+BLH-40S",
+        "manufacturer": "TCN Vending Technology",
+        "machineType": "LOCKER",
+        "totalSlots": 40,
+        "slotLayout": {"rows": 5, "columns": 8},
+        "firmwareVersion": "22SP-3.8.2",
+        "controllerBoard": "RK3288-SP22",
+        "operatingSystem": "Android 7.1.2",
+        "screenSize": "21.5 inch",
+        "screenResolution": "1920x1080",
+        "location": {
+          "siteId": "SITE-0078",
+          "siteName": "Building C - Break Room",
+          "address": "456 Industrial Pkwy, Dallas, TX 75201",
+          "latitude": 32.7936,
+          "longitude": -96.8012,
+          "floor": 2,
+          "zone": "Employee Break Room"
+        },
+        "connectivity": {
+          "type": "WIFI",
+          "ssid": "CorpNet-IoT",
+          "signalStrength": -42,
+          "ipAddress": "10.44.18.33",
+          "macAddress": "A8:3F:A1:44:9C:17",
+          "lastHeartbeat": "2026-04-09T14:18:05Z"
+        },
+        "capabilities": [
+          "CASH_PAYMENT",
+          "CARD_PAYMENT",
+          "NFC_CONTACTLESS",
+          "QR_CODE_PAYMENT",
+          "TOUCHSCREEN_UI",
+          "REMOTE_MANAGEMENT",
+          "DEX_AUDIT",
+          "INDIVIDUAL_CELL_LOCKS",
+          "CAMERA_SURVEILLANCE"
+        ],
+        "installDate": "2025-11-20T08:00:00Z",
+        "lastServiceDate": "2026-04-02T09:30:00Z"
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/machine/status",
+      "response": {
+        "machineId": "VM-TCN-040-001",
+        "status": "OPERATIONAL",
+        "timestamp": "2026-04-09T14:18:05Z",
+        "uptime": 93847,
+        "doorStatus": "CLOSED",
+        "paymentSystemStatus": "READY",
+        "refrigerationStatus": "N/A",
+        "networkStatus": "CONNECTED",
+        "screenStatus": "ACTIVE",
+        "vendsSinceLastService": 28,
+        "slotsOccupied": 33,
+        "slotsEmpty": 7,
+        "warnings": []
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/machine/config",
+      "response": {
+        "machineId": "VM-TCN-040-001",
+        "locale": "en-US",
+        "currency": "USD",
+        "timezone": "America/Chicago",
+        "screenBrightness": 75,
+        "volumeLevel": 50,
+        "energySavingEnabled": true,
+        "autoShutdownStart": "22:00",
+        "autoShutdownEnd": "05:30",
+        "idleScreenTimeout": 30,
+        "maxTransactionTime": 120,
+        "receiptPrinting": false,
+        "ageVerificationEnabled": false,
+        "telemetryInterval": 300,
+        "autoRestockAlert": true,
+        "restockThreshold": 0
+      }
+    }
+  ]
+}

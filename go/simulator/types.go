@@ -347,6 +347,10 @@ var RoundRobinDeviceTypes = []string{
 	"pure_storage_flasharray.json",
 	"dell_emc_unity.json",
 	"aws_s3_storage.json",
+	// Nayax Cloud API Simulators
+	"nayax_cloud_small.json",
+	"nayax_cloud_medium.json",
+	"nayax_cloud_large.json",
 }
 
 type DeviceInfo struct {

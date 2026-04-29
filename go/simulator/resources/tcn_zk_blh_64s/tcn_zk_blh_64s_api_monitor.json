@@ -1,0 +1,80 @@
+{
+  "snmp": [],
+  "ssh": [],
+  "api": [
+    {
+      "method": "GET",
+      "path": "/api/v1/temperature",
+      "response": {
+        "machineId": "VM-TCN-064-001",
+        "timestamp": "2026-04-09T14:32:18Z",
+        "zones": [
+          {
+            "zoneId": "CABINET",
+            "label": "Main Cabinet",
+            "currentTemp": 21.8,
+            "unit": "C",
+            "setPoint": null,
+            "compressorStatus": "N/A",
+            "status": "NORMAL"
+          }
+        ],
+        "refrigerated": false
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/temperature/history",
+      "response": {
+        "machineId": "VM-TCN-064-001",
+        "zoneId": "CABINET",
+        "period": "6h",
+        "readings": [
+          {"timestamp": "2026-04-09T09:00:00Z", "temperature": 20.3},
+          {"timestamp": "2026-04-09T10:00:00Z", "temperature": 20.8},
+          {"timestamp": "2026-04-09T11:00:00Z", "temperature": 21.2},
+          {"timestamp": "2026-04-09T12:00:00Z", "temperature": 21.9},
+          {"timestamp": "2026-04-09T13:00:00Z", "temperature": 22.1},
+          {"timestamp": "2026-04-09T14:00:00Z", "temperature": 21.8}
+        ]
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/energy",
+      "response": {
+        "machineId": "VM-TCN-064-001",
+        "timestamp": "2026-04-09T14:32:18Z",
+        "currentPowerDraw": 85,
+        "unit": "W",
+        "dailyConsumption": 1.28,
+        "dailyUnit": "kWh",
+        "monthlyEstimate": 38.4,
+        "compressorPower": 0,
+        "screenPower": 42,
+        "controllerPower": 18,
+        "lockSystemPower": 5,
+        "peripheralsPower": 20,
+        "powerSaveActive": false,
+        "screenDimmed": false,
+        "lastPowerCycleTime": "2026-03-28T10:30:00Z"
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/environment",
+      "response": {
+        "machineId": "VM-TCN-064-001",
+        "timestamp": "2026-04-09T14:32:18Z",
+        "ambientTemperature": 23.5,
+        "ambientUnit": "C",
+        "humidity": 45.2,
+        "humidityUnit": "%",
+        "lightLevel": 620,
+        "lightUnit": "lux",
+        "vibration": "NONE",
+        "dustSensorStatus": "OK"
+      }
+    }
+  ]
+}

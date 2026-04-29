@@ -1,0 +1,80 @@
+{
+  "snmp": [],
+  "ssh": [],
+  "api": [
+    {
+      "method": "GET",
+      "path": "/api/v1/temperature",
+      "response": {
+        "machineId": "VM-TCN-040-001",
+        "timestamp": "2026-04-09T14:18:05Z",
+        "zones": [
+          {
+            "zoneId": "AMBIENT",
+            "zoneName": "Ambient Cabinet",
+            "currentTemp": 22.3,
+            "unit": "CELSIUS",
+            "status": "NORMAL",
+            "minThreshold": 15.0,
+            "maxThreshold": 30.0
+          }
+        ]
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/temperature/history",
+      "response": {
+        "machineId": "VM-TCN-040-001",
+        "zoneId": "AMBIENT",
+        "period": "TODAY",
+        "readings": [
+          {"timestamp": "2026-04-09T06:00:00Z", "temp": 20.1, "status": "NORMAL"},
+          {"timestamp": "2026-04-09T08:00:00Z", "temp": 21.0, "status": "NORMAL"},
+          {"timestamp": "2026-04-09T10:00:00Z", "temp": 21.8, "status": "NORMAL"},
+          {"timestamp": "2026-04-09T12:00:00Z", "temp": 22.5, "status": "NORMAL"},
+          {"timestamp": "2026-04-09T13:00:00Z", "temp": 22.6, "status": "NORMAL"},
+          {"timestamp": "2026-04-09T14:00:00Z", "temp": 22.3, "status": "NORMAL"}
+        ]
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/energy",
+      "response": {
+        "machineId": "VM-TCN-040-001",
+        "timestamp": "2026-04-09T14:18:05Z",
+        "currentPowerDraw": 82,
+        "unit": "WATTS",
+        "dailyConsumption": 1.24,
+        "dailyUnit": "KWH",
+        "monthlyEstimate": 37.2,
+        "energySavingMode": true,
+        "components": {
+          "display": 28,
+          "controller": 12,
+          "lighting": 18,
+          "payment": 8,
+          "fans": 6,
+          "standby": 10
+        }
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/environment",
+      "response": {
+        "machineId": "VM-TCN-040-001",
+        "timestamp": "2026-04-09T14:18:05Z",
+        "ambientTemperature": 22.1,
+        "ambientUnit": "CELSIUS",
+        "humidity": 40.5,
+        "humidityUnit": "PERCENT",
+        "lightLevel": 480,
+        "lightUnit": "LUX",
+        "vibrationDetected": false,
+        "tiltAngle": 0.2
+      }
+    }
+  ]
+}

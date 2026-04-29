@@ -1,0 +1,199 @@
+{
+  "snmp": [],
+  "ssh": [],
+  "api": [
+    {
+      "method": "POST",
+      "path": "/lynx/v1/SignIn",
+      "response": {
+        "token": "eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9.sim.nayax-cloud-large",
+        "expiresIn": 3600,
+        "tokenType": "Bearer",
+        "user": {
+          "userId": "USR-300",
+          "email": "admin@globalvendcorp.com",
+          "role": "operator",
+          "actorId": "ACT-3001"
+        }
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/lynx/v1/SignOut",
+      "response": {
+        "success": true,
+        "message": "Session terminated"
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/lynx/v1/actors",
+      "response": {
+        "items": [
+          {
+            "actorId": "ACT-3001",
+            "name": "Global Vend Corp.",
+            "type": "operator",
+            "email": "ops@globalvendcorp.com",
+            "phone": "+1-555-3001",
+            "status": "active",
+            "machineCount": 2500,
+            "createdAt": "2022-01-10T10:00:00Z"
+          },
+          {
+            "actorId": "ACT-3002",
+            "name": "Northeast Vending Division",
+            "type": "sub-operator",
+            "email": "ne@globalvendcorp.com",
+            "phone": "+1-555-3002",
+            "status": "active",
+            "machineCount": 420,
+            "parentActorId": "ACT-3001",
+            "createdAt": "2022-03-15T09:00:00Z"
+          },
+          {
+            "actorId": "ACT-3003",
+            "name": "West Coast Operations",
+            "type": "sub-operator",
+            "email": "wc@globalvendcorp.com",
+            "phone": "+1-555-3003",
+            "status": "active",
+            "machineCount": 380,
+            "parentActorId": "ACT-3001",
+            "createdAt": "2022-03-15T10:00:00Z"
+          },
+          {
+            "actorId": "ACT-3004",
+            "name": "Southeast Region",
+            "type": "sub-operator",
+            "email": "se@globalvendcorp.com",
+            "phone": "+1-555-3004",
+            "status": "active",
+            "machineCount": 310,
+            "parentActorId": "ACT-3001",
+            "createdAt": "2022-06-01T08:00:00Z"
+          },
+          {
+            "actorId": "ACT-3005",
+            "name": "Midwest Vending Group",
+            "type": "sub-operator",
+            "email": "mw@globalvendcorp.com",
+            "phone": "+1-555-3005",
+            "status": "active",
+            "machineCount": 350,
+            "parentActorId": "ACT-3001",
+            "createdAt": "2022-06-01T09:00:00Z"
+          },
+          {
+            "actorId": "ACT-3006",
+            "name": "Texas & Southwest",
+            "type": "sub-operator",
+            "email": "tx@globalvendcorp.com",
+            "phone": "+1-555-3006",
+            "status": "active",
+            "machineCount": 290,
+            "parentActorId": "ACT-3001",
+            "createdAt": "2023-01-10T08:00:00Z"
+          },
+          {
+            "actorId": "ACT-3007",
+            "name": "Pacific Northwest",
+            "type": "sub-operator",
+            "email": "pnw@globalvendcorp.com",
+            "phone": "+1-555-3007",
+            "status": "active",
+            "machineCount": 180,
+            "parentActorId": "ACT-3001",
+            "createdAt": "2023-03-20T10:00:00Z"
+          },
+          {
+            "actorId": "ACT-3008",
+            "name": "Mountain States Division",
+            "type": "sub-operator",
+            "email": "mtn@globalvendcorp.com",
+            "phone": "+1-555-3008",
+            "status": "active",
+            "machineCount": 150,
+            "parentActorId": "ACT-3001",
+            "createdAt": "2023-06-15T09:00:00Z"
+          },
+          {
+            "actorId": "ACT-3009",
+            "name": "Great Lakes Region",
+            "type": "sub-operator",
+            "email": "gl@globalvendcorp.com",
+            "phone": "+1-555-3009",
+            "status": "active",
+            "machineCount": 220,
+            "parentActorId": "ACT-3001",
+            "createdAt": "2023-09-01T08:00:00Z"
+          },
+          {
+            "actorId": "ACT-3010",
+            "name": "Mid-Atlantic Group",
+            "type": "sub-operator",
+            "email": "ma@globalvendcorp.com",
+            "phone": "+1-555-3010",
+            "status": "active",
+            "machineCount": 120,
+            "parentActorId": "ACT-3001",
+            "createdAt": "2024-01-05T10:00:00Z"
+          },
+          {
+            "actorId": "ACT-3011",
+            "name": "New England Vending",
+            "type": "sub-operator",
+            "email": "ne2@globalvendcorp.com",
+            "phone": "+1-555-3011",
+            "status": "active",
+            "machineCount": 80,
+            "parentActorId": "ACT-3001",
+            "createdAt": "2024-04-10T09:00:00Z"
+          }
+        ],
+        "totalCount": 11,
+        "page": 1,
+        "pageSize": 50
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/lynx/v1/actors/{actorId}",
+      "response": {
+        "actorId": "ACT-3001",
+        "name": "Global Vend Corp.",
+        "type": "operator",
+        "email": "ops@globalvendcorp.com",
+        "phone": "+1-555-3001",
+        "status": "active",
+        "address": {
+          "street": "1200 Enterprise Way, Suite 800",
+          "city": "Chicago",
+          "state": "IL",
+          "zip": "60601",
+          "country": "US"
+        },
+        "machineCount": 2500,
+        "deviceCount": 3000,
+        "settings": {
+          "currency": "USD",
+          "timezone": "America/Chicago",
+          "language": "en"
+        },
+        "createdAt": "2022-01-10T10:00:00Z",
+        "updatedAt": "2026-04-15T14:30:00Z"
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/lynx/v1/actors",
+      "response": {
+        "actorId": "ACT-3012",
+        "name": "New Sub-Operator",
+        "type": "sub-operator",
+        "status": "active",
+        "createdAt": "2026-04-17T12:00:00Z"
+      }
+    }
+  ]
+}
