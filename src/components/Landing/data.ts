@@ -13,7 +13,7 @@ export type TerminalLine =
 export const FEATURES: Feature[] = [
   { icon: 'scale', title: '30,000 devices', body: 'Tested scale on a single host. Parallel TUN pre-allocation, lock-free sync.Map for O(1) OID lookups, pre-computed next-OID mappings.' },
   { icon: 'proto', title: 'Protocols', body: 'SNMP v2c/v3 (MD5/SHA1 · DES/AES128), SSH with VT100, HTTPS REST, NetFlow v5 / v9 / IPFIX. sFlow v5 (experimental).' },
-  { icon: 'devices', title: '28 device types', body: 'Routers, switches, firewalls, servers, GPU servers (DGX/HGX), storage systems, Linux servers — across 8 categories.' },
+  { icon: 'devices', title: '31 device types', body: 'Routers, switches, firewalls, servers, GPU servers (DGX/HGX), storage systems, Nayax IoT/payment cloud APIs, Linux servers — across 9 categories.' },
   { icon: 'gpu', title: 'GPU simulation', body: 'NVIDIA DGX-A100 / H100 / HGX-H200 with per-GPU DCGM OIDs — utilization, VRAM, temp, power, fan, SM/memory clocks.' },
   { icon: 'isol', title: 'Namespace isolation', body: 'Each device runs in the dedicated opensim network namespace with its own TUN interface and IP.' },
   { icon: 'metric', title: 'Dynamic metrics', body: '100-point sine-wave cycling for CPU, memory, temperature; full IF-MIB counter set (octets, ucast / mcast / bcast packets, errors, discards) with per-device error scenarios; per-GPU DCGM OIDs.' },
@@ -28,6 +28,7 @@ export const CATEGORIES: Category[] = [
   { name: 'Servers',         items: ['Dell PowerEdge R750', 'HPE ProLiant DL380', 'IBM Power S922', 'Linux Server · Ubuntu 24.04'] },
   { name: 'GPU Servers',     items: ['NVIDIA DGX-A100 · 8×80GB', 'NVIDIA DGX-H100 · 8×80GB', 'NVIDIA HGX-H200 · 8×141GB'] },
   { name: 'Storage',         items: ['AWS S3', 'Pure Storage FlashArray', 'NetApp ONTAP', 'Dell EMC Unity'] },
+  { name: 'IoT/Payment',     items: ['Nayax Cloud Small', 'Nayax Cloud Medium', 'Nayax Cloud Large'] },
 ];
 
 // Paths match sidebars.ts / docs folder exactly.

@@ -104,7 +104,7 @@ a `FlowCache`. See [Flow export reference](flow-export.md).
 
 ### Resource loading
 
-`resources.go` loads and caches the 379 JSON files at startup. Each device
+`resources.go` loads and caches 440 JSON files at startup. Each device
 type directory has split JSON files for SNMP, SSH, and REST responses that
 are merged at load time. See [Resource files](resource-files.md).
 

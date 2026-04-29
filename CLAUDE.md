@@ -225,7 +225,9 @@ In every branch the result is run through `sanitiseHostname`: spaces become hyph
 
 ### Device types
 
-28 device types across 8 categories: Core Routers, Edge Routers, Data Center Switches, Campus Switches, Firewalls, Servers, GPU Servers (NVIDIA DGX-A100/H100/HGX-H200), Storage Systems (AWS S3, Pure Storage, NetApp ONTAP, Dell EMC Unity).
+31 device types across 9 categories: Core Routers, Edge Routers, Data Center Switches, Campus Switches, Firewalls, Servers, GPU Servers (NVIDIA DGX-A100/H100/HGX-H200), Storage Systems (AWS S3, Pure Storage, NetApp ONTAP, Dell EMC Unity), IoT/Payment (Nayax Cloud Small/Medium/Large).
+
+Four additional vending-machine resource directories (`afen_60c`, `afen_d900_54c`, `tcn_zk_blh_40s`, `tcn_zk_blh_64s`) ship JSON fixtures from upstream but are not yet wired into `deviceProfileMap`, `RoundRobinDeviceTypes`, or the type/category classifiers in `resources.go` — they appear in `ListAvailableResources` as "Other" and are deployable by name, but lack a profile and won't be picked by round-robin selection.
 
 Each device type has resource files under `resources/<device-type>/` containing JSON for SNMP OID responses, SSH command responses, and REST API responses.
 

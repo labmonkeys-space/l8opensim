@@ -3,7 +3,7 @@
 Every device type has a directory under `go/simulator/resources/` containing
 one or more JSON files. At startup, `resources.go` loads and caches every
 `*.json` file in each directory, merging the `snmp`, `ssh`, and (optionally)
-`api` sections. There are currently 379 JSON files across 28 device-type
+`api` sections. There are currently 440 JSON files across 35 device-type
 directories.
 
 OIDs in the `snmp` section may be written with or without a leading dot —

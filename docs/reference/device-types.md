@@ -1,10 +1,10 @@
 # Device types
 
-l8opensim ships resource files for **28 device types across 8 categories**.
+l8opensim ships resource files for **31 device types across 9 categories**.
 Each device type has its own directory under `go/simulator/resources/`
 containing JSON responses for SNMP OIDs, SSH commands, and (for storage
-devices) REST API endpoints. See [Resource files](resource-files.md) for the
-JSON format.
+and cloud-API devices) REST API endpoints. See
+[Resource files](resource-files.md) for the JSON format.
 
 ## Core routers
 
@@ -82,6 +82,35 @@ set of shared TLS certificates generated at startup. See [Web API](web-api.md)
 for the simulator's own control-plane endpoints; the storage APIs themselves
 are defined entirely by the JSON resource files in each storage device's
 directory.
+
+## IoT/Payment
+
+| Device | Type | Protocols |
+|--------|------|-----------|
+| Nayax Cloud Small | Vending/payment cloud API | SNMP, HTTPS REST |
+| Nayax Cloud Medium | Vending/payment cloud API | SNMP, HTTPS REST |
+| Nayax Cloud Large | Vending/payment cloud API | SNMP, HTTPS REST |
+
+Nayax cloud simulators answer to multiple REST surfaces (Cortina, Lynx, Spark,
+Identity) over HTTPS on port 8443. Resource fixtures live under
+`go/simulator/resources/nayax_cloud_{small,medium,large}/`.
+
+:::note[Unclassified vending-machine fixtures]
+Four additional vending-machine resource directories ship from upstream but
+are **not yet wired** into the type/category classifier or the round-robin
+selector:
+
+- `afen_60c` (Azkoyen vending machine)
+- `afen_d900_54c` (Azkoyen vending machine)
+- `tcn_zk_blh_40s` (TCN vending machine)
+- `tcn_zk_blh_64s` (TCN vending machine)
+
+They appear in `GET /api/v1/resources` under category "Other" and can be
+deployed by name (`POST /api/v1/devices` with the slug as `resource_file`),
+but they lack a metric profile and won't be picked when `round_robin: true`.
+A follow-up PR will either wire them in fully or remove the unused
+fixtures.
+:::
 
 ## Enhanced features (all network devices)
 

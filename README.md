@@ -23,9 +23,10 @@ network namespaces.
 ## Highlights
 
 - **Runs 30,000+ simulated devices on a single host** — see [Scaling](https://labmonkeys-space.github.io/l8opensim/ops/scaling/).
-- **28 device types across 8 categories** (core / edge routers, DC and
-  campus switches, firewalls, servers, NVIDIA DGX/HGX GPU servers, and
-  enterprise storage) — see [Device types](https://labmonkeys-space.github.io/l8opensim/reference/device-types/).
+- **31 device types across 9 categories** (core / edge routers, DC and
+  campus switches, firewalls, servers, NVIDIA DGX/HGX GPU servers,
+  enterprise storage, and Nayax IoT/Payment cloud APIs) — see
+  [Device types](https://labmonkeys-space.github.io/l8opensim/reference/device-types/).
 - **Multi-protocol per device:** SNMP v2c/v3 (MD5/SHA1 auth, DES/AES128
   privacy), SSH with VT100 terminal emulation, and HTTPS REST — see
   [SNMP reference](https://labmonkeys-space.github.io/l8opensim/reference/snmp/)
